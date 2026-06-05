@@ -30,10 +30,10 @@ async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
 let dashboardCache: any = null;
 let dashboardCacheTime = 0;
 
-export async function fetchDashboard() {
+export async function fetchDashboard(forceRefresh = false) {
   const now = Date.now();
   // Cache for 5 minutes
-  if (dashboardCache && (now - dashboardCacheTime < 300000)) {
+  if (!forceRefresh && dashboardCache && (now - dashboardCacheTime < 300000)) {
     return dashboardCache;
   }
   const data = await fetchWithAuth('/api/dashboard/today');

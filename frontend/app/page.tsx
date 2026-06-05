@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Moon, Heart, Battery, Activity, Flame, ChevronRight, Loader2, Bot } from "lucide-react";
+import { Moon, Heart, Battery, Activity, Flame, ChevronRight, Loader2, Bot, RefreshCcw } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { fetchDashboard, fetchDashboardAdvice } from "@/lib/api";
@@ -12,34 +12,36 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setError(null);
-        const dashboardData = await fetchDashboard();
-        setData(dashboardData);
-        
-        // Fetch advice in the background
-        if (dashboardData) {
-          try {
-            const adviceData = await fetchDashboardAdvice({
-              sleep_score: dashboardData.sleep?.score,
-              hrv_status: dashboardData.hrv?.status,
-              body_battery: dashboardData.stats?.body_battery_highest,
-              readiness: dashboardData.readiness?.readiness_score
-            });
-            setAdvice(adviceData.advice);
-          } catch (e) {
-            console.error("Failed to load advice", e);
-          }
+  const loadData = async (forceRefresh = false) => {
+    try {
+      if (forceRefresh) setLoading(true);
+      setError(null);
+      const dashboardData = await fetchDashboard(forceRefresh);
+      setData(dashboardData);
+      
+      // Fetch advice in the background
+      if (dashboardData) {
+        try {
+          const adviceData = await fetchDashboardAdvice({
+            sleep_score: dashboardData.sleep?.score,
+            hrv_status: dashboardData.hrv?.status,
+            body_battery: dashboardData.stats?.body_battery_highest,
+            readiness: dashboardData.readiness?.readiness_score
+          });
+          setAdvice(adviceData.advice);
+        } catch (e) {
+          console.error("Failed to load advice", e);
         }
-      } catch (err: any) {
-        console.error(err);
-        setError(err.message || "Nepodarilo sa načítať dáta z Garminu.");
-      } finally {
-        setLoading(false);
       }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Nepodarilo sa načítať dáta z Garminu.");
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
     loadData();
   }, []);
 
@@ -69,8 +71,13 @@ export default function Dashboard() {
             Ahoj, Maroš 👋
           </h1>
         </div>
-        <div className="bg-accent/20 text-accent px-3 py-1 rounded-full text-xs font-bold border border-accent/30 shadow-[0_0_15px_rgba(249,115,22,0.2)]">
-          Týždeň 1 z 18
+        <div className="flex gap-2">
+          <button onClick={() => loadData(true)} className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors">
+            <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
+          </button>
+          <div className="bg-accent/20 text-accent px-3 py-1 rounded-full text-xs font-bold border border-accent/30 shadow-[0_0_15px_rgba(249,115,22,0.2)]">
+            Týždeň 1 z 18
+          </div>
         </div>
       </header>
 

@@ -85,22 +85,35 @@ def get_body_battery(client) -> Optional[dict]:
         if not bb_data:
             return None
 
-        # Nájdi dnešnú max hodnotu
-        today_max = None
+        # Nájdi aktuálnu hodnotu (posledný záznam z dnešného dňa)
+        current_value = None
         weekly_avg = None
-        all_vals = []
-
-        for day_data in bb_data:
-            charged = day_data.get("charged")
-            if charged is not None:
-                all_vals.append(charged)
-
-        if all_vals:
-            today_max = all_vals[0] if all_vals else None
-            weekly_avg = round(sum(all_vals) / len(all_vals), 1)
+        
+        # bb_data je list za posledných 7 dní, posledný prvok by mal byť dnešok
+        if bb_data:
+            today_data = bb_data[-1]
+            # Skús nájsť bodyBatteryValuesArray
+            values_array = today_data.get("bodyBatteryValueDescriptors") or today_data.get("bodyBatteryValuesArray")
+            if values_array and len(values_array) > 0:
+                # Posledná známa hodnota v poli (timestamp, value)
+                last_entry = values_array[-1]
+                if isinstance(last_entry, list) and len(last_entry) >= 2:
+                    current_value = last_entry[1]
+                elif isinstance(last_entry, dict):
+                    current_value = last_entry.get("bodyBatteryValue") or last_entry.get("value")
+            
+            # Ak sa nenašlo cez pole, skús default
+            if current_value is None:
+                 # Fallback na charged, hoci to nie je to isté
+                 current_value = today_data.get("charged")
+                 
+            # Vypočítajme týždenný priemer "charged" len pre info
+            charged_vals = [d.get("charged") for d in bb_data if d.get("charged") is not None]
+            if charged_vals:
+                weekly_avg = round(sum(charged_vals) / len(charged_vals), 1)
 
         return {
-            "today_charged": today_max,
+            "today_charged": current_value,
             "weekly_avg": weekly_avg,
             "raw": bb_data[:7],
         }
