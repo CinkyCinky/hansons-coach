@@ -57,7 +57,7 @@ export default function Plan() {
     }
   };
 
-  const handleExpand = async (index: number, workout: any, isPast: boolean) => {
+  const handleExpand = async (index: number, workout: any) => {
     const key = workout.workoutId || workout.activityId || String(index);
     if (expandedId === index) {
       setExpandedId(null);
@@ -69,18 +69,28 @@ export default function Plan() {
     try {
       setLoadingDetails(prev => ({ ...prev, [key]: true }));
       
-      if (isPast && workout.activityId) {
-        // For past runs: load real activity stats
+      // A workout is "done" if it has an activityId (Garmin links completed activities)
+      const isCompleted = !!workout.activityId;
+      
+      if (isCompleted) {
+        // Completed run: load real activity stats
         const res = await fetchActivityStats(workout.activityId);
         if (res && res.stats) {
           setDetailsCache(prev => ({ ...prev, [key]: { type: 'activity', ...res } }));
+        } else {
+          setDetailsCache(prev => ({ ...prev, [key]: { type: 'no_activity' } }));
         }
-      } else if (!isPast && workout.workoutId) {
-        // For future runs: load workout definition (description + planned steps)
+      } else if (workout.workoutId) {
+        // Future/planned run: load workout definition (description + planned steps)
         const res = await fetchWorkoutDetails(workout.workoutId);
         if (res && res.workout) {
           setDetailsCache(prev => ({ ...prev, [key]: { type: 'planned', ...res.workout } }));
+        } else {
+          setDetailsCache(prev => ({ ...prev, [key]: { type: 'planned', description: workout.description || '' } }));
         }
+      } else {
+        // No ids at all – just show whatever we have from the list
+        setDetailsCache(prev => ({ ...prev, [key]: { type: 'planned', description: workout.description || '' } }));
       }
     } catch (err) {
       console.error("Failed to load details", err);
@@ -182,7 +192,7 @@ export default function Plan() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.05 }}
                 key={i} 
-                onClick={() => handleExpand(i, workout, isPast)}
+                onClick={() => handleExpand(i, workout)}
                 className={`p-4 rounded-2xl border cursor-pointer transition-all ${
                   isToday 
                     ? "bg-primary/20 border-primary shadow-[0_0_15px_rgba(59,130,246,0.15)]" 
@@ -265,18 +275,33 @@ export default function Plan() {
                               )}
                             </div>
                           </div>
+                        ) : details?.type === 'no_activity' ? (
+                          <p className="italic text-gray-500">Aktivita sa nenachádza v Garmine (možno ešte nebola synchronizovaná).</p>
                         ) : details?.type === 'planned' ? (
-                          // FUTURE WORKOUT: show planned description
+                          // FUTURE WORKOUT: show planned description and steps
                           <div className="flex flex-col gap-2">
-                            {(details.description || workout.description) && (
+                            {(details.description || workout.description) ? (
                               <p className="whitespace-pre-line text-gray-300">{details.description || workout.description}</p>
-                            )}
-                            {!details.description && !workout.description && (
-                              <p className="italic text-gray-500">K tomuto tréningu nie je uložený popis.</p>
+                            ) : (
+                              <>
+                                {/* Try to build a description from workout steps */}
+                                {details.workoutSegments?.[0]?.workoutSteps?.length > 0 ? (
+                                  <div className="flex flex-col gap-1">
+                                    {details.workoutSegments[0].workoutSteps.map((step: any, si: number) => (
+                                      <div key={si} className="text-xs bg-black/20 rounded-lg p-2">
+                                        <span className="font-bold text-primary capitalize">{step.stepType?.stepTypeKey || 'run'}</span>
+                                        {step.endConditionValue && <span className="text-gray-400 ml-2">{(step.endConditionValue / 1000).toFixed(1)} km</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="italic text-gray-500">K tomuto tréningu nie je uložený popis.</p>
+                                )}
+                              </>
                             )}
                           </div>
                         ) : (
-                          <p className="italic text-gray-500">{isPast ? "Aktivita sa nenašla v Garmine." : (workout.description || "K tomuto tréningu nie je uložený popis.")}</p>
+                          <p className="italic text-gray-500">{workout.description || "Kliknutím načítam detaily tréningu."}</p>
                         )}
                       </div>
                     </motion.div>

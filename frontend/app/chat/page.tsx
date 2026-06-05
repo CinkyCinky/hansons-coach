@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Send, Bot, User, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { sendChatMessage } from "@/lib/api";
@@ -21,6 +21,12 @@ export default function Chat() {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when new message arrives
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +117,8 @@ export default function Chat() {
             </div>
           </motion.div>
         )}
+        {/* Anchor for auto-scroll */}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Suggested chips */}

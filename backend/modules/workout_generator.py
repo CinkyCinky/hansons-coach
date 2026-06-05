@@ -121,7 +121,7 @@ def generate_weekly_plan(profile: dict, constraints: str) -> dict:
     Uisti sa, že vraciaš LEN platný JSON.
     """
     
-    model = genai.GenerativeModel('gemini-3.1-pro')
+    model = genai.GenerativeModel('gemini-2.5-pro')
     response = model.generate_content(system_prompt)
     
     # Parse JSON z odpovede
@@ -212,7 +212,7 @@ def update_next_workout(client, profile: dict) -> dict:
         raise Exception("Gemini API kľúč nie je nastavený.")
         
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-3.1-pro')
+    model = genai.GenerativeModel('gemini-2.5-pro')
     
     system_prompt = f"""
     Zverenec má na dátum {target_date_str} naplánovaný tréning: {old_workout_name}.
