@@ -168,7 +168,7 @@ export default function Dashboard() {
               <span className="font-bold text-sm">HRV</span>
             </div>
             <p className="text-xl font-bold">{hrv.status === 'N/A' ? '--' : hrv.status}</p>
-            <p className="text-xs text-gray-400 mt-1">{hrv.last_night || '--'} ms avg</p>
+            <p className="text-xs text-gray-400 mt-1">{hrv.weekly_avg || '--'} ms avg</p>
           </motion.div>
 
           {/* Body Battery */}
