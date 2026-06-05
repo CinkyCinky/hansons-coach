@@ -170,6 +170,15 @@ def get_scheduled_plan(client = Depends(get_garmin_client)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/plan/workout/{workout_id}")
+def get_workout_details(workout_id: str, client = Depends(get_garmin_client)):
+    """Gets detailed info for a specific workout, including steps"""
+    try:
+        details = client.get_workout(workout_id)
+        return {"workout": details}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 class PlanGenerateRequest(BaseModel):
     constraints: str
 

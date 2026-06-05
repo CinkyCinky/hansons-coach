@@ -175,8 +175,8 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
         
     return garmin_workouts
 
-def update_tomorrow_workout(client, profile: dict) -> dict:
-    """Updates tomorrow's workout dynamically based on LTHR."""
+def update_next_workout(client, profile: dict) -> dict:
+    """Updates the nearest upcoming workout dynamically based on LTHR."""
     try:
         lthr_data = client.get_lactate_threshold()
     except Exception as e:
@@ -189,14 +189,22 @@ def update_tomorrow_workout(client, profile: dict) -> dict:
     else:
         items = scheduled or []
         
-    tomorrow_str = (datetime.date.today() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    tomorrow_workouts = [item for item in items if item.get("date") == tomorrow_str]
+    # Find all workouts from today onwards
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    upcoming_workouts = [
+        item for item in items 
+        if item.get("date") and item.get("date") >= today_str
+    ]
     
-    if not tomorrow_workouts:
-        return {"status": "no_workout", "message": "Na zajtra nie je naplánovaný žiadny tréning."}
+    # Sort by date
+    upcoming_workouts.sort(key=lambda x: x.get("date"))
+    
+    if not upcoming_workouts:
+        return {"status": "no_workout", "message": "Nenašiel sa žiadny naplánovaný tréning na úpravu."}
         
-    old_workout = tomorrow_workouts[0]
-    old_workout_name = old_workout.get("title", old_workout.get("workoutName", "Zajtrajší beh"))
+    old_workout = upcoming_workouts[0]
+    target_date_str = old_workout.get("date")
+    old_workout_name = old_workout.get("title", old_workout.get("workoutName", "Beh"))
     old_workout_id = old_workout.get("workoutId")
     
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -207,7 +215,7 @@ def update_tomorrow_workout(client, profile: dict) -> dict:
     model = genai.GenerativeModel('gemini-2.5-flash')
     
     system_prompt = f"""
-    Zverenec má na zajtra naplánovaný tréning: {old_workout_name}.
+    Zverenec má na dátum {target_date_str} naplánovaný tréning: {old_workout_name}.
     Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
     Jeho aktuálny LTHR (Lactate Threshold) a HR dáta z Garminu: {json.dumps(lthr_data)}
     
@@ -216,7 +224,7 @@ def update_tomorrow_workout(client, profile: dict) -> dict:
     
     Vráť odpoveď VÝLUČNE vo formáte JSON:
     {{
-      "coach_message": "Ahoj! Upravil som ti zajtrajšie tempá podľa tvojho posledného LTHR...",
+      "coach_message": "Ahoj! Upravil som ti najbližší tréning podľa tvojej aktuálnej fyzičky...",
       "workout": {{
         "workout_name": "{old_workout_name} (Updated)",
         "description": "Prepočítaný tréning podľa LTHR.",
@@ -260,6 +268,6 @@ def update_tomorrow_workout(client, profile: dict) -> dict:
         resp = client.upload_running_workout(gw)
         new_id = resp.get("workoutId")
         if new_id:
-            client.schedule_workout(new_id, tomorrow_str)
+            client.schedule_workout(new_id, target_date_str)
             
     return {"status": "success", "message": ai_response.get("coach_message")}

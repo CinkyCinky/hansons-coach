@@ -76,6 +76,10 @@ export async function fetchDailyUpdate() {
   });
 }
 
+export async function fetchWorkoutDetails(workoutId: string) {
+  return await fetchWithAuth(`/api/plan/workout/${workoutId}`);
+}
+
 export async function fetchProfile() {
   return fetchWithAuth('/api/profile');
 }

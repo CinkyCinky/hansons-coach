@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, CheckCircle2, Circle, Clock, Loader2, AlertCircle, Activity } from "lucide-react";
+import { Calendar, CheckCircle2, Circle, Clock, Loader2, AlertCircle, Activity, Flame } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchScheduledPlan, fetchDailyUpdate } from "@/lib/api";
+import { fetchScheduledPlan, fetchDailyUpdate, fetchWorkoutDetails } from "@/lib/api";
 
 export default function Plan() {
   const [workouts, setWorkouts] = useState<any[]>([]);
@@ -12,6 +12,8 @@ export default function Plan() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [detailsCache, setDetailsCache] = useState<Record<string, any>>({});
+  const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     async function loadPlan() {
@@ -52,6 +54,27 @@ export default function Plan() {
       setUpdateMessage({ type: 'error', text: err.message || "Nepodarilo sa prepočítať tréning." });
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const handleExpand = async (index: number, workoutId: string) => {
+    if (expandedId === index) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(index);
+    if (!workoutId || detailsCache[workoutId] || loadingDetails[workoutId]) return;
+
+    try {
+      setLoadingDetails(prev => ({ ...prev, [workoutId]: true }));
+      const res = await fetchWorkoutDetails(workoutId);
+      if (res && res.workout) {
+        setDetailsCache(prev => ({ ...prev, [workoutId]: res.workout }));
+      }
+    } catch (err) {
+      console.error("Failed to load workout details", err);
+    } finally {
+      setLoadingDetails(prev => ({ ...prev, [workoutId]: false }));
     }
   };
 
@@ -98,7 +121,7 @@ export default function Plan() {
           className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-primary p-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 border border-primary/20"
         >
           {isUpdating ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
-          {isUpdating ? "Prepočítavam podľa fyzičky..." : "Prepočítať zajtrajší tréning podľa fyzičky"}
+          {isUpdating ? "Prepočítavam podľa fyzičky..." : "Prepočítať najbližší tréning podľa fyzičky"}
         </button>
       </div>
 
@@ -138,6 +161,9 @@ export default function Plan() {
             const days = ["Ne", "Po", "Ut", "St", "Št", "Pi", "So"];
             const dayName = days[wDate.getDay()];
             const dayNum = wDate.getDate();
+            
+            const details = detailsCache[workout.workoutId];
+            const isLoadingDetails = loadingDetails[workout.workoutId];
 
             return (
               <motion.div 
@@ -145,7 +171,7 @@ export default function Plan() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.05 }}
                 key={i} 
-                onClick={() => setExpandedId(isExpanded ? null : i)}
+                onClick={() => handleExpand(i, workout.workoutId)}
                 className={`p-4 rounded-2xl border cursor-pointer transition-all ${
                   isToday 
                     ? "bg-primary/20 border-primary shadow-[0_0_15px_rgba(59,130,246,0.15)]" 
@@ -180,10 +206,56 @@ export default function Plan() {
                       className="overflow-hidden"
                     >
                       <div className="mt-4 pt-4 border-t border-white/10 text-sm text-gray-300">
-                        {workout.description ? (
-                          <p className="whitespace-pre-line">{workout.description}</p>
+                        {workout.description && (
+                          <p className="whitespace-pre-line mb-3 pb-3 border-b border-white/5">{workout.description}</p>
+                        )}
+                        
+                        {isLoadingDetails ? (
+                          <div className="flex items-center gap-2 text-primary">
+                            <Loader2 className="animate-spin" size={16} /> Načítavam kroky tréningu...
+                          </div>
+                        ) : details && details.workoutSegments ? (
+                          <div className="flex flex-col gap-2">
+                            {details.workoutSegments[0]?.workoutSteps?.map((step: any, stepIdx: number) => {
+                              const stepType = step.stepType?.stepTypeKey || "run";
+                              const distance = step.endConditionValue ? (step.endConditionValue / 1000).toFixed(1) + " km" : "";
+                              
+                              let targetStr = "";
+                              if (step.targetType?.workoutTargetTypeKey === "speed.zone" && step.targetValueOne && step.targetValueTwo) {
+                                // Convert m/s back to pace min/km
+                                const ms1 = step.targetValueOne;
+                                const ms2 = step.targetValueTwo;
+                                const pace1Sec = Math.round(1000 / ms1);
+                                const pace2Sec = Math.round(1000 / ms2);
+                                
+                                const p1m = Math.floor(pace1Sec / 60);
+                                const p1s = (pace1Sec % 60).toString().padStart(2, '0');
+                                const p2m = Math.floor(pace2Sec / 60);
+                                const p2s = (pace2Sec % 60).toString().padStart(2, '0');
+                                
+                                targetStr = `${p1m}:${p1s} - ${p2m}:${p2s}/km`;
+                              }
+
+                              return (
+                                <div key={stepIdx} className="flex justify-between items-center bg-black/20 p-2 rounded-lg">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-gray-400">
+                                      {step.stepOrder}
+                                    </span>
+                                    <span className="capitalize font-medium text-gray-200">
+                                      {stepType === "warmup" ? "Zahriatie" : stepType === "interval" ? "Beh" : stepType === "recovery" ? "Oddych" : stepType === "cooldown" ? "Vychladnutie" : stepType}
+                                    </span>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="font-bold text-white">{distance}</p>
+                                    {targetStr && <p className="text-xs text-primary font-mono">{targetStr}</p>}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         ) : (
-                          <p className="italic text-gray-500">Žiadny detailný popis.</p>
+                          <p className="italic text-gray-500">Tento tréning nemá definované presné kroky v systéme.</p>
                         )}
                       </div>
                     </motion.div>
