@@ -1,0 +1,17 @@
+# Next.js / Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env*.local
+
+# Python / Backend
+backend/__pycache__/
+backend/venv/
+backend/.env
+backend/.garmin_hanson_coach
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
