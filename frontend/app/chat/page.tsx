@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Send, Bot, User, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
+import { sendChatMessage } from "@/lib/api";
 
 type Message = {
   id: string;
@@ -37,22 +38,32 @@ export default function Chat() {
     setIsLoading(true);
 
     try {
-      // In a real implementation this would fetch from /api/chat
-      // Simulating API call for now
-      setTimeout(() => {
-        setMessages(prev => [
-          ...prev,
-          { 
-            id: (Date.now() + 1).toString(), 
-            role: "model", 
-            content: "Výborne! Udržuj tepy pod 140 bpm. Pamätaj, že v prvej fáze budujeme aeróbny motor, takže to má byť naozaj pocitovo pomalé. Držím palce!" 
-          }
-        ]);
-        setIsLoading(false);
-      }, 1500);
+      const historyForApi = messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
       
+      const res = await sendChatMessage(userMsg, historyForApi);
+      
+      setMessages(prev => [
+        ...prev,
+        { 
+          id: (Date.now() + 1).toString(), 
+          role: "model", 
+          content: res.response 
+        }
+      ]);
+      setIsLoading(false);
     } catch (error) {
-      console.error(error);
+      console.error("Chat error:", error);
+      setMessages(prev => [
+        ...prev,
+        { 
+          id: (Date.now() + 1).toString(), 
+          role: "model", 
+          content: "Prepáč, momentálne sa neviem spojiť so serverom. Skús to prosím neskôr." 
+        }
+      ]);
       setIsLoading(false);
     }
   };

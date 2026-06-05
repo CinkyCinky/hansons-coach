@@ -1,10 +1,38 @@
 "use client";
 
-import { Moon, Heart, Battery, Activity, Flame, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Moon, Heart, Battery, Activity, Flame, ChevronRight, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { fetchDashboard } from "@/lib/api";
 
 export default function Dashboard() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchDashboard()
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen">
+        <Loader2 className="animate-spin text-primary" size={48} />
+        <p className="text-gray-400 mt-4 font-bold">Oživujem trénera...</p>
+      </div>
+    );
+  }
+
+  // Prehlad (ak data zlyhaju pouzijeme fallback)
+  const d = data || {};
+  const sleep = d.sleep || { duration_hours: 0, score: 0 };
+  const hrv = d.hrv || { status: 'N/A', last_night_avg: 0 };
+  const stats = d.stats || { body_battery_highest: 0 };
+  const readiness = d.readiness || { readiness_score: 0, readiness_status: 'N/A' };
+  const lastActivity = (d.activities && d.activities.length > 0) ? d.activities[0] : null;
   return (
     <div className="flex flex-col gap-6 pt-4">
       {/* Header */}
@@ -67,8 +95,8 @@ export default function Dashboard() {
               <Moon size={18} />
               <span className="font-bold text-sm">Spánok</span>
             </div>
-            <p className="text-2xl font-bold">8.1h</p>
-            <p className="text-xs text-gray-400 mt-1">Skóre: <span className="text-green-400 font-bold">74</span></p>
+            <p className="text-2xl font-bold">{sleep.duration_hours > 0 ? sleep.duration_hours.toFixed(1) : '--'}h</p>
+            <p className="text-xs text-gray-400 mt-1">Skóre: <span className="text-green-400 font-bold">{sleep.score || '--'}</span></p>
           </motion.div>
 
           {/* HRV */}
@@ -77,8 +105,8 @@ export default function Dashboard() {
               <Heart size={18} />
               <span className="font-bold text-sm">HRV</span>
             </div>
-            <p className="text-xl font-bold">Vyvážený</p>
-            <p className="text-xs text-gray-400 mt-1">50 ms avg</p>
+            <p className="text-xl font-bold">{hrv.status === 'N/A' ? '--' : hrv.status}</p>
+            <p className="text-xs text-gray-400 mt-1">{hrv.last_night_avg || '--'} ms avg</p>
           </motion.div>
 
           {/* Body Battery */}
@@ -87,9 +115,9 @@ export default function Dashboard() {
               <Battery size={18} />
               <span className="font-bold text-sm">Body Battery</span>
             </div>
-            <p className="text-2xl font-bold">55%</p>
+            <p className="text-2xl font-bold">{stats.body_battery_highest || '--'}%</p>
             <div className="w-full bg-gray-800 rounded-full h-1.5 mt-2">
-              <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: '55%' }}></div>
+              <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: `${stats.body_battery_highest || 0}%` }}></div>
             </div>
           </motion.div>
 
@@ -99,8 +127,8 @@ export default function Dashboard() {
               <Activity size={18} />
               <span className="font-bold text-sm">Pripravenosť</span>
             </div>
-            <p className="text-2xl font-bold">57%</p>
-            <p className="text-xs text-gray-400 mt-1">Mierna záťaž</p>
+            <p className="text-2xl font-bold">{readiness.readiness_score || '--'}</p>
+            <p className="text-xs text-gray-400 mt-1 truncate">{readiness.readiness_status}</p>
           </motion.div>
         </div>
       </section>
@@ -109,11 +137,22 @@ export default function Dashboard() {
       <section className="mb-8">
         <Link href="/reports">
           <div className="glass-card p-4 flex items-center justify-between group hover:border-primary/50 transition-colors">
-            <div>
-              <p className="text-xs text-gray-400 mb-1">Včera</p>
-              <h4 className="font-bold text-sm">Easy Run + Kadencia</h4>
-              <p className="text-xs text-gray-500 mt-1">5.2 km • 9:17/km • 136 bpm</p>
-            </div>
+            {lastActivity ? (
+              <div>
+                <p className="text-xs text-gray-400 mb-1">Posledná aktivita</p>
+                <h4 className="font-bold text-sm">{lastActivity.activityName}</h4>
+                <p className="text-xs text-gray-500 mt-1">
+                  {(lastActivity.distance / 1000).toFixed(1)} km • 
+                  {lastActivity.averageSpeed ? (1000 / lastActivity.averageSpeed / 60).toFixed(2).replace('.', ':') : '--'}/km • 
+                  {lastActivity.averageHR || '--'} bpm
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-xs text-gray-400 mb-1">Posledná aktivita</p>
+                <h4 className="font-bold text-sm text-gray-600">Žiadne dáta</h4>
+              </div>
+            )}
             <ChevronRight size={20} className="text-gray-500 group-hover:text-primary transition-colors" />
           </div>
         </Link>
