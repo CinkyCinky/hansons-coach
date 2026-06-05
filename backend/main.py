@@ -318,21 +318,25 @@ def get_activity_stats(activity_id: str, client = Depends(get_garmin_client)):
             pass
 
         # Format the key stats cleanly
-        d = details if isinstance(details, dict) else {}
-        summary = {
-            "distance_km": round(d.get("distance", 0) / 1000, 2) if d.get("distance") else None,
-            "duration_min": round(d.get("duration", 0) / 60, 1) if d.get("duration") else None,
-            "avg_pace_sec_km": round(1000 / d["averageSpeed"]) if d.get("averageSpeed") else None,
-            "avg_hr": d.get("averageHR"),
-            "max_hr": d.get("maxHR"),
-            "avg_cadence": d.get("averageRunningCadenceInStepsPerMinute") or d.get("averageBikingCadenceInRevPerMinute"),
-            "total_ascent": d.get("elevationGain"),
-            "calories": d.get("calories"),
-            "training_effect": d.get("aerobicTrainingEffect"),
-            "hr_zones": d.get("hrTimeInZones") or d.get("heartRateZones"),
+        summary = details.get("summaryDTO", {})
+        stats = {
+            "distance_km": round((summary.get("distance") or 0) / 1000, 2) or None,
+            "duration_min": round((summary.get("duration") or 0) / 60, 1) or None,
+            "avg_pace_sec_km": round(1000 / summary.get("averageSpeed")) if summary.get("averageSpeed") else None,
+            "avg_hr": summary.get("averageHR"),
+            "max_hr": summary.get("maxHR"),
+            "avg_cadence": summary.get("averageRunningCadenceInStepsPerMinute") or summary.get("averageCadence"),
+            "total_ascent": summary.get("elevationGain"),
+            "calories": summary.get("calories"),
+            "training_effect": summary.get("trainingEffect"),
+            "hr_zones": summary.get("hrTimeInZones") or summary.get("heartRateZones"),
             "splits": splits.get("lapDTOs") if splits and isinstance(splits, dict) else None,
         }
-        return {"stats": summary, "name": d.get("activityName", "")}
+        return {
+            "stats": stats, 
+            "activity": details,
+            "splits": splits
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
