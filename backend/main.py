@@ -149,7 +149,7 @@ def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_curr
         except Exception:
             pass
 
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-3.5-flash')
         
         prompt = f"""
         Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca 
@@ -349,7 +349,7 @@ Najbližší naplánovaný tréning: {next_w_str}
     
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
+            model_name="gemini-3.5-flash",
             system_instruction=system_instruction
         )
         
