@@ -96,11 +96,11 @@ def get_dashboard_today(client = Depends(get_garmin_client)):
     yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     
     try:
-        sleep = fetcher.get_sleep_data(client, today)
-        hrv = fetcher.get_hrv_data(client, today)
-        stats = fetcher.get_stats_summary(client, today)
-        readiness = fetcher.get_training_readiness(client, today)
-        activities = fetcher.get_recent_activities(client, limit=5)
+        sleep = fetcher.get_sleep_data(client, days=7)
+        hrv = fetcher.get_hrv_data(client)
+        stats = fetcher.get_stats_summary(client)
+        readiness = fetcher.get_training_readiness(client)
+        activities = fetcher.get_recent_activities(client, days=7)
         
         # Format the data cleanly for frontend
         return {
@@ -109,7 +109,7 @@ def get_dashboard_today(client = Depends(get_garmin_client)):
             "hrv": hrv,
             "stats": stats,
             "readiness": readiness,
-            "activities": activities
+            "activities": activities[:5] if activities else []
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
