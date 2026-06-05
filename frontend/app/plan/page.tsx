@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Calendar, CheckCircle2, Circle, Clock, Loader2, AlertCircle, Activity, Flame } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchScheduledPlan, fetchDailyUpdate, fetchWorkoutDetails, fetchActivityStats } from "@/lib/api";
+import { fetchScheduledPlan, fetchDailyUpdateProposal, confirmDailyUpdate, fetchWorkoutDetails, fetchActivityStats } from "@/lib/api";
 
 export default function Plan() {
   const [workouts, setWorkouts] = useState<any[]>([]);
@@ -14,6 +14,8 @@ export default function Plan() {
   const [updateMessage, setUpdateMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [detailsCache, setDetailsCache] = useState<Record<string, any>>({});
   const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>();
+  const [proposal, setProposal] = useState<any>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   useEffect(() => {
     async function loadPlan() {
@@ -38,15 +40,10 @@ export default function Plan() {
     try {
       setIsUpdating(true);
       setUpdateMessage(null);
-      const res = await fetchDailyUpdate();
+      setProposal(null);
+      const res = await fetchDailyUpdateProposal();
       if (res && res.status === "success") {
-        setUpdateMessage({ type: 'success', text: res.message || "Tréning na zajtra bol úspešne upravený!" });
-        // Znova načítame plán
-        const data = await fetchScheduledPlan();
-        if (data && data.workouts) {
-          const sorted = data.workouts.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-          setWorkouts(sorted);
-        }
+        setProposal(res);
       } else {
         setUpdateMessage({ type: 'error', text: res?.message || "Nepodarilo sa nájsť tréning na úpravu." });
       }
@@ -54,6 +51,33 @@ export default function Plan() {
       setUpdateMessage({ type: 'error', text: err.message || "Nepodarilo sa prepočítať tréning." });
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const handleConfirmUpdate = async () => {
+    if (!proposal) return;
+    try {
+      setIsConfirming(true);
+      setUpdateMessage(null);
+      const res = await confirmDailyUpdate(
+        proposal.proposed_workout, 
+        proposal.old_workout_id, 
+        proposal.target_date_str
+      );
+      if (res && res.status === "success") {
+        setUpdateMessage({ type: 'success', text: "Tréning bol úspešne upravený v Garmine!" });
+        setProposal(null);
+        // Refresh plan
+        const data = await fetchScheduledPlan();
+        if (data && data.workouts) {
+          const sorted = data.workouts.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          setWorkouts(sorted);
+        }
+      }
+    } catch (err: any) {
+      setUpdateMessage({ type: 'error', text: err.message || "Nepodarilo sa uložiť tréning." });
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -136,15 +160,78 @@ export default function Plan() {
       )}
 
       <div className="flex w-full">
-        <button 
-          onClick={handleDailyUpdate}
-          disabled={isUpdating}
-          className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-primary p-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 border border-primary/20"
-        >
-          {isUpdating ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
-          {isUpdating ? "Prepočítavam podľa fyzičky..." : "Prepočítať najbližší tréning podľa fyzičky"}
-        </button>
+        {!proposal && (
+          <button 
+            onClick={handleDailyUpdate}
+            disabled={isUpdating}
+            className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-primary p-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 border border-primary/20"
+          >
+            {isUpdating ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
+            {isUpdating ? "Prepočítavam podľa fyzičky..." : "Prepočítať najbližší tréning podľa fyzičky"}
+          </button>
+        )}
       </div>
+
+      {/* AI Proposal UI */}
+      <AnimatePresence>
+        {proposal && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="glass-card p-5 border border-primary/30 relative overflow-hidden"
+          >
+            <div className="absolute -top-10 -right-10 opacity-5">
+              <Flame size={150} />
+            </div>
+            
+            <h3 className="text-primary font-bold mb-2">Tréner radí</h3>
+            <p className="text-gray-300 text-sm mb-4 italic leading-relaxed">
+              "{proposal.coach_message}"
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              {/* Original Workout */}
+              <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3">
+                <p className="text-xs font-bold text-rose-400 uppercase mb-2">❌ Pôvodný tréning</p>
+                <p className="font-bold">{proposal.original_workout?.title || proposal.original_workout?.workoutName}</p>
+              </div>
+
+              {/* Proposed Workout */}
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                <p className="text-xs font-bold text-emerald-400 uppercase mb-2">✅ AI Návrh</p>
+                <p className="font-bold">{proposal.proposed_workout?.workout_name}</p>
+                <div className="mt-2 flex flex-col gap-1">
+                  {proposal.proposed_workout?.steps?.map((s: any, idx: number) => (
+                    <div key={idx} className="text-xs text-gray-300 flex justify-between bg-black/20 p-1.5 rounded">
+                      <span className="capitalize">{s.type}</span>
+                      <span>{s.distance_km}km @ {s.pace_max}-{s.pace_min}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 relative z-10">
+              <button 
+                onClick={() => setProposal(null)}
+                disabled={isConfirming}
+                className="flex-1 bg-gray-800 hover:bg-gray-700 text-white font-bold py-3 rounded-xl text-sm transition-colors disabled:opacity-50"
+              >
+                Zrušiť návrh
+              </button>
+              <button 
+                onClick={handleConfirmUpdate}
+                disabled={isConfirming}
+                className="flex-1 bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-xl text-sm transition-colors shadow-[0_0_15px_rgba(59,130,246,0.3)] disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isConfirming ? <Loader2 className="animate-spin" size={18} /> : null}
+                {isConfirming ? "Ukladám do Garminu..." : "Schváliť a nahrať"}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Progress Bar */}
       <div className="glass-card p-4">

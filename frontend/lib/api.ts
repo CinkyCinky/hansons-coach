@@ -70,9 +70,17 @@ export async function uploadPlan(planData: any) {
   });
 }
 
-export async function fetchDailyUpdate() {
-  return await fetchWithAuth('/api/plan/daily-update', {
-    method: 'POST'
+export async function fetchDailyUpdateProposal() {
+  return await fetchWithAuth('/api/plan/daily_update', {
+    method: 'GET'
+  });
+}
+
+export async function confirmDailyUpdate(workout: any, old_workout_id: string, target_date_str: string) {
+  return await fetchWithAuth('/api/plan/daily_update/confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workout, old_workout_id, target_date_str })
   });
 }
 

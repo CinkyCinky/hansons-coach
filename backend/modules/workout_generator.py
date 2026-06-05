@@ -245,30 +245,11 @@ def update_next_workout(client, profile: dict) -> dict:
     ai_response = json.loads(text.strip())
     new_w_data = ai_response.get("workout")
     
-    if new_w_data and old_workout_id:
-        try:
-            client.delete_workout(old_workout_id)
-        except Exception:
-            pass # ignorujeme ak neslo zmazat
-            
-        garmin_steps = []
-        for i, s in enumerate(new_w_data.get("steps", [])):
-            garmin_steps.append(create_garmin_step(s, i+1))
-            
-        segment = WorkoutSegment(
-            segmentOrder=1, sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
-            workoutSteps=garmin_steps
-        )
-        gw = RunningWorkout(
-            workoutName=new_w_data.get("workout_name", old_workout_name),
-            description=new_w_data.get("description", ""),
-            estimatedDurationInSecs=0,
-            workoutSegments=[segment]
-        )
-        
-        resp = client.upload_running_workout(gw)
-        new_id = resp.get("workoutId")
-        if new_id:
-            client.schedule_workout(new_id, target_date_str)
-            
-    return {"status": "success", "message": ai_response.get("coach_message")}
+    return {
+        "status": "success", 
+        "coach_message": ai_response.get("coach_message"),
+        "proposed_workout": new_w_data,
+        "original_workout": old_workout,
+        "old_workout_id": old_workout_id,
+        "target_date_str": target_date_str
+    }

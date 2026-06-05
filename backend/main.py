@@ -263,7 +263,7 @@ def get_workout_details(workout_id: str, client = Depends(get_garmin_client)):
                 )
 
                 # Determine target type: HR or speed
-                target_type = (step.get("targetType") or {}).get("workoutTargetTypeKey", "")
+                target_type = str((step.get("targetType") or {}).get("workoutTargetTypeKey") or "")
                 target_str = ""
                 t_low = step.get("targetValueOne")
                 t_high = step.get("targetValueTwo")
@@ -373,18 +373,62 @@ def api_upload_plan(req: PlanUploadRequest, client = Depends(get_garmin_client))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/plan/daily-update")
-def api_daily_update(user_id: str = Depends(get_current_user), client = Depends(get_garmin_client)):
-    """Dynamically recalculates next workout based on recent LTHR metrics"""
-    profile = get_user_profile(user_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profil nenajdený")
-        
+@app.get("/api/plan/daily_update")
+def generate_daily_update(client = Depends(get_garmin_client), user_id: str = Depends(get_current_user)):
+    """Generates an AI proposal for updating the next scheduled workout (does not save to Garmin)"""
     try:
-        result = workout_generator.update_next_workout(client, profile)
-        return result
+        profile = get_user_profile(user_id) or {}
+        proposal = workout_generator.update_next_workout(client, profile)
+        return proposal
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class WorkoutConfirmRequest(BaseModel):
+    workout: dict
+    old_workout_id: str
+    target_date_str: str
+
+@app.post("/api/plan/daily_update/confirm")
+def confirm_daily_update(req: WorkoutConfirmRequest, client = Depends(get_garmin_client)):
+    """Saves the confirmed AI workout to Garmin and deletes the old one"""
+    try:
+        new_w_data = req.workout
+        old_workout_id = req.old_workout_id
+        target_date_str = req.target_date_str
+        
+        garmin_steps = []
+        for i, s in enumerate(new_w_data.get("steps", [])):
+            garmin_steps.append(workout_generator.create_garmin_step(s, i+1))
+            
+        segment = workout_generator.WorkoutSegment(
+            segmentOrder=1, sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+            workoutSteps=garmin_steps
+        )
+        gw = workout_generator.RunningWorkout(
+            workoutName=new_w_data.get("workout_name", "Updated Workout"),
+            description=new_w_data.get("description", ""),
+            estimatedDurationInSecs=0,
+            workoutSegments=[segment]
+        )
+        
+        # Upload new first
+        resp = client.upload_running_workout(gw)
+        new_id = resp.get("workoutId")
+        if new_id:
+            # Schedule the new one
+            client.schedule_workout(new_id, target_date_str)
+            # Delete the old one only if new succeeds
+            if old_workout_id:
+                try:
+                    client.delete_workout(old_workout_id)
+                except Exception:
+                    pass
+            return {"status": "success", "message": "Tréning bol úspešne uložený do Garminu."}
+        else:
+            raise HTTPException(status_code=500, detail="Garmin nevrátil ID nového tréningu.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/chat")
 def chat_with_coach(req: ChatRequest, user_id: str = Depends(get_current_user), client = Depends(get_garmin_client)):
