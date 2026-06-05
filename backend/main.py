@@ -230,49 +230,80 @@ def debug_raw(client = Depends(get_garmin_client)):
 
 @app.get("/api/plan/workout/{workout_id}")
 def get_workout_details(workout_id: str, client = Depends(get_garmin_client)):
-    """Gets detailed info for a specific workout, including steps and description"""
+    """Gets detailed info for a specific workout, including steps, notes, and HR targets"""
     try:
         details = client.get_workout(workout_id)
         if not isinstance(details, dict):
             return {"workout": details}
 
-        # Extract description - Garmin uses different field names
-        description = (
+        # Extract workout-level notes (Garmin calls it "description" or "notes" or "workoutNotes")
+        workout_notes = (
             details.get("description") or
+            details.get("workoutNotes") or
             details.get("workoutDescription") or
             ""
         )
 
-        # Parse workout steps for display
+        # Parse workout steps with full detail (HR targets, descriptions, distances)
         steps_summary = []
+        total_dist_m = 0
         for seg in (details.get("workoutSegments") or []):
             for step in (seg.get("workoutSteps") or []):
                 step_type = (step.get("stepType") or {}).get("stepTypeKey", "run")
-                dist_m = step.get("endConditionValue", 0)
+                dist_m = step.get("endConditionValue", 0) or 0
                 dist_km = round(dist_m / 1000, 1) if dist_m else None
-                # Extract pace from speed targets (m/s -> min/km)
-                pace_str = ""
-                s_low = step.get("targetValueOne")
-                s_high = step.get("targetValueTwo")
-                if s_low and s_high and float(s_low) > 0:
-                    p_fast = round(1000 / float(s_high))
-                    p_slow = round(1000 / float(s_low))
-                    pace_str = f"{p_fast // 60}:{p_fast % 60:02d}-{p_slow // 60}:{p_slow % 60:02d}/km"
+                total_dist_m += dist_m
+
+                # Step-level description/notes
+                step_notes = (
+                    step.get("description") or
+                    step.get("stepNotes") or
+                    step.get("notes") or
+                    ""
+                )
+
+                # Determine target type: HR or speed
+                target_type = (step.get("targetType") or {}).get("workoutTargetTypeKey", "")
+                target_str = ""
+                t_low = step.get("targetValueOne")
+                t_high = step.get("targetValueTwo")
+
+                if "heart" in target_type.lower() and t_low and t_high:
+                    # HR zone target (bpm)
+                    target_str = f"{int(t_low)}-{int(t_high)} bpm"
+                    target_kind = "hr"
+                elif t_low and t_high and float(t_low) > 0:
+                    # Speed target (m/s) → convert to pace min/km
+                    try:
+                        p_fast = round(1000 / float(t_high))
+                        p_slow = round(1000 / float(t_low))
+                        target_str = f"{p_fast // 60}:{p_fast % 60:02d}-{p_slow // 60}:{p_slow % 60:02d}/km"
+                        target_kind = "pace"
+                    except Exception:
+                        target_str = ""
+                        target_kind = "none"
+                else:
+                    target_kind = "none"
+
                 steps_summary.append({
                     "type": step_type,
                     "distance_km": dist_km,
-                    "pace_range": pace_str,
+                    "target": target_str,
+                    "target_kind": target_kind,
+                    "notes": step_notes,
                 })
 
         enriched = {
             **details,
-            "description": description,
+            "description": workout_notes,
             "workoutName": details.get("workoutName", ""),
+            "total_distance_km": round(total_dist_m / 1000, 1) if total_dist_m else None,
             "steps_summary": steps_summary,
         }
         return {"workout": enriched}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/api/plan/activity/{activity_id}")

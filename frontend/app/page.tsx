@@ -118,9 +118,7 @@ export default function Dashboard() {
           </div>
         </div>
         
-        <button className="w-full bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-          Spustiť v Garmin
-        </button>
+
       </motion.section>
 
       {/* AI Advice */}
@@ -204,7 +202,7 @@ export default function Dashboard() {
 
       {/* Last Run */}
       <section className="mb-8">
-        <Link href="/reports">
+        <Link href="/plan">
           <div className="glass-card p-4 flex items-center justify-between group hover:border-primary/50 transition-colors">
             {lastActivity ? (
               <div>

@@ -262,6 +262,7 @@ def update_next_workout(client, profile: dict) -> dict:
         gw = RunningWorkout(
             workoutName=new_w_data.get("workout_name", old_workout_name),
             description=new_w_data.get("description", ""),
+            estimatedDurationInSecs=0,
             workoutSegments=[segment]
         )
         
