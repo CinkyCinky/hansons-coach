@@ -30,23 +30,45 @@ def get_client(user_id: str):
     email = profile["garmin_email"]
     password = decrypt_password(profile["garmin_password_encrypted"])
     token_store = CACHE_DIR / f"{user_id}_tokens"
+    
+    # Ak mame tokeny v databaze, pouzijeme ich a ulozime do tmp (pre kniznicu)
+    db_tokens = profile.get("garmin_tokens")
+    if db_tokens and not token_store.exists():
+        token_store.mkdir(parents=True, exist_ok=True)
+        import json
+        try:
+            with open(token_store / "garth.json", "w") as f:
+                json.dump(db_tokens, f)
+        except Exception:
+            pass
 
     # Skus nacitat ulozene tokeny
-    if token_store.exists() and any(token_store.iterdir()):
+    if token_store.exists():
         try:
             client = Garmin()
             client.login(tokenstore=str(token_store))
             return client
         except Exception as e:
-            pass # token vyprsal, pokracujeme na fresh login
+            pass # token vyprsal alebo padol, pokracujeme na fresh login
 
     # Fresh login
     try:
         client = Garmin(email=email, password=password)
         client.login()
-        # Uloz tokeny do cache pre buduce pouzitie (do dalseho restartu servera)
+        # Uloz tokeny do cache pre buduce pouzitie
         token_store.mkdir(parents=True, exist_ok=True)
         client.client.dump(str(token_store))
+        
+        # Uloz tokeny do Supabase, aby prezili restart Renderu!
+        import json
+        try:
+            with open(token_store / "garth.json", "r") as f:
+                tokens_data = json.load(f)
+                from modules.database import update_user_profile
+                update_user_profile(user_id, {"garmin_tokens": tokens_data})
+        except Exception as e:
+            print("Chyba pri ukladani tokenov do DB:", e)
+            
         return client
     except Exception as e:
         raise Exception(f"Chyba prihlasenia do Garminu: {e}")
