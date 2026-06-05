@@ -76,7 +76,7 @@ export default function Dashboard() {
 
       {/* Error Message */}
       {error && (
-        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm font-bold">
+        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm font-bold break-words">
           Chyba: {error}
           <p className="text-xs font-normal mt-1 text-rose-400/80">Skontroluj heslo do Garminu v Nastaveniach.</p>
         </div>
