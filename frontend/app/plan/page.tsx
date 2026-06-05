@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Calendar, CheckCircle2, Circle, Clock, Loader2, AlertCircle, Activity, Flame } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchScheduledPlan, fetchDailyUpdate, fetchWorkoutDetails } from "@/lib/api";
+import { fetchScheduledPlan, fetchDailyUpdate, fetchWorkoutDetails, fetchActivityStats } from "@/lib/api";
 
 export default function Plan() {
   const [workouts, setWorkouts] = useState<any[]>([]);
@@ -13,7 +13,7 @@ export default function Plan() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [detailsCache, setDetailsCache] = useState<Record<string, any>>({});
-  const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>({});
+  const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>();
 
   useEffect(() => {
     async function loadPlan() {
@@ -57,24 +57,35 @@ export default function Plan() {
     }
   };
 
-  const handleExpand = async (index: number, workoutId: string) => {
+  const handleExpand = async (index: number, workout: any, isPast: boolean) => {
+    const key = workout.workoutId || workout.activityId || String(index);
     if (expandedId === index) {
       setExpandedId(null);
       return;
     }
     setExpandedId(index);
-    if (!workoutId || detailsCache[workoutId] || loadingDetails[workoutId]) return;
+    if (detailsCache[key] || loadingDetails?.[key]) return;
 
     try {
-      setLoadingDetails(prev => ({ ...prev, [workoutId]: true }));
-      const res = await fetchWorkoutDetails(workoutId);
-      if (res && res.workout) {
-        setDetailsCache(prev => ({ ...prev, [workoutId]: res.workout }));
+      setLoadingDetails(prev => ({ ...prev, [key]: true }));
+      
+      if (isPast && workout.activityId) {
+        // For past runs: load real activity stats
+        const res = await fetchActivityStats(workout.activityId);
+        if (res && res.stats) {
+          setDetailsCache(prev => ({ ...prev, [key]: { type: 'activity', ...res } }));
+        }
+      } else if (!isPast && workout.workoutId) {
+        // For future runs: load workout definition (description + planned steps)
+        const res = await fetchWorkoutDetails(workout.workoutId);
+        if (res && res.workout) {
+          setDetailsCache(prev => ({ ...prev, [key]: { type: 'planned', ...res.workout } }));
+        }
       }
     } catch (err) {
-      console.error("Failed to load workout details", err);
+      console.error("Failed to load details", err);
     } finally {
-      setLoadingDetails(prev => ({ ...prev, [workoutId]: false }));
+      setLoadingDetails(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -162,8 +173,8 @@ export default function Plan() {
             const dayName = days[wDate.getDay()];
             const dayNum = wDate.getDate();
             
-            const details = detailsCache[workout.workoutId];
-            const isLoadingDetails = loadingDetails[workout.workoutId];
+            const details = detailsCache[workout.workoutId || workout.activityId || String(i)];
+            const isLoadingDetails = loadingDetails?.[workout.workoutId || workout.activityId || String(i)];
 
             return (
               <motion.div 
@@ -171,7 +182,7 @@ export default function Plan() {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.05 }}
                 key={i} 
-                onClick={() => handleExpand(i, workout.workoutId)}
+                onClick={() => handleExpand(i, workout, isPast)}
                 className={`p-4 rounded-2xl border cursor-pointer transition-all ${
                   isToday 
                     ? "bg-primary/20 border-primary shadow-[0_0_15px_rgba(59,130,246,0.15)]" 
@@ -206,63 +217,66 @@ export default function Plan() {
                       className="overflow-hidden"
                     >
                       <div className="mt-4 pt-4 border-t border-white/10 text-sm text-gray-300">
-                        {workout.description && (
-                          <p className="whitespace-pre-line mb-3 pb-3 border-b border-white/5">{workout.description}</p>
-                        )}
-                        
                         {isLoadingDetails ? (
                           <div className="flex items-center gap-2 text-primary">
-                            <Loader2 className="animate-spin" size={16} /> Načítavam kroky tréningu...
+                            <Loader2 className="animate-spin" size={16} /> Načítavam dáta...
                           </div>
-                        ) : details && details.workoutSegments ? (
-                          <div className="flex flex-col gap-2">
-                            {details.workoutSegments[0]?.workoutSteps?.map((step: any, stepIdx: number) => {
-                              const stepType = step.stepType?.stepTypeKey || "run";
-                              const distance = step.endConditionValue ? (step.endConditionValue / 1000).toFixed(1) + " km" : "";
-                              
-                              let targetStr = "";
-                              if (step.targetType?.workoutTargetTypeKey === "speed.zone" && step.targetValueOne && step.targetValueTwo) {
-                                // Convert m/s back to pace min/km
-                                const ms1 = step.targetValueOne;
-                                const ms2 = step.targetValueTwo;
-                                const pace1Sec = Math.round(1000 / ms1);
-                                const pace2Sec = Math.round(1000 / ms2);
-                                
-                                const p1m = Math.floor(pace1Sec / 60);
-                                const p1s = (pace1Sec % 60).toString().padStart(2, '0');
-                                const p2m = Math.floor(pace2Sec / 60);
-                                const p2s = (pace2Sec % 60).toString().padStart(2, '0');
-                                
-                                targetStr = `${p1m}:${p1s} - ${p2m}:${p2s}/km`;
-                              }
-
-                              return (
-                                <div key={stepIdx} className="flex justify-between items-center bg-black/20 p-2 rounded-lg">
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-xs font-bold text-gray-400">
-                                      {step.stepOrder}
-                                    </span>
-                                    <span className="capitalize font-medium text-gray-200">
-                                      {stepType === "warmup" ? "Zahriatie" : stepType === "interval" ? "Beh" : stepType === "recovery" ? "Oddych" : stepType === "cooldown" ? "Vychladnutie" : stepType}
-                                    </span>
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="font-bold text-white">{distance}</p>
-                                    {targetStr && <p className="text-xs text-primary font-mono">{targetStr}</p>}
-                                  </div>
+                        ) : details?.type === 'activity' ? (
+                          // PAST WORKOUT: show real stats
+                          <div className="flex flex-col gap-3">
+                            <div className="grid grid-cols-2 gap-2">
+                              {details.stats?.distance_km && (
+                                <div className="bg-black/20 p-2 rounded-lg">
+                                  <p className="text-xs text-gray-500">Vzdialenosť</p>
+                                  <p className="font-bold text-white">{details.stats.distance_km} km</p>
                                 </div>
-                              );
-                            })}
+                              )}
+                              {details.stats?.avg_pace_sec_km && (
+                                <div className="bg-black/20 p-2 rounded-lg">
+                                  <p className="text-xs text-gray-500">Priem. tempo</p>
+                                  <p className="font-bold text-primary font-mono">
+                                    {Math.floor(details.stats.avg_pace_sec_km / 60)}:{String(details.stats.avg_pace_sec_km % 60).padStart(2,'0')}/km
+                                  </p>
+                                </div>
+                              )}
+                              {details.stats?.avg_hr && (
+                                <div className="bg-black/20 p-2 rounded-lg">
+                                  <p className="text-xs text-gray-500">Priem. tep</p>
+                                  <p className="font-bold text-rose-400">{details.stats.avg_hr} bpm</p>
+                                </div>
+                              )}
+                              {details.stats?.avg_cadence && (
+                                <div className="bg-black/20 p-2 rounded-lg">
+                                  <p className="text-xs text-gray-500">Kadencia</p>
+                                  <p className="font-bold text-emerald-400">{details.stats.avg_cadence} spm</p>
+                                </div>
+                              )}
+                              {details.stats?.calories && (
+                                <div className="bg-black/20 p-2 rounded-lg">
+                                  <p className="text-xs text-gray-500">Kalórie</p>
+                                  <p className="font-bold text-orange-400">{details.stats.calories} kcal</p>
+                                </div>
+                              )}
+                              {details.stats?.training_effect && (
+                                <div className="bg-black/20 p-2 rounded-lg">
+                                  <p className="text-xs text-gray-500">Aeróbny efekt</p>
+                                  <p className="font-bold text-purple-400">{details.stats.training_effect.toFixed(1)}</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : details?.type === 'planned' ? (
+                          // FUTURE WORKOUT: show planned description
+                          <div className="flex flex-col gap-2">
+                            {(details.description || workout.description) && (
+                              <p className="whitespace-pre-line text-gray-300">{details.description || workout.description}</p>
+                            )}
+                            {!details.description && !workout.description && (
+                              <p className="italic text-gray-500">K tomuto tréningu nie je uložený popis.</p>
+                            )}
                           </div>
                         ) : (
-                          <div className="flex flex-col gap-2">
-                            {details && details.description && !workout.description && (
-                              <p className="whitespace-pre-line text-gray-300">{details.description}</p>
-                            )}
-                            <p className="italic text-gray-500">
-                              {details && details.description ? "" : "Tento tréning nemá definované presné kroky v systéme."}
-                            </p>
-                          </div>
+                          <p className="italic text-gray-500">{isPast ? "Aktivita sa nenašla v Garmine." : (workout.description || "K tomuto tréningu nie je uložený popis.")}</p>
                         )}
                       </div>
                     </motion.div>

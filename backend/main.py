@@ -149,7 +149,7 @@ def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_curr
         except Exception:
             pass
 
-        model = genai.GenerativeModel('gemini-3.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
         
         prompt = f"""
         Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca 
@@ -194,6 +194,36 @@ def get_workout_details(workout_id: str, client = Depends(get_garmin_client)):
     try:
         details = client.get_workout(workout_id)
         return {"workout": details}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/plan/activity/{activity_id}")
+def get_activity_stats(activity_id: str, client = Depends(get_garmin_client)):
+    """Gets real stats from a completed activity by activityId"""
+    try:
+        details = client.get_activity(activity_id)
+        splits = None
+        try:
+            splits = client.get_activity_splits(activity_id)
+        except Exception:
+            pass
+
+        # Format the key stats cleanly
+        d = details if isinstance(details, dict) else {}
+        summary = {
+            "distance_km": round(d.get("distance", 0) / 1000, 2) if d.get("distance") else None,
+            "duration_min": round(d.get("duration", 0) / 60, 1) if d.get("duration") else None,
+            "avg_pace_sec_km": round(1000 / d["averageSpeed"]) if d.get("averageSpeed") else None,
+            "avg_hr": d.get("averageHR"),
+            "max_hr": d.get("maxHR"),
+            "avg_cadence": d.get("averageRunningCadenceInStepsPerMinute") or d.get("averageBikingCadenceInRevPerMinute"),
+            "total_ascent": d.get("elevationGain"),
+            "calories": d.get("calories"),
+            "training_effect": d.get("aerobicTrainingEffect"),
+            "hr_zones": d.get("hrTimeInZones") or d.get("heartRateZones"),
+            "splits": splits.get("lapDTOs") if splits and isinstance(splits, dict) else None,
+        }
+        return {"stats": summary, "name": d.get("activityName", "")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -248,26 +278,78 @@ def api_daily_update(user_id: str = Depends(get_current_user), client = Depends(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-def chat_with_coach(req: ChatRequest, user_id: str = Depends(get_current_user)):
-    """Communicates with Gemini AI acting as the running coach"""
+def chat_with_coach(req: ChatRequest, user_id: str = Depends(get_current_user), client = Depends(get_garmin_client)):
+    """Communicates with Gemini AI acting as the running coach, with full Garmin context"""
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured")
         
-    # Get user profile for customized prompt
     profile = get_user_profile(user_id)
     target_time = profile.get("target_time", "neuvedený") if profile else "neuvedený"
+
+    # Load fresh Garmin context
+    garmin_context = ""
+    try:
+        activities = fetcher.get_recent_activities(client, days=14)
+        sleep_data = fetcher.get_sleep_data(client, days=3)
+        hrv = fetcher.get_hrv_data(client) or {}
+        bb = fetcher.get_body_battery(client) or {}
+        readiness = fetcher.get_training_readiness(client) or {}
+        stats = fetcher.get_stats_summary(client) or {}
+
+        # Last 5 runs summary
+        runs_summary = []
+        for a in (activities or [])[:5]:
+            d_km = round(a.get("distance", 0) / 1000, 1)
+            avg_pace_s = round(1000 / a["averageSpeed"]) if a.get("averageSpeed") else None
+            pace_str = f"{avg_pace_s // 60}:{avg_pace_s % 60:02d}/km" if avg_pace_s else "N/A"
+            runs_summary.append(f"  - {a.get('startTimeLocal','')[:10]}: {d_km}km @ {pace_str}, HR {a.get('averageHR','?')}bpm, kadencia {a.get('averageRunningCadenceInStepsPerMinute','?')} spm")
+
+        # Next workout from calendar
+        next_w_str = "Žiadny naplánovaný tréning."
+        try:
+            now = datetime.datetime.now()
+            scheduled = client.get_scheduled_workouts(now.year, now.month)
+            items = scheduled.get('calendarItems', scheduled.get('workoutScheduledDTOList', [])) if isinstance(scheduled, dict) else scheduled or []
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            upcoming = sorted([i for i in items if i.get("date") and i.get("date") >= today_str], key=lambda x: x.get("date"))
+            if upcoming:
+                nw = upcoming[0]
+                next_w_str = f"{nw.get('date')} – {nw.get('title', 'Beh')}"
+        except Exception:
+            pass
+
+        garmin_context = f"""
+--- AKTUÁLNE GARMIN DÁTA ZVERENCA ---
+Dnešné zdravotné metriky:
+- Body Battery: {bb.get('today_charged', 'N/A')}/100
+- HRV stav: {hrv.get('status', 'N/A')} (weekly avg: {hrv.get('weekly_avg', 'N/A')} ms)
+- Pokojový tep: {stats.get('resting_hr', 'N/A')} bpm
+- Pripravenosť na tréning: {readiness.get('score', 'N/A')}/100
+- Spánok dnes: {sleep_data[0].get('duration_hours', 'N/A') if sleep_data else 'N/A'} hod (skóre: {sleep_data[0].get('score', 'N/A') if sleep_data else 'N/A'})
+
+Posledné behy (posledných 14 dní):
+{chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
+
+Najbližší naplánovaný tréning: {next_w_str}
+--- KONIEC GARMIN DÁT ---
+"""
+    except Exception as e:
+        garmin_context = f"(Garmin dáta sa nepodarilo načítať: {e})"
     
     system_instruction = (
-        f"You are Maros's (and other users') personal AI running coach. "
-        f"You follow the Hansons Advanced Half-Marathon method strictly. "
-        f"The user's goal time is {target_time}. "
-        f"Always be encouraging, professional, and speak in Slovak. "
-        f"Keep responses concise and suitable for a mobile app chat interface."
+        f"Si osobný AI bežecký tréner používateľa. "
+        f"Prísne sa riadíš Hansons Half-Marathon Advanced metódou. "
+        f"Cieľový čas na polmaratón: {target_time}. "
+        f"VŽDY hovor po slovensky. Buď konkrétny, stručný a povzbudivý. "
+        f"Odpovede prispôsob mobilnej aplikácii – max 4-5 viet. "
+        f"Nikdy sa NEPÝTAJ na veci, ktoré vieš z Garmin dát nižšie. "
+        f"Na základe Garmin dát dávaj konkrétne rady. "
+        f"\n{garmin_context}"
     )
     
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-3.5-flash",
+            model_name="gemini-2.0-flash",
             system_instruction=system_instruction
         )
         

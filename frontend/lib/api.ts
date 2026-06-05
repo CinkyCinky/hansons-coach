@@ -80,6 +80,10 @@ export async function fetchWorkoutDetails(workoutId: string) {
   return await fetchWithAuth(`/api/plan/workout/${workoutId}`);
 }
 
+export async function fetchActivityStats(activityId: string) {
+  return await fetchWithAuth(`/api/plan/activity/${activityId}`);
+}
+
 export async function fetchProfile() {
   return fetchWithAuth('/api/profile');
 }
