@@ -10,10 +10,12 @@ export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [advice, setAdvice] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
       try {
+        setError(null);
         const dashboardData = await fetchDashboard();
         setData(dashboardData);
         
@@ -31,8 +33,9 @@ export default function Dashboard() {
             console.error("Failed to load advice", e);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
+        setError(err.message || "Nepodarilo sa načítať dáta z Garminu.");
       } finally {
         setLoading(false);
       }
@@ -57,7 +60,7 @@ export default function Dashboard() {
   const readiness = d.readiness || { readiness_score: 0, readiness_status: 'N/A' };
   const lastActivity = (d.activities && d.activities.length > 0) ? d.activities[0] : null;
   return (
-    <div className="flex flex-col gap-6 pt-4">
+    <div className="flex flex-col gap-6 pt-4 pb-24">
       {/* Header */}
       <header className="flex justify-between items-end">
         <div>
@@ -70,6 +73,14 @@ export default function Dashboard() {
           Týždeň 1 z 18
         </div>
       </header>
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm font-bold">
+          Chyba: {error}
+          <p className="text-xs font-normal mt-1 text-rose-400/80">Skontroluj heslo do Garminu v Nastaveniach.</p>
+        </div>
+      )}
 
       {/* Main Action Card */}
       <motion.section 
