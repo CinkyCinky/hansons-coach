@@ -39,9 +39,17 @@ export default function Plan() {
 
   return (
     <div className="flex flex-col gap-6 pt-4 pb-24">
-      <header>
-        <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
-        <p className="text-gray-400 text-sm">Hanson Advanced Half-Marathon</p>
+      <header className="flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
+          <p className="text-gray-400 text-sm">Hanson Advanced Half-Marathon</p>
+        </div>
+        <button 
+          onClick={() => window.location.href = "/plan/generator"}
+          className="bg-primary hover:bg-blue-600 text-white p-2 rounded-xl text-sm font-bold shadow-[0_0_15px_rgba(59,130,246,0.3)] transition-colors"
+        >
+          Generátor
+        </button>
       </header>
 
       {error && (

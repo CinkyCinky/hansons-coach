@@ -43,6 +43,22 @@ export async function fetchScheduledPlan() {
   return fetchWithAuth('/api/plan/scheduled');
 }
 
+export async function generatePlan(constraints: string) {
+  return fetchWithAuth('/api/plan/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ constraints })
+  });
+}
+
+export async function uploadPlan(plan_data: any) {
+  return fetchWithAuth('/api/plan/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_data })
+  });
+}
+
 export async function fetchProfile() {
   return fetchWithAuth('/api/profile');
 }

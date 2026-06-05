@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.auth import get_client
 from modules import fetcher
 from modules.database import verify_token, get_user_profile, update_user_profile, encrypt_password
+from modules import workout_generator
 
 app = FastAPI(title="Hansons Running Coach API", version="1.0.0")
 security = HTTPBearer()
@@ -158,6 +159,43 @@ def get_scheduled_plan(client = Depends(get_garmin_client)):
             items = scheduled or []
         
         return {"workouts": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class PlanGenerateRequest(BaseModel):
+    constraints: str
+
+@app.post("/api/plan/generate")
+def api_generate_plan(req: PlanGenerateRequest, user_id: str = Depends(get_current_user)):
+    profile = get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profil nenajdený")
+    try:
+        plan_json = workout_generator.generate_weekly_plan(profile, req.constraints)
+        return plan_json
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class PlanUploadRequest(BaseModel):
+    plan_data: dict
+
+@app.post("/api/plan/upload")
+def api_upload_plan(req: PlanUploadRequest, client = Depends(get_garmin_client)):
+    try:
+        garmin_workouts = workout_generator.convert_to_garmin_workouts(req.plan_data)
+        uploaded = []
+        for target_date, workout in garmin_workouts:
+            # 1. Upload workout
+            resp = client.upload_running_workout(workout)
+            workout_id = resp.get("workoutId")
+            
+            if workout_id:
+                # 2. Schedule workout
+                date_str = target_date.strftime("%Y-%m-%d")
+                client.schedule_workout(workout_id, date_str)
+                uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
+                
+        return {"status": "success", "uploaded": uploaded}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
