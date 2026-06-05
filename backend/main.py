@@ -129,17 +129,33 @@ class AdviceRequest(BaseModel):
     readiness: Optional[int] = None
 
 @app.post("/api/dashboard/advice")
-def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_current_user)):
-    """Generates a short, punchy AI advice based on today's metrics"""
+def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_current_user), client = Depends(get_garmin_client)):
+    """Generates a short, punchy AI advice based on today's metrics and next workout"""
     if not GEMINI_API_KEY:
         return {"advice": "Pre plnohodnotné rady si nastav Gemini API kľúč."}
         
     try:
+        next_workout_str = "Dnes/Zajtra ťa nečaká žiadny špecifický tréning."
+        try:
+            now = datetime.datetime.now()
+            scheduled = client.get_scheduled_workouts(now.year, now.month)
+            items = scheduled.get('calendarItems', scheduled.get('workoutScheduledDTOList', [])) if isinstance(scheduled, dict) else scheduled or []
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            upcoming = [item for item in items if item.get("date") and item.get("date") >= today_str]
+            upcoming.sort(key=lambda x: x.get("date"))
+            if upcoming:
+                nw = upcoming[0]
+                next_workout_str = f"Najbližší naplánovaný tréning: {nw.get('date')} - {nw.get('title', 'Beh')}"
+        except Exception:
+            pass
+
         model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""
         Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca 
         a daj mu 2-3 krátke a úderné vety s odporúčaním na dnešný deň.
+        Ak je najbližší tréning blízko a hodnoty zverenca (Body Battery, Spánok) sú slabé, 
+        odporúč mu, nech si v sekcii Plán 'Prepočíta najbližší tréning'. Ak sú hodnoty super, povzbuď ho, že to zvládne.
         Používaj slovenčinu, buď povzbudivý, občas použi emoji.
         
         Dnešné dáta z Garminu:
@@ -147,6 +163,8 @@ def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_curr
         - HRV: {metrics.hrv_status}
         - Body Battery: {metrics.body_battery}/100
         - Pripravenosť na tréning: {metrics.readiness}/100
+        
+        {next_workout_str}
         """
         
         response = model.generate_content(prompt)
@@ -218,13 +236,13 @@ def api_upload_plan(req: PlanUploadRequest, client = Depends(get_garmin_client))
 
 @app.post("/api/plan/daily-update")
 def api_daily_update(user_id: str = Depends(get_current_user), client = Depends(get_garmin_client)):
-    """Dynamically recalculates tomorrow's workout based on recent LTHR metrics"""
+    """Dynamically recalculates next workout based on recent LTHR metrics"""
     profile = get_user_profile(user_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profil nenajdený")
         
     try:
-        result = workout_generator.update_tomorrow_workout(client, profile)
+        result = workout_generator.update_next_workout(client, profile)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -249,7 +267,7 @@ def chat_with_coach(req: ChatRequest, user_id: str = Depends(get_current_user)):
     
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-pro",
+            model_name="gemini-2.5-flash",
             system_instruction=system_instruction
         )
         

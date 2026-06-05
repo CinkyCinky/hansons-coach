@@ -255,7 +255,14 @@ export default function Plan() {
                             })}
                           </div>
                         ) : (
-                          <p className="italic text-gray-500">Tento tréning nemá definované presné kroky v systéme.</p>
+                          <div className="flex flex-col gap-2">
+                            {details && details.description && !workout.description && (
+                              <p className="whitespace-pre-line text-gray-300">{details.description}</p>
+                            )}
+                            <p className="italic text-gray-500">
+                              {details && details.description ? "" : "Tento tréning nemá definované presné kroky v systéme."}
+                            </p>
+                          </div>
                         )}
                       </div>
                     </motion.div>
