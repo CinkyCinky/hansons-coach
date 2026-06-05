@@ -278,26 +278,55 @@ export default function Plan() {
                         ) : details?.type === 'no_activity' ? (
                           <p className="italic text-gray-500">Aktivita sa nenachádza v Garmine (možno ešte nebola synchronizovaná).</p>
                         ) : details?.type === 'planned' ? (
-                          // FUTURE WORKOUT: show planned description and steps
-                          <div className="flex flex-col gap-2">
-                            {(details.description || workout.description) ? (
-                              <p className="whitespace-pre-line text-gray-300">{details.description || workout.description}</p>
-                            ) : (
-                              <>
-                                {/* Try to build a description from workout steps */}
-                                {details.workoutSegments?.[0]?.workoutSteps?.length > 0 ? (
-                                  <div className="flex flex-col gap-1">
-                                    {details.workoutSegments[0].workoutSteps.map((step: any, si: number) => (
-                                      <div key={si} className="text-xs bg-black/20 rounded-lg p-2">
-                                        <span className="font-bold text-primary capitalize">{step.stepType?.stepTypeKey || 'run'}</span>
-                                        {step.endConditionValue && <span className="text-gray-400 ml-2">{(step.endConditionValue / 1000).toFixed(1)} km</span>}
+                          // FUTURE WORKOUT: show description + structured steps
+                          <div className="flex flex-col gap-3">
+                            {/* Description text if available */}
+                            {(details.description || workout.description) && (
+                              <p className="whitespace-pre-line text-gray-300 text-sm">{details.description || workout.description}</p>
+                            )}
+                            {/* Structured steps from backend steps_summary */}
+                            {details.steps_summary?.length > 0 ? (
+                              <div className="flex flex-col gap-1">
+                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">Štruktúra tréningu</p>
+                                {details.steps_summary.map((step: any, si: number) => {
+                                  const typeColors: Record<string, string> = {
+                                    warmup: "text-amber-400",
+                                    interval: "text-rose-400",
+                                    run: "text-primary",
+                                    recovery: "text-emerald-400",
+                                    cooldown: "text-blue-300",
+                                  };
+                                  const typeLabels: Record<string, string> = {
+                                    warmup: "Rozcvičenie",
+                                    interval: "Intervalový beh",
+                                    run: "Beh",
+                                    recovery: "Zotavenie",
+                                    cooldown: "Výklus",
+                                  };
+                                  return (
+                                    <div key={si} className="flex items-center justify-between bg-black/20 rounded-lg px-3 py-2">
+                                      <span className={`font-bold text-sm ${typeColors[step.type] || "text-primary"}`}>
+                                        {typeLabels[step.type] || step.type}
+                                      </span>
+                                      <div className="flex items-center gap-3 text-xs text-gray-400">
+                                        {step.distance_km && <span>{step.distance_km} km</span>}
+                                        {step.pace_range && <span className="font-mono text-gray-300">{step.pace_range}</span>}
                                       </div>
-                                    ))}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : details.workoutSegments?.[0]?.workoutSteps?.length > 0 ? (
+                              <div className="flex flex-col gap-1">
+                                {details.workoutSegments[0].workoutSteps.map((step: any, si: number) => (
+                                  <div key={si} className="text-xs bg-black/20 rounded-lg p-2 flex justify-between">
+                                    <span className="font-bold text-primary capitalize">{step.stepType?.stepTypeKey || 'run'}</span>
+                                    {step.endConditionValue && <span className="text-gray-400">{(step.endConditionValue / 1000).toFixed(1)} km</span>}
                                   </div>
-                                ) : (
-                                  <p className="italic text-gray-500">K tomuto tréningu nie je uložený popis.</p>
-                                )}
-                              </>
+                                ))}
+                              </div>
+                            ) : !details.description && !workout.description && (
+                              <p className="italic text-gray-500 text-sm">K tomuto tréningu nie je uložený popis.</p>
                             )}
                           </div>
                         ) : (

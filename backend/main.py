@@ -174,7 +174,7 @@ def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_curr
 
 @app.get("/api/plan/scheduled")
 def get_scheduled_plan(client = Depends(get_garmin_client)):
-    """Gets scheduled workouts from the Garmin calendar"""
+    """Gets scheduled workouts from the Garmin calendar, enriched with activityId for completed runs"""
     now = datetime.datetime.now()
     try:
         scheduled = client.get_scheduled_workouts(now.year, now.month)
@@ -184,18 +184,96 @@ def get_scheduled_plan(client = Depends(get_garmin_client)):
         else:
             items = scheduled or []
         
+        # Enrich past items with activityId by matching real activities by date
+        today_str = datetime.date.today().strftime("%Y-%m-%d")
+        try:
+            recent_activities = fetcher.get_recent_activities(client, days=35) or []
+            # Build date -> list of activities map
+            act_by_date: Dict[str, list] = {}
+            for act in recent_activities:
+                act_date = (act.get("startTimeLocal") or "")[:10]
+                if act_date:
+                    act_by_date.setdefault(act_date, []).append(act)
+            
+            # Match each past calendar item to the closest activity on the same date
+            for item in items:
+                item_date = (item.get("date") or "")[:10]
+                # Only enrich past items that don't already have an activityId
+                if item_date and item_date < today_str and not item.get("activityId"):
+                    day_acts = act_by_date.get(item_date, [])
+                    if day_acts:
+                        # Pick first running activity on that date
+                        running = [a for a in day_acts if (a.get("activityType", {}).get("typeKey") or "").lower() in ("running", "track_running", "treadmill_running")]
+                        chosen = running[0] if running else day_acts[0]
+                        item["activityId"] = chosen.get("activityId")
+                        item["activityName"] = chosen.get("activityName", "")
+        except Exception as enrich_err:
+            print(f"Activity enrichment failed: {enrich_err}")
+        
         return {"workouts": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/debug/raw")
+def debug_raw(client = Depends(get_garmin_client)):
+    """Debug endpoint: returns raw Garmin data to inspect field names"""
+    now = datetime.datetime.now()
+    try:
+        scheduled_raw = client.get_scheduled_workouts(now.year, now.month)
+        activities_raw = client.get_activities(0, 5)
+        return {
+            "scheduled_raw": scheduled_raw,
+            "activities_raw": activities_raw,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/plan/workout/{workout_id}")
 def get_workout_details(workout_id: str, client = Depends(get_garmin_client)):
-    """Gets detailed info for a specific workout, including steps"""
+    """Gets detailed info for a specific workout, including steps and description"""
     try:
         details = client.get_workout(workout_id)
-        return {"workout": details}
+        if not isinstance(details, dict):
+            return {"workout": details}
+
+        # Extract description - Garmin uses different field names
+        description = (
+            details.get("description") or
+            details.get("workoutDescription") or
+            ""
+        )
+
+        # Parse workout steps for display
+        steps_summary = []
+        for seg in (details.get("workoutSegments") or []):
+            for step in (seg.get("workoutSteps") or []):
+                step_type = (step.get("stepType") or {}).get("stepTypeKey", "run")
+                dist_m = step.get("endConditionValue", 0)
+                dist_km = round(dist_m / 1000, 1) if dist_m else None
+                # Extract pace from speed targets (m/s -> min/km)
+                pace_str = ""
+                s_low = step.get("targetValueOne")
+                s_high = step.get("targetValueTwo")
+                if s_low and s_high and float(s_low) > 0:
+                    p_fast = round(1000 / float(s_high))
+                    p_slow = round(1000 / float(s_low))
+                    pace_str = f"{p_fast // 60}:{p_fast % 60:02d}-{p_slow // 60}:{p_slow % 60:02d}/km"
+                steps_summary.append({
+                    "type": step_type,
+                    "distance_km": dist_km,
+                    "pace_range": pace_str,
+                })
+
+        enriched = {
+            **details,
+            "description": description,
+            "workoutName": details.get("workoutName", ""),
+            "steps_summary": steps_summary,
+        }
+        return {"workout": enriched}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/plan/activity/{activity_id}")
 def get_activity_stats(activity_id: str, client = Depends(get_garmin_client)):
