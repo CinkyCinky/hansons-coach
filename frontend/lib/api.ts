@@ -62,11 +62,17 @@ export async function generatePlan(constraints: string) {
   });
 }
 
-export async function uploadPlan(plan_data: any) {
-  return fetchWithAuth('/api/plan/upload', {
+export async function uploadPlan(planData: any) {
+  return await fetchWithAuth('/api/plan/upload', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_data })
+    body: JSON.stringify({ plan_data: planData })
+  });
+}
+
+export async function fetchDailyUpdate() {
+  return await fetchWithAuth('/api/plan/daily-update', {
+    method: 'POST'
   });
 }
 

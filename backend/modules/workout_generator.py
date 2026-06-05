@@ -174,3 +174,92 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
         garmin_workouts.append((target_date, garmin_workout))
         
     return garmin_workouts
+
+def update_tomorrow_workout(client, profile: dict) -> dict:
+    """Updates tomorrow's workout dynamically based on LTHR."""
+    try:
+        lthr_data = client.get_lactate_threshold()
+    except Exception as e:
+        lthr_data = {"error": str(e)}
+        
+    now = datetime.datetime.now()
+    scheduled = client.get_scheduled_workouts(now.year, now.month)
+    if isinstance(scheduled, dict):
+        items = scheduled.get('calendarItems', scheduled.get('workoutScheduledDTOList', []))
+    else:
+        items = scheduled or []
+        
+    tomorrow_str = (datetime.date.today() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    tomorrow_workouts = [item for item in items if item.get("date") == tomorrow_str]
+    
+    if not tomorrow_workouts:
+        return {"status": "no_workout", "message": "Na zajtra nie je naplánovaný žiadny tréning."}
+        
+    old_workout = tomorrow_workouts[0]
+    old_workout_name = old_workout.get("title", old_workout.get("workoutName", "Zajtrajší beh"))
+    old_workout_id = old_workout.get("workoutId")
+    
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        raise Exception("Gemini API kľúč nie je nastavený.")
+        
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    system_prompt = f"""
+    Zverenec má na zajtra naplánovaný tréning: {old_workout_name}.
+    Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
+    Jeho aktuálny LTHR (Lactate Threshold) a HR dáta z Garminu: {json.dumps(lthr_data)}
+    
+    Úloha: Prepočítaj tento jeden tréning (Hanson Half-Marathon Method) tak, aby presne zodpovedal jeho fyzičke. 
+    Ak nemáš dobré LTHR dáta, sprav miernu úpravu podľa bežných Hanson pravidiel.
+    
+    Vráť odpoveď VÝLUČNE vo formáte JSON:
+    {{
+      "coach_message": "Ahoj! Upravil som ti zajtrajšie tempá podľa tvojho posledného LTHR...",
+      "workout": {{
+        "workout_name": "{old_workout_name} (Updated)",
+        "description": "Prepočítaný tréning podľa LTHR.",
+        "steps": [
+          {{ "type": "warmup", "distance_km": 2.0, "pace_min": "6:30", "pace_max": "6:00" }},
+          {{ "type": "run", "distance_km": 5.0, "pace_min": "5:30", "pace_max": "5:20" }},
+          {{ "type": "cooldown", "distance_km": 2.0, "pace_min": "6:30", "pace_max": "6:00" }}
+        ]
+      }}
+    }}
+    """
+    
+    response = model.generate_content(system_prompt)
+    text = response.text.strip()
+    if text.startswith("```json"): text = text.replace("```json", "", 1)
+    if text.endswith("```"): text = text[:text.rfind("```")]
+    
+    ai_response = json.loads(text.strip())
+    new_w_data = ai_response.get("workout")
+    
+    if new_w_data and old_workout_id:
+        try:
+            client.delete_workout(old_workout_id)
+        except Exception:
+            pass # ignorujeme ak neslo zmazat
+            
+        garmin_steps = []
+        for i, s in enumerate(new_w_data.get("steps", [])):
+            garmin_steps.append(create_garmin_step(s, i+1))
+            
+        segment = WorkoutSegment(
+            segmentOrder=1, sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+            workoutSteps=garmin_steps
+        )
+        gw = RunningWorkout(
+            workoutName=new_w_data.get("workout_name", old_workout_name),
+            description=new_w_data.get("description", ""),
+            workoutSegments=[segment]
+        )
+        
+        resp = client.upload_running_workout(gw)
+        new_id = resp.get("workoutId")
+        if new_id:
+            client.schedule_workout(new_id, tomorrow_str)
+            
+    return {"status": "success", "message": ai_response.get("coach_message")}

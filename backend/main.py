@@ -207,6 +207,19 @@ def api_upload_plan(req: PlanUploadRequest, client = Depends(get_garmin_client))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/plan/daily-update")
+def api_daily_update(user_id: str = Depends(get_current_user), client = Depends(get_garmin_client)):
+    """Dynamically recalculates tomorrow's workout based on recent LTHR metrics"""
+    profile = get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profil nenajdený")
+        
+    try:
+        result = workout_generator.update_tomorrow_workout(client, profile)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/chat")
 def chat_with_coach(req: ChatRequest, user_id: str = Depends(get_current_user)):
     """Communicates with Gemini AI acting as the running coach"""

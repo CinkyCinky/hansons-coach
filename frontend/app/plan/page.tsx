@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, CheckCircle2, Circle, Clock, Loader2, AlertCircle } from "lucide-react";
+import { Calendar, CheckCircle2, Circle, Clock, Loader2, AlertCircle, Activity } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchScheduledPlan } from "@/lib/api";
+import { fetchScheduledPlan, fetchDailyUpdate } from "@/lib/api";
 
 export default function Plan() {
   const [workouts, setWorkouts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
   useEffect(() => {
     async function loadPlan() {
@@ -29,6 +31,29 @@ export default function Plan() {
     }
     loadPlan();
   }, []);
+
+  const handleDailyUpdate = async () => {
+    try {
+      setIsUpdating(true);
+      setUpdateMessage(null);
+      const res = await fetchDailyUpdate();
+      if (res && res.status === "success") {
+        setUpdateMessage({ type: 'success', text: res.message || "Tréning na zajtra bol úspešne upravený!" });
+        // Znova načítame plán
+        const data = await fetchScheduledPlan();
+        if (data && data.workouts) {
+          const sorted = data.workouts.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          setWorkouts(sorted);
+        }
+      } else {
+        setUpdateMessage({ type: 'error', text: res?.message || "Nepodarilo sa nájsť tréning na úpravu." });
+      }
+    } catch (err: any) {
+      setUpdateMessage({ type: 'error', text: err.message || "Nepodarilo sa prepočítať tréning." });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -59,6 +84,23 @@ export default function Plan() {
           Chyba: {error}
         </div>
       )}
+
+      {updateMessage && (
+        <div className={`p-4 rounded-xl text-sm font-bold break-words border ${updateMessage.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+          {updateMessage.text}
+        </div>
+      )}
+
+      <div className="flex w-full">
+        <button 
+          onClick={handleDailyUpdate}
+          disabled={isUpdating}
+          className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-primary p-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 border border-primary/20"
+        >
+          {isUpdating ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
+          {isUpdating ? "Prepočítavam podľa fyzičky..." : "Prepočítať zajtrajší tréning podľa fyzičky"}
+        </button>
+      </div>
 
       {/* Progress Bar */}
       <div className="glass-card p-4">
