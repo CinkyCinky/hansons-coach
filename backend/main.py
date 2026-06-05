@@ -113,6 +113,38 @@ def get_dashboard_today(client = Depends(get_garmin_client)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class AdviceRequest(BaseModel):
+    sleep_score: Optional[int] = None
+    hrv_status: Optional[str] = None
+    body_battery: Optional[int] = None
+    readiness: Optional[int] = None
+
+@app.post("/api/dashboard/advice")
+def get_dashboard_advice(metrics: AdviceRequest, user_id: str = Depends(get_current_user)):
+    """Generates a short, punchy AI advice based on today's metrics"""
+    if not GEMINI_API_KEY:
+        return {"advice": "Pre plnohodnotné rady si nastav Gemini API kľúč."}
+        
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = f"""
+        Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca 
+        a daj mu 2-3 krátke a úderné vety s odporúčaním na dnešný deň.
+        Používaj slovenčinu, buď povzbudivý, občas použi emoji.
+        
+        Dnešné dáta z Garminu:
+        - Spánok: {metrics.sleep_score}/100
+        - HRV: {metrics.hrv_status}
+        - Body Battery: {metrics.body_battery}/100
+        - Pripravenosť na tréning: {metrics.readiness}/100
+        """
+        
+        response = model.generate_content(prompt)
+        return {"advice": response.text.strip()}
+    except Exception as e:
+        return {"advice": "Dnes ťa neviem zhodnotiť, bež podľa pocitu! 🏃‍♂️"}
+
 @app.get("/api/plan/scheduled")
 def get_scheduled_plan(client = Depends(get_garmin_client)):
     """Gets scheduled workouts from the Garmin calendar"""

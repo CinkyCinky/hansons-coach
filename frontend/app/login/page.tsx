@@ -28,6 +28,7 @@ export default function Login() {
         });
         if (error) throw error;
         router.push("/");
+        router.refresh();
       } else {
         const { error } = await supabase.auth.signUp({
           email,

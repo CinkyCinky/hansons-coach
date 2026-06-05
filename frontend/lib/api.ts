@@ -24,6 +24,14 @@ export async function fetchDashboard() {
   return fetchWithAuth('/api/dashboard/today');
 }
 
+export async function fetchDashboardAdvice(metrics: any) {
+  return fetchWithAuth('/api/dashboard/advice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(metrics)
+  });
+}
+
 export async function fetchScheduledPlan() {
   return fetchWithAuth('/api/plan/scheduled');
 }

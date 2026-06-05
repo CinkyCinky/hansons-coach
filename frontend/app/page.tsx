@@ -1,20 +1,43 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Moon, Heart, Battery, Activity, Flame, ChevronRight, Loader2 } from "lucide-react";
+import { Moon, Heart, Battery, Activity, Flame, ChevronRight, Loader2, Bot } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { fetchDashboard } from "@/lib/api";
+import { fetchDashboard, fetchDashboardAdvice } from "@/lib/api";
 
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
+  const [advice, setAdvice] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchDashboard()
-      .then(setData)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    async function loadData() {
+      try {
+        const dashboardData = await fetchDashboard();
+        setData(dashboardData);
+        
+        // Fetch advice in the background
+        if (dashboardData) {
+          try {
+            const adviceData = await fetchDashboardAdvice({
+              sleep_score: dashboardData.sleep?.score,
+              hrv_status: dashboardData.hrv?.status,
+              body_battery: dashboardData.stats?.body_battery_highest,
+              readiness: dashboardData.readiness?.readiness_score
+            });
+            setAdvice(adviceData.advice);
+          } catch (e) {
+            console.error("Failed to load advice", e);
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
   }, []);
 
   if (loading) {
@@ -81,6 +104,34 @@ export default function Dashboard() {
           Spustiť v Garmin
         </button>
       </motion.section>
+
+      {/* AI Advice */}
+      {data && (
+        <motion.section 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 relative overflow-hidden"
+        >
+          <div className="absolute -right-6 -bottom-6 opacity-5">
+            <Bot size={100} />
+          </div>
+          <div className="flex gap-3 relative z-10">
+            <div className="mt-1 bg-blue-500/20 p-2 rounded-xl text-primary flex-shrink-0 h-min">
+              <Bot size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-1">Tréner radí</h3>
+              {advice ? (
+                <p className="text-sm text-gray-200 leading-relaxed font-medium">{advice}</p>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-gray-400 mt-1">
+                  <Loader2 size={14} className="animate-spin" /> Tréner analyzuje tvoj stav...
+                </div>
+              )}
+            </div>
+          </div>
+        </motion.section>
+      )}
 
       {/* Metrics Grid */}
       <section>
