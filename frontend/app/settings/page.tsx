@@ -1,113 +1,134 @@
 "use client";
 
-import { useState } from "react";
-import { Settings as SettingsIcon, LogOut, Save, Target, Cloud, Bell } from "lucide-react";
-import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
+import { User, Target, Bell, LogOut, Cloud, Save, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
+import { fetchProfile, updateProfile } from "@/lib/api";
 
 export default function Settings() {
+  const supabase = createClient();
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [targetTime, setTargetTime] = useState("1:50:00");
-  const [notifications, setNotifications] = useState(true);
+
+  useEffect(() => {
+    fetchProfile().then(profile => {
+      if (profile.garmin_email) setEmail(profile.garmin_email);
+      if (profile.target_time) setTargetTime(profile.target_time);
+      setLoading(false);
+    }).catch(err => {
+      console.error(err);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMessage("");
+    try {
+      await updateProfile({
+        garmin_email: email,
+        garmin_password: password || undefined,
+        target_time: targetTime
+      });
+      setMessage("Profil úspešne uložený!");
+      setPassword(""); // Clear password field after save
+    } catch (err) {
+      setMessage("Chyba pri ukladaní profilu.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <Loader2 className="animate-spin text-primary" size={32} />
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col gap-6 pt-4 pb-10">
-      <header>
-        <h1 className="text-3xl font-bold mb-1">Nastavenia</h1>
+    <div className="flex flex-col gap-6 pt-4 pb-24">
+      <div className="mb-2">
+        <h1 className="text-2xl font-bold">Nastavenia</h1>
         <p className="text-gray-400 text-sm">Spravuj svoj profil a ciele</p>
-      </header>
+      </div>
 
-      {/* Profile / Account */}
       <section>
-        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">
-          Garmin Účet
-        </h3>
-        <div className="glass-card rounded-2xl overflow-hidden divide-y divide-white/5">
-          <div className="p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
-                <Cloud className="text-blue-400" size={20} />
-              </div>
-              <div>
-                <p className="font-bold">Pripojené</p>
-                <p className="text-xs text-gray-400">Synchronizácia funguje</p>
-              </div>
-            </div>
-            <span className="bg-emerald-500/20 text-emerald-400 text-xs font-bold px-2 py-1 rounded-md">
-              Aktívne
-            </span>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1">Garmin Účet</h3>
+        <div className="glass-card p-4 flex flex-col gap-4">
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Prihlasovací e-mail</label>
+            <input 
+              type="email" 
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+              placeholder="napr. janko@gmail.com"
+            />
           </div>
-          <button className="w-full p-4 flex items-center justify-center gap-2 text-rose-400 hover:bg-white/5 transition-colors font-bold text-sm">
-            <LogOut size={16} /> Odhlásiť sa z Garminu
-          </button>
-        </div>
-      </section>
-
-      {/* Training Plan */}
-      <section>
-        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">
-          Tréningový Plán
-        </h3>
-        <div className="glass-card rounded-2xl overflow-hidden divide-y divide-white/5">
-          <div className="p-4 flex flex-col gap-2">
-            <label className="flex items-center gap-2 text-sm text-gray-300">
-              <Target size={16} className="text-accent" /> Cieľový čas polmaratónu
-            </label>
-            <div className="flex gap-2">
-              <input 
-                type="text" 
-                value={targetTime}
-                onChange={(e) => setTargetTime(e.target.value)}
-                className="bg-[#1a1a24] border border-white/10 rounded-lg px-3 py-2 text-white font-bold w-full focus:outline-none focus:border-primary/50"
-              />
-              <button className="bg-primary hover:bg-blue-600 px-4 py-2 rounded-lg transition-colors flex items-center justify-center">
-                <Save size={18} />
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">Z cieľového času sa počítajú tvoje tempá.</p>
-          </div>
-          
-          <div className="p-4 flex items-center justify-between">
-            <div>
-              <p className="font-bold text-sm text-gray-300">Základný plán</p>
-              <p className="text-xs text-gray-500">Hansons Advanced</p>
-            </div>
-            <span className="text-sm">18 týždňov</span>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Heslo (vyplň len ak ho meníš)</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+              placeholder="••••••••"
+            />
           </div>
         </div>
       </section>
 
-      {/* Notifications */}
       <section>
-        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">
-          Aplikácia
-        </h3>
-        <div className="glass-card rounded-2xl overflow-hidden">
-          <div className="p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center">
-                <Bell className="text-indigo-400" size={16} />
-              </div>
-              <div>
-                <p className="font-bold text-sm text-gray-300">Ranné notifikácie</p>
-                <p className="text-xs text-gray-500">Denný report o 8:30</p>
-              </div>
-            </div>
-            {/* Toggle switch */}
-            <button 
-              onClick={() => setNotifications(!notifications)}
-              className={`w-12 h-6 rounded-full p-1 transition-colors relative ${notifications ? 'bg-primary' : 'bg-gray-700'}`}
-            >
-              <motion.div 
-                className="w-4 h-4 bg-white rounded-full absolute"
-                animate={{ left: notifications ? '26px' : '4px' }}
-                transition={{ type: "spring", stiffness: 500, damping: 30 }}
-              />
-            </button>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1">Tréningový Plán</h3>
+        <div className="glass-card p-4 flex flex-col gap-4">
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Cieľový čas polmaratónu</label>
+            <input 
+              type="text" 
+              value={targetTime}
+              onChange={e => setTargetTime(e.target.value)}
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+              placeholder="napr. 1:50:00"
+            />
           </div>
         </div>
       </section>
+
+      {message && <p className={`text-sm font-bold text-center ${message.includes('Chyba') ? 'text-rose-400' : 'text-emerald-400'}`}>{message}</p>}
+
+      <button 
+        onClick={handleSave}
+        disabled={saving}
+        className="bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex justify-center items-center gap-2"
+      >
+        {saving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+        {saving ? "Ukladám..." : "Uložiť profil"}
+      </button>
+
+      <button 
+        onClick={handleLogout}
+        className="w-full py-4 text-rose-400 font-bold flex justify-center items-center gap-2 mt-4"
+      >
+        <LogOut size={18} />
+        Odhlásiť sa z aplikácie
+      </button>
 
       <div className="text-center mt-8 text-xs text-gray-600">
-        <p>Hansons Running Coach v1.0.0</p>
+        <p>Hansons Running Coach v1.0.0 (SaaS)</p>
         <p>Postavené s Antigravity AI</p>
       </div>
     </div>

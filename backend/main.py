@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 import datetime
 import os
 import sys
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -15,8 +16,10 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.auth import get_client
 from modules import fetcher
+from modules.database import verify_token, get_user_profile, update_user_profile, encrypt_password
 
 app = FastAPI(title="Hansons Running Coach API", version="1.0.0")
+security = HTTPBearer()
 
 # Allow CORS for local dev and frontend deployment
 app.add_middleware(
@@ -37,9 +40,21 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, str]] = []
 
-def get_garmin_client():
+class ProfileUpdate(BaseModel):
+    garmin_email: Optional[str] = None
+    garmin_password: Optional[str] = None
+    target_time: Optional[str] = None
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    user = verify_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    return user.id
+
+def get_garmin_client(user_id: str = Depends(get_current_user)):
     try:
-        client = get_client()
+        client = get_client(user_id)
         return client
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Garmin Authentication failed: {str(e)}")
@@ -47,6 +62,31 @@ def get_garmin_client():
 @app.get("/")
 def read_root():
     return {"status": "ok", "app": "Hansons Running Coach"}
+
+@app.get("/api/profile")
+def get_profile(user_id: str = Depends(get_current_user)):
+    profile = get_user_profile(user_id)
+    if not profile:
+        return {"id": user_id, "garmin_email": None, "target_time": None}
+    
+    # Hide password in response
+    if "garmin_password_encrypted" in profile:
+        del profile["garmin_password_encrypted"]
+        
+    return profile
+
+@app.post("/api/profile")
+def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user)):
+    update_data = {}
+    if req.garmin_email:
+        update_data["garmin_email"] = req.garmin_email
+    if req.garmin_password:
+        update_data["garmin_password_encrypted"] = encrypt_password(req.garmin_password)
+    if req.target_time:
+        update_data["target_time"] = req.target_time
+        
+    updated = update_user_profile(user_id, update_data)
+    return {"status": "success", "profile": updated}
 
 @app.get("/api/dashboard/today")
 def get_dashboard_today(client = Depends(get_garmin_client)):
@@ -90,17 +130,21 @@ def get_scheduled_plan(client = Depends(get_garmin_client)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-def chat_with_coach(req: ChatRequest):
+def chat_with_coach(req: ChatRequest, user_id: str = Depends(get_current_user)):
     """Communicates with Gemini AI acting as the running coach"""
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured")
         
+    # Get user profile for customized prompt
+    profile = get_user_profile(user_id)
+    target_time = profile.get("target_time", "neuvedený") if profile else "neuvedený"
+    
     system_instruction = (
-        "You are Maros's personal AI running coach. "
-        "You follow the Hansons Advanced Half-Marathon method strictly. "
-        "Maros's goal time is 1:50:00 (HMP 5:13/km, Easy 6:30-7:30/km). "
-        "Always be encouraging, professional, and speak in Slovak. "
-        "Keep responses concise and suitable for a mobile app chat interface."
+        f"You are Maros's (and other users') personal AI running coach. "
+        f"You follow the Hansons Advanced Half-Marathon method strictly. "
+        f"The user's goal time is {target_time}. "
+        f"Always be encouraging, professional, and speak in Slovak. "
+        f"Keep responses concise and suitable for a mobile app chat interface."
     )
     
     try:

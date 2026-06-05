@@ -5,3 +5,5 @@ google-generativeai
 python-multipart
 python-dotenv
 requests
+
+supabase==2.5.0
