@@ -60,7 +60,7 @@ export default function Dashboard() {
   const readiness = d.readiness || { readiness_score: 0, readiness_status: 'N/A' };
   const lastActivity = (d.activities && d.activities.length > 0) ? d.activities[0] : null;
   return (
-    <div className="flex flex-col gap-6 pt-4 pb-24">
+    <div className="flex flex-col gap-6 pt-4 pb-32">
       {/* Header */}
       <header className="flex justify-between items-end">
         <div>
@@ -168,7 +168,7 @@ export default function Dashboard() {
               <span className="font-bold text-sm">HRV</span>
             </div>
             <p className="text-xl font-bold">{hrv.status === 'N/A' ? '--' : hrv.status}</p>
-            <p className="text-xs text-gray-400 mt-1">{hrv.last_night_avg || '--'} ms avg</p>
+            <p className="text-xs text-gray-400 mt-1">{hrv.last_night || '--'} ms avg</p>
           </motion.div>
 
           {/* Body Battery */}

@@ -96,10 +96,12 @@ def get_dashboard_today(client = Depends(get_garmin_client)):
     yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     
     try:
-        sleep = fetcher.get_sleep_data(client, days=7)
-        hrv = fetcher.get_hrv_data(client)
-        stats = fetcher.get_stats_summary(client)
-        readiness = fetcher.get_training_readiness(client)
+        sleep_data = fetcher.get_sleep_data(client, days=1)
+        sleep = sleep_data[0] if sleep_data else {}
+        hrv = fetcher.get_hrv_data(client) or {}
+        stats = fetcher.get_stats_summary(client) or {}
+        readiness = fetcher.get_training_readiness(client) or {}
+        bb = fetcher.get_body_battery(client) or {}
         activities = fetcher.get_recent_activities(client, days=7)
         
         # Format the data cleanly for frontend
@@ -107,8 +109,14 @@ def get_dashboard_today(client = Depends(get_garmin_client)):
             "date": today,
             "sleep": sleep,
             "hrv": hrv,
-            "stats": stats,
-            "readiness": readiness,
+            "stats": {
+                **stats,
+                "body_battery_highest": bb.get("today_charged")
+            },
+            "readiness": {
+                "readiness_score": readiness.get("score"),
+                "readiness_status": readiness.get("level")
+            },
             "activities": activities[:5] if activities else []
         }
     except Exception as e:

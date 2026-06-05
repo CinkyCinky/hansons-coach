@@ -27,8 +27,19 @@ async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
   return res.json();
 }
 
+let dashboardCache: any = null;
+let dashboardCacheTime = 0;
+
 export async function fetchDashboard() {
-  return fetchWithAuth('/api/dashboard/today');
+  const now = Date.now();
+  // Cache for 5 minutes
+  if (dashboardCache && (now - dashboardCacheTime < 300000)) {
+    return dashboardCache;
+  }
+  const data = await fetchWithAuth('/api/dashboard/today');
+  dashboardCache = data;
+  dashboardCacheTime = now;
+  return data;
 }
 
 export async function fetchDashboardAdvice(metrics: any) {
