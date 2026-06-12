@@ -13,7 +13,7 @@
  *  - report:    60 minút
  */
 
-import React, { createContext, useContext, useRef, useState, useCallback, ReactNode } from "react";
+import React, { createContext, useContext, useRef, useState, useCallback, ReactNode, useEffect } from "react";
 import {
   fetchDashboard,
   fetchScheduledPlan,
@@ -80,6 +80,12 @@ const initialState: StoreState = {
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<StoreState>(initialState);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(console.error);
+    }
+  }, []);
 
   // Track in-flight requests to avoid duplicate calls
   const loadingRef = useRef({ dashboard: false, plan: false, report: false });
