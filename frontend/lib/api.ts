@@ -101,8 +101,11 @@ export async function sendChatMessage(
   history: any[] = [],
   model: 'flash' | 'pro' = 'flash'
 ) {
+  const now = new Date();
+  const local_time = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  
   return fetchWithAuth('/api/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, history, model }),
+    body: JSON.stringify({ message, history, model, local_time }),
   });
 }

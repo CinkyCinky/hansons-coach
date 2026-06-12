@@ -55,6 +55,7 @@ class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, str]] = []
     model: str = "flash"  # "flash" | "pro"
+    local_time: Optional[str] = None
 
 class ProfileUpdate(BaseModel):
     garmin_email: Optional[str] = None
@@ -621,13 +622,19 @@ def chat_with_coach(
         next_w_str = "Žiadny naplánovaný tréning."
         try:
             now = datetime.datetime.now()
+            if getattr(req, "local_time", None):
+                try:
+                    now = datetime.datetime.strptime(req.local_time, "%Y-%m-%d %H:%M")
+                except:
+                    pass
+
             scheduled = client.get_scheduled_workouts(now.year, now.month)
             items = (
                 scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", []))
                 if isinstance(scheduled, dict)
                 else scheduled or []
             )
-            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            today_str = now.strftime("%Y-%m-%d")
             upcoming = sorted(
                 [i for i in items if i.get("date") and i.get("date") >= today_str],
                 key=lambda x: x.get("date"),
@@ -656,7 +663,11 @@ Najbližší tréning: {next_w_str}
     except Exception as e:
         garmin_context = f"(Garmin dáta sa nepodarilo načítať: {e})"
 
-    today_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    if getattr(req, "local_time", None):
+        today_full = req.local_time
+    else:
+        today_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        
     system_instruction = (
         f"Si osobný AI bežecký tréner. Prísne sa riadíš Hansons Half-Marathon Advanced metódou. "
         f"Dnešný dátum a čas: {today_full}. "
