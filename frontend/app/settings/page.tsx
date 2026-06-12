@@ -46,8 +46,9 @@ export default function Settings() {
       store.invalidateAll();
       setMessage("Profil úspešne uložený! 🎉");
       setPassword("");
-    } catch {
-      setMessage("Chyba pri ukladaní profilu.");
+    } catch (err: any) {
+      console.error(err);
+      setMessage(`Chyba: ${err.message || "Neznáma chyba"}`);
     } finally {
       setSaving(false);
     }
