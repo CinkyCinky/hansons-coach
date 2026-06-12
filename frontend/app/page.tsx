@@ -1,51 +1,57 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Moon, Heart, Battery, Activity, Flame, ChevronRight, Loader2, Bot, RefreshCcw } from "lucide-react";
+import { useEffect } from "react";
+import {
+  Moon, Heart, Battery, Activity, Flame, ChevronRight,
+  Loader2, Bot, RefreshCcw, Zap, TrendingUp
+} from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { fetchDashboard, fetchDashboardAdvice } from "@/lib/api";
+import { useStore } from "@/lib/store";
+
+const TRAINING_START = new Date("2026-06-01");
+const TOTAL_WEEKS = 18;
+
+function getTrainingWeek(): number {
+  const diffMs = Date.now() - TRAINING_START.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  return Math.max(1, Math.min(TOTAL_WEEKS, Math.floor(diffDays / 7) + 1));
+}
+
+function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
+  const values = [sleepScore, bodyBattery, readiness].filter((v) => v != null) as number[];
+  if (!values.length) return null;
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  if (avg >= 70) return { label: "Skvelá forma", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20", dot: "🟢" };
+  if (avg >= 45) return { label: "Dobrá forma", color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20", dot: "🟡" };
+  return { label: "Potrebuješ odpočinok", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20", dot: "🔴" };
+}
+
+function formatDate(): string {
+  return new Date().toLocaleDateString("sk-SK", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+}
 
 export default function Dashboard() {
-  const [data, setData] = useState<any>(null);
-  const [advice, setAdvice] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadData = async (forceRefresh = false) => {
-    try {
-      if (forceRefresh) setLoading(true);
-      setError(null);
-      const dashboardData = await fetchDashboard(forceRefresh);
-      setData(dashboardData);
-      
-      // Fetch advice in the background
-      if (dashboardData) {
-        try {
-          const adviceData = await fetchDashboardAdvice({
-            sleep_score: dashboardData.sleep?.score,
-            hrv_status: dashboardData.hrv?.status,
-            body_battery: dashboardData.stats?.body_battery_highest,
-            readiness: dashboardData.readiness?.readiness_score
-          });
-          setAdvice(adviceData.advice);
-        } catch (e) {
-          console.error("Failed to load advice", e);
-        }
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Nepodarilo sa načítať dáta z Garminu.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const store = useStore();
 
   useEffect(() => {
-    loadData();
+    store.loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (loading) {
+  const handleRefresh = async () => {
+    store.invalidateAll();
+    await store.loadDashboard(true);
+  };
+
+  const trainingWeek = getTrainingWeek();
+  const { dashboard: data, dashboardLoading: loading, dashboardError: error, advice } = store;
+
+  if (loading && !data) {
     return (
       <div className="flex flex-col items-center justify-center h-screen">
         <Loader2 className="animate-spin text-primary" size={48} />
@@ -54,43 +60,68 @@ export default function Dashboard() {
     );
   }
 
-  // Prehlad (ak data zlyhaju pouzijeme fallback)
   const d = data || {};
-  const sleep = d.sleep || { duration_hours: 0, score: 0 };
-  const hrv = d.hrv || { status: 'N/A', last_night_avg: 0 };
-  const stats = d.stats || { body_battery_highest: 0 };
-  const readiness = d.readiness || { readiness_score: 0, readiness_status: 'N/A' };
-  const lastActivity = (d.activities && d.activities.length > 0) ? d.activities[0] : null;
+  const sleep = d.sleep || {};
+  const hrv = d.hrv || {};
+  const stats = d.stats || {};
+  const readiness = d.readiness || {};
+  const lastActivity = d.activities?.[0] ?? null;
+  const todayWorkout = d.today_workout ?? null;
+
+  const formStatus = getFormStatus(sleep.score, stats.body_battery, readiness.readiness_score);
+
   return (
-    <div className="flex flex-col gap-6 pt-4 pb-32">
+    <div className="flex flex-col gap-5 pt-4 pb-32">
       {/* Header */}
       <header className="flex justify-between items-end">
         <div>
-          <p className="text-gray-400 text-sm font-medium">Piatok, 5. Jún 2026</p>
+          <p className="text-gray-400 text-sm font-medium capitalize">{formatDate()}</p>
           <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-300">
             Ahoj, Maroš 👋
           </h1>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => loadData(true)} className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors">
+        <div className="flex gap-2 items-center">
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+            title="Načítať znovu z Garminu"
+          >
             <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
           </button>
           <div className="bg-accent/20 text-accent px-3 py-1 rounded-full text-xs font-bold border border-accent/30 shadow-[0_0_15px_rgba(249,115,22,0.2)]">
-            Týždeň 1 z 18
+            T{trainingWeek} / {TOTAL_WEEKS}
           </div>
         </div>
       </header>
 
-      {/* Error Message */}
+      {/* Error */}
       {error && (
         <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm font-bold break-words">
-          Chyba: {error}
-          <p className="text-xs font-normal mt-1 text-rose-400/80">Skontroluj heslo do Garminu v Nastaveniach.</p>
+          ⚠️ {error}
+          <p className="text-xs font-normal mt-1 text-rose-400/80">
+            Skontroluj Garmin prihlásenie v Nastaveniach alebo stlač Refresh.
+          </p>
         </div>
       )}
 
-      {/* Main Action Card */}
-      <motion.section 
+      {/* Stav formy */}
+      {formStatus && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`${formStatus.bg} border rounded-2xl px-4 py-3 flex items-center gap-3`}
+        >
+          <span className="text-2xl">{formStatus.dot}</span>
+          <div>
+            <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Stav formy</p>
+            <p className={`font-bold ${formStatus.color}`}>{formStatus.label}</p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Dnešný tréning */}
+      <motion.section
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="glass-card p-5 relative overflow-hidden"
@@ -98,32 +129,37 @@ export default function Dashboard() {
         <div className="absolute top-0 right-0 p-4 opacity-10">
           <Flame size={120} />
         </div>
-        
-        <p className="text-primary font-bold text-sm mb-1 uppercase tracking-wider">Dnešný tréning</p>
-        <h2 className="text-2xl font-bold mb-1">Easy Run 5km Z2</h2>
-        <p className="text-gray-400 text-sm mb-6 max-w-[80%]">T1-Pi | Ľahký regeneračný beh. Udržuj tepy pod 140 bpm.</p>
-        
-        <div className="flex gap-4 mb-6">
-          <div>
-            <p className="text-xs text-gray-500 uppercase">Vzdialenosť</p>
-            <p className="font-bold">4.8 km</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500 uppercase">Tempo</p>
-            <p className="font-bold">6:30/km</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500 uppercase">Cieľový tep</p>
-            <p className="font-bold text-primary">119-138</p>
-          </div>
-        </div>
-        
 
+        <p className="text-primary font-bold text-sm mb-1 uppercase tracking-wider">Dnešný tréning</p>
+
+        {todayWorkout ? (
+          <>
+            <h2 className="text-2xl font-bold mb-1">{todayWorkout.title || "Tréning"}</h2>
+            <p className="text-gray-400 text-sm mb-4 max-w-[80%]">
+              {todayWorkout.description || "Pozri detail v sekcii Plán."}
+            </p>
+            <Link href="/plan">
+              <span className="inline-flex items-center gap-1 text-primary text-sm font-bold">
+                Zobraziť detail <ChevronRight size={16} />
+              </span>
+            </Link>
+          </>
+        ) : (
+          <>
+            <h2 className="text-xl font-bold mb-1 text-gray-300">Žiadny tréning naplánovaný</h2>
+            <p className="text-gray-500 text-sm mb-4">Dnes je voľný deň alebo nebol nájdený tréning v Garmine.</p>
+            <Link href="/plan">
+              <span className="inline-flex items-center gap-1 text-primary text-sm font-bold">
+                Pozrieť plán <ChevronRight size={16} />
+              </span>
+            </Link>
+          </>
+        )}
       </motion.section>
 
       {/* AI Advice */}
       {data && (
-        <motion.section 
+        <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 relative overflow-hidden"
@@ -149,69 +185,132 @@ export default function Dashboard() {
         </motion.section>
       )}
 
-      {/* Metrics Grid */}
+      {/* Metriky — 2×2 grid */}
       <section>
         <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
           <Activity size={20} className="text-gray-400" /> Ranný Report
         </h3>
-        
+
         <div className="grid grid-cols-2 gap-3">
-          {/* Sleep */}
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.1 }} className="glass-card p-4">
+          {/* Spánok */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.05 }}
+            className="glass-card p-4"
+          >
             <div className="flex items-center gap-2 mb-2 text-indigo-400">
               <Moon size={18} />
               <span className="font-bold text-sm">Spánok</span>
             </div>
-            <p className="text-2xl font-bold">{sleep.duration_hours > 0 ? sleep.duration_hours.toFixed(1) : '--'}h</p>
-            <p className="text-xs text-gray-400 mt-1">Skóre: <span className="text-green-400 font-bold">{sleep.score || '--'}</span></p>
+            <p className="text-2xl font-bold">
+              {sleep.duration_hours ? `${sleep.duration_hours.toFixed(1)}h` : "--"}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              Skóre: <span className="text-indigo-300 font-bold">{sleep.score ?? "--"}</span>
+            </p>
           </motion.div>
 
           {/* HRV */}
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }} className="glass-card p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.1 }}
+            className="glass-card p-4"
+          >
             <div className="flex items-center gap-2 mb-2 text-rose-400">
               <Heart size={18} />
               <span className="font-bold text-sm">HRV</span>
             </div>
-            <p className="text-xl font-bold">{hrv.status === 'N/A' ? '--' : hrv.status}</p>
-            <p className="text-xs text-gray-400 mt-1">{hrv.weekly_avg || '--'} ms avg</p>
+            <p className="text-xl font-bold">
+              {hrv.last_night ? `${hrv.last_night} ms` : hrv.status !== "unknown" ? hrv.status : "--"}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              Avg: <span className="text-rose-300 font-bold">{hrv.weekly_avg ?? "--"} ms</span>
+            </p>
           </motion.div>
 
           {/* Body Battery */}
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.3 }} className="glass-card p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.15 }}
+            className="glass-card p-4"
+          >
             <div className="flex items-center gap-2 mb-2 text-emerald-400">
               <Battery size={18} />
               <span className="font-bold text-sm">Body Battery</span>
             </div>
-            <p className="text-2xl font-bold">{stats.body_battery_highest || '--'}%</p>
+            <p className="text-2xl font-bold">{stats.body_battery ?? "--"}</p>
             <div className="w-full bg-gray-800 rounded-full h-1.5 mt-2">
-              <div className="bg-emerald-400 h-1.5 rounded-full" style={{ width: `${stats.body_battery_highest || 0}%` }}></div>
+              <div
+                className="bg-emerald-400 h-1.5 rounded-full transition-all"
+                style={{ width: `${stats.body_battery ?? 0}%` }}
+              />
             </div>
           </motion.div>
 
-          {/* Readiness */}
-          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.4 }} className="glass-card p-4">
+          {/* Pokojový tep */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.2 }}
+            className="glass-card p-4"
+          >
             <div className="flex items-center gap-2 mb-2 text-amber-400">
-              <Activity size={18} />
-              <span className="font-bold text-sm">Pripravenosť</span>
+              <Zap size={18} />
+              <span className="font-bold text-sm">Pokojový tep</span>
             </div>
-            <p className="text-2xl font-bold">{readiness.readiness_score || '--'}</p>
-            <p className="text-xs text-gray-400 mt-1 truncate">{readiness.readiness_status}</p>
+            <p className="text-2xl font-bold">
+              {stats.resting_hr ? `${stats.resting_hr}` : "--"}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">bpm</p>
           </motion.div>
         </div>
+
+        {/* Pripravenosť — full width */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.25 }}
+          className="glass-card p-4 mt-3"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-sky-400">
+              <TrendingUp size={18} />
+              <span className="font-bold text-sm">Pripravenosť na tréning</span>
+            </div>
+            <span className="text-2xl font-bold text-sky-300">{readiness.readiness_score ?? "--"}</span>
+          </div>
+          <div className="w-full bg-gray-800 rounded-full h-2">
+            <div
+              className="bg-gradient-to-r from-sky-500 to-blue-400 h-2 rounded-full transition-all"
+              style={{ width: `${readiness.readiness_score ?? 0}%` }}
+            />
+          </div>
+          {readiness.readiness_status && (
+            <p className="text-xs text-gray-400 mt-2 truncate">{readiness.readiness_status}</p>
+          )}
+        </motion.div>
       </section>
 
-      {/* Last Run */}
+      {/* Posledná aktivita */}
       <section className="mb-8">
         <Link href="/plan">
-          <div className="glass-card p-4 flex items-center justify-between group hover:border-primary/50 transition-colors">
+          <div className="glass-card p-4 flex items-center justify-between group hover:border-primary/50 transition-colors cursor-pointer">
             {lastActivity ? (
               <div>
                 <p className="text-xs text-gray-400 mb-1">Posledná aktivita</p>
                 <h4 className="font-bold text-sm">{lastActivity.activityName}</h4>
                 <p className="text-xs text-gray-500 mt-1">
-                  {(lastActivity.distance / 1000).toFixed(1)} km • 
-                  {lastActivity.averageSpeed ? (1000 / lastActivity.averageSpeed / 60).toFixed(2).replace('.', ':') : '--'}/km • 
-                  {lastActivity.averageHR || '--'} bpm
+                  {((lastActivity.distance || 0) / 1000).toFixed(1)} km
+                  {lastActivity.averageSpeed
+                    ? ` • ${Math.floor(1000 / lastActivity.averageSpeed / 60)}:${String(Math.round((1000 / lastActivity.averageSpeed) % 60)).padStart(2, "0")}/km`
+                    : ""}
+                  {lastActivity.averageHR ? ` • ${lastActivity.averageHR} bpm` : ""}
+                  {lastActivity.averageRunningCadenceInStepsPerMinute
+                    ? ` • ${lastActivity.averageRunningCadenceInStepsPerMinute} spm`
+                    : ""}
                 </p>
               </div>
             ) : (

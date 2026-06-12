@@ -6,5 +6,5 @@ google-generativeai
 python-multipart
 python-dotenv
 requests
-
+cryptography>=41.0.0
 supabase==2.5.0

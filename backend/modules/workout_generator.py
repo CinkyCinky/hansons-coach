@@ -18,48 +18,67 @@ def pace_to_ms(pace_str: str) -> float:
         return 0.0
 
 def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
-    """Vytvorí Garmin ExecutableStep zo slovníka od Gemini"""
+    """Vytvorí Garmin ExecutableStep zo slovníka od Gemini — podporuje Pace aj HR targety."""
     step_type_map = {
-        "warmup": (StepType.WARMUP, "warmup", 1),
-        "run": (StepType.INTERVAL, "interval", 3),
-        "recover": (StepType.RECOVERY, "recovery", 4),
-        "cooldown": (StepType.COOLDOWN, "cooldown", 2)
+        "warmup":   (StepType.WARMUP,    "warmup",   1),
+        "run":      (StepType.INTERVAL,  "interval", 3),
+        "recover":  (StepType.RECOVERY,  "recovery", 4),
+        "cooldown": (StepType.COOLDOWN,  "cooldown", 2),
     }
-    
     st_id, st_key, st_order = step_type_map.get(step_data.get("type", "run"), step_type_map["run"])
-    
-    # Distance in meters
+
+    # Vzdialenosť v metroch
     distance_m = float(step_data.get("distance_km", 0)) * 1000.0
-    
-    # Paces
-    pace_min = step_data.get("pace_min", "6:00")
-    pace_max = step_data.get("pace_max", "5:30")
-    
-    ms_min = pace_to_ms(pace_max) # max pace means faster, which is higher m/s
-    ms_max = pace_to_ms(pace_min) # min pace means slower, which is lower m/s
-    
-    # Garmin targetType pre Pace je SPEED (m/s)
-    target_dict = {
-        "workoutTargetTypeId": TargetType.SPEED,
-        "workoutTargetTypeKey": "speed.zone",
-        "displayOrder": 5,
-    }
-    
-    # Ak nemame tempo, posleme bez targetu
-    if ms_min == 0 or ms_max == 0:
+
+    # ── HR target (preferované ak je dostupné) ──
+    hr_min = step_data.get("hr_min")
+    hr_max = step_data.get("hr_max")
+    pace_min = step_data.get("pace_min")
+    pace_max = step_data.get("pace_max")
+
+    if hr_min and hr_max:
+        # HR zóna target
+        target_dict = {
+            "workoutTargetTypeId": TargetType.HEART_RATE,
+            "workoutTargetTypeKey": "heart.rate.zone",
+            "displayOrder": 4,
+        }
+        step = ExecutableStep(
+            stepOrder=step_order,
+            stepType={"stepTypeId": st_id, "stepTypeKey": st_key, "displayOrder": st_order},
+            endCondition={
+                "conditionTypeId": ConditionType.DISTANCE,
+                "conditionTypeKey": "distance",
+                "displayOrder": 1,
+                "displayable": True,
+            },
+            endConditionValue=distance_m,
+            targetType=target_dict,
+        )
+        step.targetValueOne = float(hr_min)
+        step.targetValueTwo = float(hr_max)
+        return step
+
+    # ── Pace target ──
+    ms_min = pace_to_ms(pace_max or "6:00")   # max pace = faster = higher m/s
+    ms_max = pace_to_ms(pace_min or "6:30")   # min pace = slower = lower m/s
+
+    if ms_min > 0 and ms_max > 0:
+        target_dict = {
+            "workoutTargetTypeId": TargetType.SPEED,
+            "workoutTargetTypeKey": "speed.zone",
+            "displayOrder": 5,
+        }
+    else:
         target_dict = {
             "workoutTargetTypeId": TargetType.NO_TARGET,
             "workoutTargetTypeKey": "no.target",
             "displayOrder": 1,
         }
-        
+
     step = ExecutableStep(
         stepOrder=step_order,
-        stepType={
-            "stepTypeId": st_id,
-            "stepTypeKey": st_key,
-            "displayOrder": st_order,
-        },
+        stepType={"stepTypeId": st_id, "stepTypeKey": st_key, "displayOrder": st_order},
         endCondition={
             "conditionTypeId": ConditionType.DISTANCE,
             "conditionTypeKey": "distance",
@@ -67,15 +86,13 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
             "displayable": True,
         },
         endConditionValue=distance_m,
-        targetType=target_dict
+        targetType=target_dict,
     )
-    
-    # Extra polia pre rýchlosť, pydantic extra="allow" to dovolí
     if ms_min > 0 and ms_max > 0:
         step.targetValueOne = ms_max
         step.targetValueTwo = ms_min
-        
     return step
+
 
 def generate_weekly_plan(profile: dict, constraints: str) -> dict:
     """Generates a structured weekly plan using Gemini"""

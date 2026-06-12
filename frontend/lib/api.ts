@@ -5,48 +5,38 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   const headers = new Headers(options.headers);
+  headers.set('Content-Type', 'application/json');
   if (session?.access_token) {
     headers.set('Authorization', `Bearer ${session.access_token}`);
   }
-  
-  const res = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers
-  });
-  
+
+  const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers });
+
   if (!res.ok) {
     let errorDetail = res.statusText;
     try {
       const errBody = await res.json();
-      if (errBody && errBody.detail) errorDetail = errBody.detail;
-    } catch (e) {}
-    throw new Error(`${errorDetail}`);
+      if (errBody?.detail) errorDetail = errBody.detail;
+    } catch {}
+    throw new Error(errorDetail);
   }
   return res.json();
 }
 
-let dashboardCache: any = null;
-let dashboardCacheTime = 0;
+// Starý jednoduchý cache nahradený globálnym store (lib/store.tsx)
+// Tieto funkcie sú volané zo store-u, nie priamo z komponentov.
 
 export async function fetchDashboard(forceRefresh = false) {
-  const now = Date.now();
-  // Cache for 5 minutes
-  if (!forceRefresh && dashboardCache && (now - dashboardCacheTime < 300000)) {
-    return dashboardCache;
-  }
-  const data = await fetchWithAuth('/api/dashboard/today');
-  dashboardCache = data;
-  dashboardCacheTime = now;
-  return data;
+  // forceRefresh parameter zachovaný pre kompatibilitu, cache riadi store
+  return fetchWithAuth('/api/dashboard/today');
 }
 
 export async function fetchDashboardAdvice(metrics: any) {
   return fetchWithAuth('/api/dashboard/advice', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(metrics)
+    body: JSON.stringify(metrics),
   });
 }
 
@@ -54,42 +44,45 @@ export async function fetchScheduledPlan() {
   return fetchWithAuth('/api/plan/scheduled');
 }
 
+export async function fetchWeeklyReport() {
+  return fetchWithAuth('/api/reports/weekly');
+}
+
 export async function generatePlan(constraints: string) {
   return fetchWithAuth('/api/plan/generate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ constraints })
+    body: JSON.stringify({ constraints }),
   });
 }
 
 export async function uploadPlan(planData: any) {
-  return await fetchWithAuth('/api/plan/upload', {
+  return fetchWithAuth('/api/plan/upload', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_data: planData })
+    body: JSON.stringify({ plan_data: planData }),
   });
 }
 
 export async function fetchDailyUpdateProposal() {
-  return await fetchWithAuth('/api/plan/daily_update', {
-    method: 'GET'
-  });
+  return fetchWithAuth('/api/plan/daily_update');
 }
 
-export async function confirmDailyUpdate(workout: any, old_workout_id: string, target_date_str: string) {
-  return await fetchWithAuth('/api/plan/daily_update/confirm', {
+export async function confirmDailyUpdate(
+  workout: any,
+  old_workout_id: string,
+  target_date_str: string
+) {
+  return fetchWithAuth('/api/plan/daily_update/confirm', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workout, old_workout_id, target_date_str })
+    body: JSON.stringify({ workout, old_workout_id, target_date_str }),
   });
 }
 
 export async function fetchWorkoutDetails(workoutId: string) {
-  return await fetchWithAuth(`/api/plan/workout/${workoutId}`);
+  return fetchWithAuth(`/api/plan/workout/${workoutId}`);
 }
 
 export async function fetchActivityStats(activityId: string) {
-  return await fetchWithAuth(`/api/plan/activity/${activityId}`);
+  return fetchWithAuth(`/api/plan/activity/${activityId}`);
 }
 
 export async function fetchProfile() {
@@ -99,15 +92,17 @@ export async function fetchProfile() {
 export async function updateProfile(data: any) {
   return fetchWithAuth('/api/profile', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data)
+    body: JSON.stringify(data),
   });
 }
 
-export async function sendChatMessage(message: string, history: any[] = []) {
+export async function sendChatMessage(
+  message: string,
+  history: any[] = [],
+  model: 'flash' | 'pro' = 'flash'
+) {
   return fetchWithAuth('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history })
+    body: JSON.stringify({ message, history, model }),
   });
 }
