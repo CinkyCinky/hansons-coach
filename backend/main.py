@@ -125,18 +125,24 @@ def get_profile(user_id: str = Depends(get_current_user)):
 
 @app.post("/api/profile")
 def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user)):
-    update_data = {}
-    if req.garmin_email is not None:
-        update_data["garmin_email"] = req.garmin_email
-    if req.garmin_password:
-        update_data["garmin_password_encrypted"] = encrypt_password(req.garmin_password)
-    if req.target_time is not None:
-        update_data["target_time"] = req.target_time
-    if req.training_start_date is not None:
-        update_data["training_start_date"] = req.training_start_date
+    try:
+        update_data = {}
+        if req.garmin_email is not None:
+            update_data["garmin_email"] = req.garmin_email
+        if req.garmin_password:
+            update_data["garmin_password_encrypted"] = encrypt_password(req.garmin_password)
+        if req.target_time is not None:
+            update_data["target_time"] = req.target_time
+        if req.training_start_date is not None:
+            update_data["training_start_date"] = req.training_start_date
 
-    updated = update_user_profile(user_id, update_data)
-    return {"status": "success", "profile": updated}
+        updated = update_user_profile(user_id, update_data)
+        return {"status": "success", "profile": updated}
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(error_details)
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
