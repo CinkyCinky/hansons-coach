@@ -656,8 +656,10 @@ Najbližší tréning: {next_w_str}
     except Exception as e:
         garmin_context = f"(Garmin dáta sa nepodarilo načítať: {e})"
 
+    today_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     system_instruction = (
         f"Si osobný AI bežecký tréner. Prísne sa riadíš Hansons Half-Marathon Advanced metódou. "
+        f"Dnešný dátum a čas: {today_full}. "
         f"Cieľový čas: {target_time}. Aktuálny týždeň prípravy: {training_week}/18. "
         f"VŽDY hovor po slovensky. Buď konkrétny, stručný a povzbudivý. "
         f"Odpovede prispôsob mobilnej aplikácii – max 4-5 viet. "
