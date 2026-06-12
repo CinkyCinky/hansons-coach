@@ -20,6 +20,19 @@ export default function Settings() {
   const [password, setPassword] = useState("");
   const [targetTime, setTargetTime] = useState("1:50:00");
   const [trainingStart, setTrainingStart] = useState("2026-06-01");
+  const [raceDate, setRaceDate] = useState("");
+  const [aiContext, setAiContext] = useState("");
+
+  // Výpočet začiatku z dátumu pretekov (mínus 18 týždňov = 126 dní)
+  useEffect(() => {
+    if (raceDate) {
+      const d = new Date(raceDate);
+      if (!isNaN(d.getTime())) {
+        d.setDate(d.getDate() - 126);
+        setTrainingStart(d.toISOString().split("T")[0]);
+      }
+    }
+  }, [raceDate]);
 
   useEffect(() => {
     fetchProfile()
@@ -27,6 +40,8 @@ export default function Settings() {
         if (profile.garmin_email) setEmail(profile.garmin_email);
         if (profile.target_time) setTargetTime(profile.target_time);
         if (profile.training_start_date) setTrainingStart(profile.training_start_date);
+        if (profile.race_date) setRaceDate(profile.race_date);
+        if (profile.ai_context) setAiContext(profile.ai_context);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -41,6 +56,8 @@ export default function Settings() {
         garmin_password: password || undefined,
         target_time: targetTime,
         training_start_date: trainingStart,
+        race_date: raceDate || undefined,
+        ai_context: aiContext || undefined,
       });
       // Invalidate store — nové profil dáta ovplyvnia výpočty
       store.invalidateAll();
@@ -129,16 +146,50 @@ export default function Settings() {
           </div>
           <div>
             <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1">
-              <Calendar size={12} /> Dátum začiatku prípravy (18 týždňov)
+              <Calendar size={12} /> Dátum pretekov (Deň D)
+            </label>
+            <input
+              type="date"
+              value={raceDate}
+              onChange={(e) => setRaceDate(e.target.value)}
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1 opacity-60">
+              <Calendar size={12} /> Začiatok prípravy (vypočítaný, -18 týždňov)
             </label>
             <input
               type="date"
               value={trainingStart}
-              onChange={(e) => setTrainingStart(e.target.value)}
-              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+              readOnly
+              className="w-full bg-[#1a1a24]/50 border border-white/10 rounded-xl px-4 py-2 text-gray-500 focus:outline-none opacity-60"
             />
             <p className="text-xs text-gray-600 mt-1 ml-1">
-              Aktuálny týždeň sa vypočíta automaticky zo zadaného dátumu.
+              Aktuálny týždeň sa vypočíta automaticky z tohto dátumu.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Osobná AI Pamäť */}
+      <section>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1 flex items-center gap-1">
+           Osobný AI Profil a Pamäť
+        </h3>
+        <div className="glass-card p-4 flex flex-col gap-4">
+          <div>
+            <label className="text-xs text-gray-400 mb-2 block">
+              Tu vidíš, čo o tebe AI Tréner vie. Zohľadní to pri každom plánovaní a konverzácii.
+            </label>
+            <textarea
+              value={aiContext}
+              onChange={(e) => setAiContext(e.target.value)}
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary/50 min-h-[120px] text-sm"
+              placeholder="Napr.: Behávam večer. Mám Garmin 265S. Stredy nebehávam."
+            />
+            <p className="text-xs text-emerald-500/70 mt-2 ml-1">
+              Tip: Tréner si sem bude automaticky dopisovať nové dôležité fakty, ktoré mu povieš v chate!
             </p>
           </div>
         </div>

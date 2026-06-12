@@ -103,13 +103,16 @@ def generate_weekly_plan(profile: dict, constraints: str) -> dict:
     genai.configure(api_key=GEMINI_API_KEY)
     
     target_time = profile.get("target_time", "neuvedený")
+    ai_context = profile.get("ai_context", "")
     
     system_prompt = f"""
     Si profesionálny bežecký tréner, expert na Hanson Half-Marathon Method.
     Cieľový čas zverenca na polmaratón je: {target_time}.
+    DÔLEŽITÉ OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
     
     Úloha: Vytvor tréningový plán na najbližších 7 dní (od zajtra).
-    Zohľadni túto požiadavku od zverenca: "{constraints}"
+    Zohľadni túto dodatočnú požiadavku: "{constraints}"
+    Taktiež PRÍSNE zohľadni osobné poznámky zverenca (napr. preferovaný deň odpočinku, čas behu).
     
     Pravidlá pre Hanson metódu (Paces):
     - Easy pace: o cca 40-50s pomalšie ako cieľové tempo
@@ -231,12 +234,15 @@ def update_next_workout(client, profile: dict) -> dict:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-pro')
     
+    ai_context = profile.get("ai_context", "")
+    
     system_prompt = f"""
     Zverenec má na dátum {target_date_str} naplánovaný tréning: {old_workout_name}.
     Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
+    Osobné poznámky: {ai_context}
     Jeho aktuálny LTHR (Lactate Threshold) a HR dáta z Garminu: {json.dumps(lthr_data)}
     
-    Úloha: Prepočítaj tento jeden tréning (Hanson Half-Marathon Method) tak, aby presne zodpovedal jeho fyzičke. 
+    Úloha: Prepočítaj tento jeden tréning (Hanson Half-Marathon Method) tak, aby presne zodpovedal jeho fyzičke a jeho zvykom (Osobné poznámky). 
     Ak nemáš dobré LTHR dáta, sprav miernu úpravu podľa bežných Hanson pravidiel.
     
     Vráť odpoveď VÝLUČNE vo formáte JSON:

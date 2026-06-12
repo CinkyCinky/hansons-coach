@@ -62,6 +62,8 @@ class ProfileUpdate(BaseModel):
     garmin_password: Optional[str] = None
     target_time: Optional[str] = None
     training_start_date: Optional[str] = None  # YYYY-MM-DD
+    race_date: Optional[str] = None # YYYY-MM-DD
+    ai_context: Optional[str] = None
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -593,6 +595,7 @@ def chat_with_coach(
     profile = get_user_profile(user_id) or {}
     target_time = profile.get("target_time", "neuvedený")
     training_week = _calculate_training_week(profile)
+    ai_context = profile.get("ai_context", "")
 
     # Model selection
     model_name = GEMINI_MODELS.get(req.model, GEMINI_MODELS["flash"])
@@ -675,13 +678,23 @@ Najbližší tréning: {next_w_str}
         f"VŽDY hovor po slovensky. Buď konkrétny, stručný a povzbudivý. "
         f"Odpovede prispôsob mobilnej aplikácii – max 4-5 viet. "
         f"Nikdy sa NEPÝTAJ na veci, ktoré vieš z Garmin dát. "
+        f"DODATOČNÉ POZNÁMKY O POUŽÍVATEĽOVI (ai_context): {ai_context}\n"
+        f"DÔLEŽITÁ INŠTRUKCIA K PAMÄTI: Ak ti používateľ napíše nejakú novú podstatnú informáciu (zranenie, zmena vybavenia, preferencie), "
+        f"začni svoju odpoveď tagom <MEMORY>tu zapíš nový fakt</MEMORY>. "
+        f"Príklad: <MEMORY>Bolí ho koleno, stredy chce mať voľné</MEMORY> Dávaj si na to koleno pozor...\n"
         f"\n{garmin_context}"
     )
+
+    # Definícia funkcie (nástroja) pre model
+    def delete_garmin_workout(date: str):
+        """Vymaže tréning naplánovaný na daný dátum v Garmin kalendári. Parametr 'date' musí byť vo formáte YYYY-MM-DD."""
+        pass # Reálna exekúcia prebehne nižšie
 
     try:
         model = genai.GenerativeModel(
             model_name=model_name,
             system_instruction=system_instruction,
+            tools=[delete_garmin_workout] if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
         )
 
         formatted_history = []
@@ -691,8 +704,71 @@ Najbližší tréning: {next_w_str}
 
         chat = model.start_chat(history=formatted_history)
         response = chat.send_message(req.message)
+        
+        # Spracovanie Function Call (ak model chce vymazať tréning)
+        if response.candidates and response.candidates[0].content.parts:
+            part = response.candidates[0].content.parts[0]
+            if getattr(part, "function_call", None):
+                fc = part.function_call
+                if fc.name == "delete_garmin_workout":
+                    date_str = type(fc).to_dict(fc).get("args", {}).get("date") or getattr(fc.args, "get", lambda x: getattr(fc.args, x, None))("date")
+                    if hasattr(fc.args, "items"):
+                        date_str = fc.args.get("date", getattr(fc.args, "date", None))
+                    else:
+                        date_str = getattr(fc.args, "date", None)
+                    
+                    if date_str:
+                        # Logika zmazania
+                        import logging
+                        logging.info(f"Deleting workout for date: {date_str}")
+                        try:
+                            d = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                            scheduled = client.get_scheduled_workouts(d.year, d.month)
+                            items = scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", [])) if isinstance(scheduled, dict) else scheduled or []
+                            deleted = 0
+                            for item in items:
+                                if item.get("date") == date_str:
+                                    w_id = item.get("workoutId")
+                                    if w_id:
+                                        client.delete_workout(w_id)
+                                        deleted += 1
+                            result_msg = f"Úspešne vymazané tréningy ({deleted}) pre dátum {date_str}." if deleted > 0 else f"Na dátum {date_str} nebol nájdený žiadny tréning."
+                        except Exception as e:
+                            result_msg = f"Chyba pri mazaní: {e}"
+                        
+                        # Pošleme výsledok modelu
+                        response = chat.send_message(
+                            genai.types.ContentDict(
+                                role="user",
+                                parts=[
+                                    genai.types.PartDict(
+                                        function_response=genai.types.FunctionResponseDict(
+                                            name="delete_garmin_workout",
+                                            response={"result": result_msg}
+                                        )
+                                    )
+                                ]
+                            )
+                        )
 
-        return {"response": response.text, "model_used": model_name}
+        response_text = response.text
+        
+        # Spracovanie pamäte
+        import re
+        match = re.search(r'<MEMORY>(.*?)</MEMORY>', response_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            new_fact = match.group(1).strip()
+            existing_context = profile.get('ai_context') or ''
+            # deduplikácia alebo jednoduché pridanie
+            if new_fact.lower() not in existing_context.lower():
+                updated_context = existing_context + "\n- " + new_fact if existing_context else "- " + new_fact
+                from modules.database import update_user_profile
+                update_user_profile(user_id, {"ai_context": updated_context.strip()})
+            
+            # Odstránenie tagu z odpovede
+            response_text = re.sub(r'<MEMORY>.*?</MEMORY>', '', response_text, flags=re.IGNORECASE | re.DOTALL).strip()
+            
+        return {"response": response_text, "model_used": model_name}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
