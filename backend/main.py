@@ -21,21 +21,18 @@ from modules import workout_generator
 app = FastAPI(title="Hansons Running Coach API", version="2.0.0")
 security = HTTPBearer()
 
-# CORS — povolíme frontend URL z env, fallback na localhost pre vývoj
-FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").rstrip("/")
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:3001",
 ]
 if FRONTEND_URL:
     allowed_origins.append(FRONTEND_URL)
-    # Vercel preview URLs (*.vercel.app)
-    if "vercel.app" in FRONTEND_URL:
-        allowed_origins.append("https://*.vercel.app")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins if FRONTEND_URL else ["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app" if "vercel.app" in FRONTEND_URL else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
