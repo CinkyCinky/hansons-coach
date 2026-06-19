@@ -34,6 +34,17 @@ function formatDate(): string {
   });
 }
 
+function timeAgo(ts: number | null): string {
+  if (!ts) return "";
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return "teraz";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `pred ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `pred ${h} h`;
+  return "dávnejšie";
+}
+
 export default function Dashboard() {
   const store = useStore();
   const [showLegend, setShowLegend] = useState(false);
@@ -55,9 +66,21 @@ export default function Dashboard() {
 
   if (loading && !data) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen">
-        <Loader2 className="animate-spin text-primary" size={48} />
-        <p className="text-gray-400 mt-4 font-bold">Oživujem trénera...</p>
+      <div className="flex flex-col gap-5 pt-4 pb-32 animate-pulse">
+        <div className="flex justify-between items-end">
+          <div className="space-y-2">
+            <div className="h-3 w-28 bg-white/10 rounded" />
+            <div className="h-8 w-44 bg-white/10 rounded" />
+          </div>
+          <div className="h-7 w-16 bg-white/10 rounded-full" />
+        </div>
+        <div className="h-16 bg-white/5 rounded-2xl" />
+        <div className="h-28 bg-white/5 rounded-2xl" />
+        <div className="grid grid-cols-2 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-24 bg-white/5 rounded-2xl" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -106,6 +129,12 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      {data && store.dashboardLoadedAt && (
+        <p className="text-[11px] text-gray-500 -mt-3">
+          Naposledy synchronizované {timeAgo(store.dashboardLoadedAt)}
+        </p>
+      )}
 
       {/* Error */}
       {error && (

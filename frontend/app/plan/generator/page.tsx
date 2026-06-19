@@ -68,6 +68,23 @@ export default function Generator() {
     }
   };
 
+  // Úprava vygenerovaného plánu pred zápisom do Garminu
+  const updateStep = (wi: number, si: number, field: string, value: any) => {
+    setGeneratedPlan((prev: any) => {
+      const next = structuredClone(prev);
+      next.workouts[wi].steps[si][field] = value;
+      return next;
+    });
+  };
+
+  const updateWorkout = (wi: number, field: string, value: any) => {
+    setGeneratedPlan((prev: any) => {
+      const next = structuredClone(prev);
+      next.workouts[wi][field] = value;
+      return next;
+    });
+  };
+
   const toggleDay = (d: keyof typeof days) => {
     setDays(prev => ({ ...prev, [d]: !prev[d] }));
   };
@@ -151,20 +168,69 @@ export default function Generator() {
           </div>
 
           <div>
-            <h3 className="font-bold mb-3 text-lg">Návrh plánu (7 dní)</h3>
+            <h3 className="font-bold mb-1 text-lg">Návrh plánu (7 dní)</h3>
+            <p className="text-xs text-gray-400 mb-3">
+              Pred zápisom do Garminu môžeš upraviť názvy, vzdialenosti, tempá aj tepy.
+            </p>
             <div className="flex flex-col gap-3">
               {generatedPlan.workouts.map((w: any, idx: number) => (
                 <div key={idx} className="glass-card p-4 rounded-xl border border-white/5">
-                  <h4 className="font-bold text-primary mb-1">{w.workout_name}</h4>
-                  <p className="text-xs text-gray-400 mb-3">{w.description}</p>
-                  <div className="flex flex-col gap-2">
-                    {w.steps.map((s: any, s_idx: number) => (
-                      <div key={s_idx} className="flex justify-between items-center text-xs bg-white/5 p-2 rounded-lg">
-                        <span className="uppercase font-bold text-gray-300">{s.type}</span>
-                        <span>{s.distance_km} km</span>
-                        <span className="text-emerald-400">{s.pace_max} - {s.pace_min} /km</span>
-                      </div>
-                    ))}
+                  <input
+                    value={w.workout_name ?? ""}
+                    onChange={(e) => updateWorkout(idx, "workout_name", e.target.value)}
+                    className="font-bold text-primary w-full bg-transparent border-b border-white/10 focus:outline-none focus:border-primary/50 pb-1"
+                  />
+                  {w.description && <p className="text-xs text-gray-400 mb-3 mt-1">{w.description}</p>}
+                  <div className="flex flex-col gap-2 mt-2">
+                    {w.steps.map((s: any, s_idx: number) => {
+                      const isHr = s.hr_min != null || s.hr_max != null;
+                      const inp = "bg-[#1a1a24] border border-white/10 rounded px-1.5 py-1 text-white text-center focus:outline-none focus:border-primary/50";
+                      return (
+                        <div key={s_idx} className="flex flex-wrap items-center gap-2 text-xs bg-white/5 p-2 rounded-lg">
+                          <span className="uppercase font-bold text-gray-300 w-16 shrink-0">{s.type}</span>
+                          <span className="flex items-center gap-1">
+                            <input
+                              type="number" step="0.1" inputMode="decimal"
+                              value={s.distance_km ?? ""}
+                              onChange={(e) => updateStep(idx, s_idx, "distance_km", e.target.value === "" ? null : parseFloat(e.target.value))}
+                              className={`w-16 ${inp}`}
+                            />
+                            <span className="text-gray-500">km</span>
+                          </span>
+                          {isHr ? (
+                            <span className="flex items-center gap-1 text-rose-300 ml-auto">
+                              <input
+                                type="number" inputMode="numeric" value={s.hr_min ?? ""}
+                                onChange={(e) => updateStep(idx, s_idx, "hr_min", e.target.value === "" ? null : parseInt(e.target.value))}
+                                className={`w-14 ${inp}`}
+                              />
+                              <span>–</span>
+                              <input
+                                type="number" inputMode="numeric" value={s.hr_max ?? ""}
+                                onChange={(e) => updateStep(idx, s_idx, "hr_max", e.target.value === "" ? null : parseInt(e.target.value))}
+                                className={`w-14 ${inp}`}
+                              />
+                              <span className="text-gray-500">bpm</span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-emerald-300 ml-auto">
+                              <input
+                                value={s.pace_min ?? ""} placeholder="5:20"
+                                onChange={(e) => updateStep(idx, s_idx, "pace_min", e.target.value)}
+                                className={`w-14 ${inp}`}
+                              />
+                              <span>–</span>
+                              <input
+                                value={s.pace_max ?? ""} placeholder="5:10"
+                                onChange={(e) => updateStep(idx, s_idx, "pace_max", e.target.value)}
+                                className={`w-14 ${inp}`}
+                              />
+                              <span className="text-gray-500">/km</span>
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}

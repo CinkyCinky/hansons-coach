@@ -20,6 +20,14 @@ function shortDate(dateStr: string): string {
   return `${d.getDate()}.${d.getMonth() + 1}.`;
 }
 
+function getLoadStatus(ratio?: number | null) {
+  if (ratio == null) return null;
+  if (ratio > 1.5) return { label: "Vysoké riziko preťaženia", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20", dot: "🔴" };
+  if (ratio > 1.4) return { label: "Zvýšená záťaž — opatrne", color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20", dot: "🟠" };
+  if (ratio >= 0.8) return { label: "Optimálna záťaž", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20", dot: "🟢" };
+  return { label: "Podtrénovanie — priestor pridať", color: "text-sky-400", bg: "bg-sky-500/10 border-sky-500/20", dot: "🔵" };
+}
+
 const CHART_STYLE = {
   contentStyle: {
     backgroundColor: "#1a1a24",
@@ -70,6 +78,14 @@ export default function Reports() {
   // Týždenný objem (km/týždeň) — kľúčová Hanson metrika
   const volumeData = (data?.weekly_volume ?? []) as { week: string; km: number }[];
   const goalPace: number | null = data?.goal_pace_sec ?? null;
+
+  // Tréningová záťaž (acute:chronic ratio)
+  const tl = data?.training_load || {};
+  let acRatio: number | null = tl.ratio ?? null;
+  if (acRatio == null && tl.acute_load && tl.chronic_load) {
+    acRatio = Math.round((tl.acute_load / tl.chronic_load) * 100) / 100;
+  }
+  const loadStatus = getLoadStatus(acRatio);
 
   // Kombinovaný týždenný graf (spánok + BB) — zarovnané podľa dátumu, nie podľa indexu
   const bbByDay: Record<string, number> = {};
@@ -155,6 +171,32 @@ export default function Reports() {
       {/* ── TAB: Zdravie ── */}
       {tab === "weekly" && data && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-5">
+
+          {/* Tréningová záťaž (acute:chronic) */}
+          {loadStatus && (
+            <div
+              className={`${loadStatus.bg} border rounded-2xl px-4 py-3 flex items-center justify-between gap-3`}
+              title="Pomer akútnej a chronickej tréningovej záťaže (Garmin). Nad 1.4 = riziko preťaženia, pod 0.8 = priestor pridať objem."
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">{loadStatus.dot}</span>
+                <div>
+                  <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Tréningová záťaž (A:C)</p>
+                  <p className={`font-bold ${loadStatus.color}`}>{loadStatus.label}</p>
+                </div>
+              </div>
+              {acRatio != null && (
+                <div className="text-right shrink-0">
+                  <p className={`text-2xl font-bold ${loadStatus.color}`}>{acRatio.toFixed(2)}</p>
+                  {tl.acute_load != null && tl.chronic_load != null && (
+                    <p className="text-[10px] text-gray-500">
+                      akút {Math.round(tl.acute_load)} / chron {Math.round(tl.chronic_load)}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Quick stats */}
           <div className="grid grid-cols-2 gap-3">
