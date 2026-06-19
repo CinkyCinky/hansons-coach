@@ -2,11 +2,47 @@ import os
 import json
 import datetime
 from typing import Dict, List, Any, Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from garminconnect.workout import (
     RunningWorkout, WorkoutSegment, ExecutableStep, StepType, ConditionType, TargetType
 )
 from modules import fetcher, hansons_knowledge
+
+
+# Generovanie plánov a tréningov beží na najsilnejšom modeli (Gemini 3.1 Pro).
+PLAN_MODEL = "gemini-3.1-pro-preview"
+_gemini_client: Optional[genai.Client] = None
+
+
+def _get_gemini_client() -> genai.Client:
+    """Lenivo vytvorí a cachuje google-genai klienta. Vyžaduje GEMINI_API_KEY."""
+    global _gemini_client
+    if _gemini_client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise Exception("Gemini API kľúč nie je nastavený.")
+        _gemini_client = genai.Client(api_key=api_key)
+    return _gemini_client
+
+
+def _generate_json(prompt: str) -> dict:
+    """Pošle prompt Gemini a vráti naparsovaný JSON.
+    response_mime_type='application/json' vynúti čistý JSON (bez ``` blokov a prózy)."""
+    client = _get_gemini_client()
+    response = client.models.generate_content(
+        model=PLAN_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(response_mime_type="application/json"),
+    )
+    text = (response.text or "").strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            return json.loads(text[start:end + 1])
+        raise
 
 
 def _gather_athlete_context(client, profile: dict) -> str:
@@ -169,12 +205,6 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
 
 def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
     """Vygeneruje 7-dňový plán podľa Hanson metódy s plnou metodikou + živými Garmin dátami."""
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        raise Exception("Gemini API kľúč nie je nastavený.")
-
-    genai.configure(api_key=GEMINI_API_KEY)
-
     target_time = profile.get("target_time", "neuvedený")
     ai_context = profile.get("ai_context", "")
     athlete_context = _gather_athlete_context(client, profile)
@@ -220,27 +250,13 @@ Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
 Pre každý krok použi BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max) — nie oboje povinne.
 Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
 
-    model = genai.GenerativeModel('gemini-2.5-pro')
-    response = model.generate_content(system_prompt)
-
-    text = response.text.strip()
-    if text.startswith("```json"):
-        text = text.replace("```json", "", 1)
-    if text.endswith("```"):
-        text = text[:text.rfind("```")]
-
-    return json.loads(text.strip())
+    return _generate_json(system_prompt)
 
 def generate_single_workout(profile: dict, description: str, client=None,
                             for_date: Optional[str] = None) -> dict:
     """Vygeneruje JEDEN tréning podľa požiadavky — s plnou Hanson metodikou + živými
     Garmin dátami (zóny, LTHR, tempá). Easy/dlhé → HR cieľ, Tempo/intervaly → pace.
     Vráti dict: {workout_name, description, steps:[...]}. Zdieľa create aj modify."""
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        raise Exception("Gemini API kľúč nie je nastavený.")
-    genai.configure(api_key=GEMINI_API_KEY)
-
     target_time = profile.get("target_time", "neuvedený")
     athlete_context = _gather_athlete_context(client, profile)
     when = f" na dátum {for_date}" if for_date else ""
@@ -268,14 +284,7 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
 Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy/dlhé→HR, Tempo/intervaly→pace.
 Vraciaš LEN platný JSON."""
 
-    model = genai.GenerativeModel('gemini-2.5-pro')
-    response = model.generate_content(prompt)
-    text = response.text.strip()
-    if text.startswith("```json"):
-        text = text.replace("```json", "", 1)
-    if text.endswith("```"):
-        text = text[:text.rfind("```")]
-    return json.loads(text.strip())
+    return _generate_json(prompt)
 
 
 def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, RunningWorkout]]:
@@ -359,13 +368,6 @@ def update_next_workout(client, profile: dict) -> dict:
     old_workout_name = old_workout.get("title", old_workout.get("workoutName", "Beh"))
     old_workout_id = old_workout.get("workoutId")
     
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        raise Exception("Gemini API kľúč nie je nastavený.")
-
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-pro')
-
     ai_context = profile.get("ai_context", "")
     athlete_context = _gather_athlete_context(client, profile)
 
@@ -400,12 +402,7 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
 }}
 Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy→HR, Tempo/intervaly→pace."""
 
-    response = model.generate_content(system_prompt)
-    text = response.text.strip()
-    if text.startswith("```json"): text = text.replace("```json", "", 1)
-    if text.endswith("```"): text = text[:text.rfind("```")]
-    
-    ai_response = json.loads(text.strip())
+    ai_response = _generate_json(system_prompt)
     new_w_data = ai_response.get("workout")
     
     return {

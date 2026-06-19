@@ -8,7 +8,8 @@ import logging
 import os
 import sys
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # Load env variables
@@ -41,14 +42,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Setup Gemini AI
+# Setup Gemini AI (nová zjednotená google-genai SDK)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
+# Mapovanie UI prepínača (flash/pro) na Gemini 3.x modely:
+#   flash = rýchly, stabilný tréner (Gemini 3.5 Flash)
+#   pro   = najsilnejšie uvažovanie + 2M kontext (Gemini 3.1 Pro — preview)
 GEMINI_MODELS = {
-    "flash": "gemini-2.5-flash",
-    "pro": "gemini-2.5-pro",
+    "flash": "gemini-3.5-flash",
+    "pro": "gemini-3.1-pro-preview",
 }
 
 logger = logging.getLogger("hansons")
@@ -360,7 +363,6 @@ def get_dashboard_advice(
         values = [v for v in [metrics.sleep_score, metrics.body_battery, metrics.readiness] if v is not None]
         form_score = int(sum(values) / len(values)) if values else 50
 
-        model = genai.GenerativeModel("gemini-2.5-flash")
         prompt = f"""Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca a daj mu 2-3 krátke úderné vety.
 Ak sú hodnoty slabé (Body Battery alebo Pripravenosť pod 50), odporúč mu nech si v sekcii Plán prepočíta tréning.
 Ak sú hodnoty super, povzbuď ho. Používaj slovenčinu, buď povzbudivý, občas emoji.
@@ -372,8 +374,12 @@ Stav formy dnes: {form_score}/100
 - Pripravenosť: {metrics.readiness}/100
 {next_workout_str}"""
 
-        response = model.generate_content(prompt)
-        return {"advice": response.text.strip()}
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODELS["flash"],
+            contents=prompt,
+            config=types.GenerateContentConfig(max_output_tokens=400),
+        )
+        return {"advice": (response.text or "").strip()}
     except Exception:
         return {"advice": "Dnes ťa neviem zhodnotiť, bež podľa pocitu! 🏃‍♂️"}
 
@@ -1189,102 +1195,41 @@ Najbližší tréning: {next_w_str}
             return f"Chyba pri úprave cieľa: {str(e)}"
 
     try:
-        model = genai.GenerativeModel(
-            model_name=model_name,
+        # Nástroje = obyčajné Python funkcie (definované vyššie). Nová google-genai SDK
+        # z nich sama vyrobí schému a cez automatické volanie funkcií (AFC) spustí celú
+        # slučku volaní, kým model nedá finálnu textovú odpoveď.
+        tools = [get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details,
+                 reschedule_workout, delete_garmin_workout, create_and_schedule_workout,
+                 modify_workout, update_training_goal]
+
+        # História chatu → google-genai formát (role: user/model). Gemini musí začať
+        # userom, preto zahodíme úvodný pozdrav (model) na začiatku.
+        contents = []
+        for msg in req.history:
+            text = (msg.get("content") or "").strip()
+            if not text:
+                continue
+            role = "user" if msg.get("role") == "user" else "model"
+            contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
+        while contents and contents[0].role != "user":
+            contents.pop(0)
+        contents.append(types.Content(role="user", parts=[types.Part(text=req.message)]))
+
+        config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            tools=[get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details,
-                   reschedule_workout, delete_garmin_workout, create_and_schedule_workout,
-                   modify_workout, update_training_goal]
-                  if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
+            tools=tools,
+            # AFC slučka — dosť krokov na reorganizáciu celého týždňa (viac presunov)
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=10),
+        )
+        response = gemini_client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=config,
         )
 
-        formatted_history = []
-        for msg in req.history:
-            role = "user" if msg["role"] == "user" else "model"
-            formatted_history.append({"role": role, "parts": [msg["content"]]})
-
-        chat = model.start_chat(history=formatted_history)
-        response = chat.send_message(req.message)
-
-        # Spracovanie Function Calls (opakované kým model vola funkcie)
-        max_iterations = 8  # viac krokov pre reorganizáciu celého týždňa (viac presunov)
-        iteration = 0
-        while iteration < max_iterations and response.candidates and response.candidates[0].content.parts:
-            iteration += 1
-
-            # Nájdeme všetky function_call časti
-            function_calls = [
-                p for p in response.candidates[0].content.parts
-                if getattr(p, "function_call", None)
-            ]
-
-            if not function_calls:
-                break
-
-            # Spracujeme všetky function calls
-            function_responses = []
-            for fc_part in function_calls:
-                fc = fc_part.function_call
-                fn_name = fc.name
-
-                # Extraktujeme argumenty (môžu byť dict alebo object)
-                try:
-                    fn_args = dict(fc.args) if hasattr(fc.args, 'items') else vars(fc.args)
-                except Exception:
-                    fn_args = {}
-
-                # Zavoláme správnu funkciu a zachytíme výsledok
-                result = None
-                if fn_name == "get_hr_zones":
-                    result = get_hr_zones()
-                elif fn_name == "get_activity_laps":
-                    result = get_activity_laps(fn_args.get("date", ""))
-                elif fn_name == "delete_garmin_workout":
-                    result = delete_garmin_workout(fn_args.get("date", ""))
-                elif fn_name == "list_garmin_workouts":
-                    result = list_garmin_workouts(fn_args.get("days_ahead", 14))
-                elif fn_name == "get_workout_details":
-                    result = get_workout_details(fn_args.get("workout_id", ""))
-                elif fn_name == "reschedule_workout":
-                    result = reschedule_workout(fn_args.get("workout_id", ""), fn_args.get("new_date", ""))
-                elif fn_name == "create_and_schedule_workout":
-                    result = create_and_schedule_workout(fn_args.get("date", ""), fn_args.get("description", ""))
-                elif fn_name == "modify_workout":
-                    result = modify_workout(fn_args.get("workout_id", ""), fn_args.get("date", ""), fn_args.get("change_request", ""))
-                elif fn_name == "update_training_goal":
-                    result = update_training_goal(fn_args.get("target_time", ""), fn_args.get("race_date", ""))
-                else:
-                    result = f"Neznáma funkcia: {fn_name}"
-
-                # Uložíme response
-                function_responses.append({
-                    "name": fn_name,
-                    "response": {"result": result}
-                })
-
-            # Pošleme všetky výsledky modelu naraz
-            if function_responses:
-                parts = []
-                for resp in function_responses:
-                    parts.append(
-                        genai.types.PartDict(
-                            function_response=genai.types.FunctionResponseDict(
-                                name=resp["name"],
-                                response=resp["response"]
-                            )
-                        )
-                    )
-
-                response = chat.send_message(
-                    genai.types.ContentDict(
-                        role="user",
-                        parts=parts
-                    )
-                )
-            else:
-                break
-
-        response_text = response.text
+        response_text = (response.text or "").strip()
+        if not response_text:
+            response_text = "Prepáč, túto požiadavku som teraz nezvládol spracovať. Skús ju preformulovať. 🏃"
         
         # Spracovanie pamäte
         import re
@@ -1295,7 +1240,6 @@ Najbližší tréning: {next_w_str}
             # deduplikácia alebo jednoduché pridanie
             if new_fact.lower() not in existing_context.lower():
                 updated_context = existing_context + "\n- " + new_fact if existing_context else "- " + new_fact
-                from modules.database import update_user_profile
                 update_user_profile(user_id, {"ai_context": updated_context.strip()})
             
             # Odstránenie tagu z odpovede

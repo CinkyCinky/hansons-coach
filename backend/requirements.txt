@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 garminconnect>=0.3.5
 pydantic
-google-generativeai
+google-genai>=1.0.0
 python-multipart
 python-dotenv
 requests
