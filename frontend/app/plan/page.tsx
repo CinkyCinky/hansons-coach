@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
-  Activity, Flame, ChevronRight, BarChart2, ChevronLeft
+  Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -161,17 +161,9 @@ export default function Plan() {
 
   return (
     <div className="flex flex-col gap-6 pt-4 pb-32">
-      <header className="flex justify-between items-start">
-        <div>
-          <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
-          <p className="text-gray-400 text-sm">Hanson Advanced Half-Marathon</p>
-        </div>
-        <Link
-          href="/plan/generator"
-          className="bg-primary hover:bg-blue-600 text-white p-2 rounded-xl text-sm font-bold shadow-[0_0_15px_rgba(59,130,246,0.3)] transition-colors"
-        >
-          Generátor
-        </Link>
+      <header>
+        <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
+        <p className="text-gray-400 text-sm">Hanson Advanced Half-Marathon</p>
       </header>
 
       {error && (
@@ -192,16 +184,46 @@ export default function Plan() {
         </div>
       )}
 
-      {/* Prepočítaj tréning */}
+      {/* Akcie trénera */}
       {!proposal && (
-        <button
-          onClick={handleDailyUpdate}
-          disabled={isUpdating}
-          className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 text-primary p-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-50 border border-primary/20"
-        >
-          {isUpdating ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
-          {isUpdating ? "Prepočítavam podľa fyzičky..." : "Prepočítať najbližší tréning podľa fyzičky"}
-        </button>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">Tréner — akcie</h2>
+
+          {/* Vytvoriť nový plán */}
+          <Link
+            href="/plan/generator"
+            className="glass-card p-4 flex items-center gap-4 hover:border-primary/40 border border-transparent transition-colors"
+          >
+            <div className="bg-primary/15 text-primary p-3 rounded-xl shrink-0">
+              <Sparkles size={22} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold">Vygenerovať plán na 7 dní</p>
+              <p className="text-xs text-gray-400 leading-snug mt-0.5">
+                AI navrhne tréningy na najbližší týždeň. Najprv ich uvidíš — do Garminu sa zapíšu až po tvojom schválení.
+              </p>
+            </div>
+            <ChevronRight size={18} className="text-gray-500 shrink-0" />
+          </Link>
+
+          {/* Upraviť najbližší tréning */}
+          <button
+            onClick={handleDailyUpdate}
+            disabled={isUpdating}
+            className="glass-card p-4 flex items-center gap-4 text-left hover:border-accent/40 border border-transparent transition-colors disabled:opacity-60 w-full"
+          >
+            <div className="bg-accent/15 text-accent p-3 rounded-xl shrink-0">
+              {isUpdating ? <Loader2 className="animate-spin" size={22} /> : <Activity size={22} />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold">{isUpdating ? "Prepočítavam…" : "Upraviť najbližší tréning"}</p>
+              <p className="text-xs text-gray-400 leading-snug mt-0.5">
+                AI prepočíta tvoj najbližší tréning podľa aktuálnej formy (tep, únava, spánok). Návrh schváliš pred uložením.
+              </p>
+            </div>
+            {!isUpdating && <ChevronRight size={18} className="text-gray-500 shrink-0" />}
+          </button>
+        </section>
       )}
 
       {/* AI Proposal */}
