@@ -21,6 +21,7 @@ from modules import fetcher
 from modules.database import (
     verify_token, get_user_profile, update_user_profile, encrypt_password,
     get_garmin_snapshot, save_garmin_snapshot,
+    save_metric_history, get_metric_history,
 )
 from modules import workout_generator
 from modules import hansons_knowledge
@@ -252,6 +253,26 @@ def _build_wellness(client) -> dict:
     }
 
 
+def _record_metric_history(user_id: str, wellness: dict):
+    """Zapíše denný bod trendov (vo2max / pokojový tep / A:C ratio) z wellness dát."""
+    try:
+        tl = wellness.get("training_load") or {}
+        ratio = tl.get("ratio")
+        if ratio in (None, 0) and tl.get("acute_load") and tl.get("chronic_load"):
+            try:
+                ratio = round(tl["acute_load"] / tl["chronic_load"], 2)
+            except Exception:
+                ratio = None
+        save_metric_history(
+            user_id,
+            vo2max=(wellness.get("athlete") or {}).get("vo2max"),
+            resting_hr=(wellness.get("stats") or {}).get("resting_hr"),
+            ac_ratio=ratio,
+        )
+    except Exception:
+        logger.exception("Zápis trendov zlyhal")
+
+
 def _wellness_snapshot(client, user_id: str, force: bool = False) -> dict:
     """Wellness snapshot z cache (ak je čerstvý), inak ho stiahne z Garminu a uloží."""
     if not force:
@@ -260,6 +281,7 @@ def _wellness_snapshot(client, user_id: str, force: bool = False) -> dict:
             return cached["data"]
     data = _build_wellness(client)
     save_garmin_snapshot(user_id, data)
+    _record_metric_history(user_id, data)
     return data
 
 
@@ -829,6 +851,7 @@ def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(g
             "weekly_volume": weekly_volume,
             "goal_pace_sec": _goal_pace_sec_per_km(profile.get("target_time")),
             "training_load": training_load,
+            "metric_trends": get_metric_history(user_id, days=90),
             "sleep": sleep_data,
             "hrv": hrv_data,
             "body_battery": {
