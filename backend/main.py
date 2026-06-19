@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import datetime
+import logging
 import os
 import sys
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -47,6 +48,14 @@ GEMINI_MODELS = {
     "flash": "gemini-2.5-flash",
     "pro": "gemini-2.5-pro",
 }
+
+logger = logging.getLogger("hansons")
+
+
+def _server_error(e: Exception, message: str) -> HTTPException:
+    """Zaloguje skutočnú chybu na server (nie klientovi) a vráti čistú slovenskú správu."""
+    logger.exception("%s", message)
+    return HTTPException(status_code=500, detail=message)
 
 
 # ── Models ──────────────────────────────────────────────────────────────────
@@ -310,7 +319,7 @@ def get_dashboard_today(
             "today_workout": today_workout,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa načítať dáta z Garminu.")
 
 
 class AdviceRequest(BaseModel):
@@ -408,7 +417,7 @@ def get_scheduled_plan(client=Depends(get_garmin_client)):
 
         return {"workouts": items}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa načítať tréningový plán.")
 
 
 @app.get("/api/plan/workout/{workout_id}")
@@ -450,7 +459,7 @@ def get_workout_details(workout_id: str, client=Depends(get_garmin_client)):
         }
         return {"workout": enriched}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa načítať detail tréningu.")
 
 
 @app.get("/api/plan/activity/{activity_id}")
@@ -485,7 +494,7 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
         }
         return {"stats": stats, "activity": details}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa načítať štatistiky aktivity.")
 
 
 class PlanGenerateRequest(BaseModel):
@@ -500,7 +509,7 @@ def api_generate_plan(req: PlanGenerateRequest, user_id: str = Depends(get_curre
         plan_json = workout_generator.generate_weekly_plan(profile, req.constraints)
         return plan_json
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa vygenerovať plán. Skús to znova.")
 
 
 class PlanUploadRequest(BaseModel):
@@ -520,7 +529,7 @@ def api_upload_plan(req: PlanUploadRequest, client=Depends(get_garmin_client)):
                 uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
         return {"status": "success", "uploaded": uploaded}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa nahrať plán do Garminu.")
 
 
 @app.get("/api/plan/daily_update")
@@ -542,7 +551,7 @@ def generate_daily_update(client=Depends(get_garmin_client), user_id: str = Depe
                 proposal["original_steps"] = []
         return proposal
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa prepočítať tréning.")
 
 
 class WorkoutConfirmRequest(BaseModel):
@@ -586,8 +595,10 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
             return {"status": "success", "message": "Tréning bol úspešne uložený do Garminu."}
         else:
             raise HTTPException(status_code=500, detail="Garmin nevrátil ID nového tréningu.")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa uložiť tréning do Garminu.")
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -659,7 +670,7 @@ def get_weekly_report(client=Depends(get_garmin_client)):
             },
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Nepodarilo sa načítať report.")
 
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
@@ -851,7 +862,7 @@ Najbližší tréning: {next_w_str}
             
         return {"response": response_text, "model_used": model_name}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error(e, "Tréner teraz nie je dostupný. Skús to o chvíľu.")
 
 
 # ── Debug ─────────────────────────────────────────────────────────────────────

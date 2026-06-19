@@ -93,8 +93,14 @@ export default function Dashboard() {
         <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm font-bold break-words">
           ⚠️ {error}
           <p className="text-xs font-normal mt-1 text-rose-400/80">
-            Skontroluj Garmin prihlásenie v Nastaveniach alebo stlač Refresh.
+            Aby appka fungovala, prepoj svoj Garmin účet v Nastaveniach (alebo stlač Refresh).
           </p>
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-1 mt-3 text-xs font-bold text-primary underline underline-offset-2"
+          >
+            Prejsť do Nastavení a prepojiť Garmin <ChevronRight size={14} />
+          </Link>
         </div>
       )}
 
@@ -191,6 +197,7 @@ export default function Dashboard() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.05 }}
             className="glass-card p-4"
+            title="Dĺžka a kvalita spánku za poslednú noc (skóre 0–100 z Garminu). Dobrý spánok = lepšia regenerácia."
           >
             <div className="flex items-center gap-2 mb-2 text-indigo-400">
               <Moon size={18} />
@@ -210,6 +217,7 @@ export default function Dashboard() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.1 }}
             className="glass-card p-4"
+            title="HRV (variabilita srdcového tepu) — ukazovateľ regenerácie a stresu. Vyššie/stabilné = telo je oddýchnuté."
           >
             <div className="flex items-center gap-2 mb-2 text-rose-400">
               <Heart size={18} />
@@ -229,6 +237,7 @@ export default function Dashboard() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.15 }}
             className="glass-card p-4"
+            title="Body Battery (0–100) — odhad zásob energie tela. Vysoké ráno = si nabitý, nízke = potrebuješ oddych."
           >
             <div className="flex items-center gap-2 mb-2 text-emerald-400">
               <Battery size={18} />
@@ -249,6 +258,7 @@ export default function Dashboard() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.2 }}
             className="glass-card p-4"
+            title="Pokojový tep (bpm) — počet úderov srdca v pokoji. Nižší býva znakom lepšej kondície."
           >
             <div className="flex items-center gap-2 mb-2 text-amber-400">
               <Zap size={18} />
@@ -267,6 +277,7 @@ export default function Dashboard() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.25 }}
           className="glass-card p-4 mt-3"
+          title="Pripravenosť na tréning (0–100) — Garmin odhad, ako je telo pripravené na záťaž (spánok, HRV, únava). Nízke = zvoľ ľahší tréning."
         >
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2 text-sky-400">

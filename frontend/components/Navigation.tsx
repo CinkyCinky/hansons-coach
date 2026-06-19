@@ -8,6 +8,9 @@ import { clsx } from "clsx";
 export default function Navigation() {
   const pathname = usePathname();
 
+  // Na prihlasovacej obrazovke navigáciu neukazujeme
+  if (pathname === "/login") return null;
+
   const tabs = [
     { name: "Prehľad", href: "/", icon: Home },
     { name: "Plán", href: "/plan", icon: Calendar },
