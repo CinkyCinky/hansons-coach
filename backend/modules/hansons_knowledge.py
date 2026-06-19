@@ -83,8 +83,15 @@ aeróbna adaptácia — vyplavenie metabolického odpadu a prekrvenie svalov, NI
 Preto Easy beh riadi SRDCOVÝ TEP, nie tempo:
 • Keď je športovec unavený, to isté tempo = vyšší tep = ďalšie poškodenie. Zlé.
 • Pri riadení tepom si telo tempo zvolí samo podľa dennej formy → správna regenerácia.
-• Easy beh drž v Easy HR zóne (cca 65–80 % LTHR / aeróbne pásmo).
-PRETO: Easy a dlhé behy zadávaj s HR cieľom (hr_min/hr_max).
+
+▌STROP EASY = AERÓBNY PRAH (AeT), nie Garminovo rozhranie Z2/Z3
+Easy/recovery beh musí ostať POD aeróbnym prahom — bodom, kde telo ešte regeneruje
+a nezačína trénovať. AeT je typicky ~10–15 % pod prahom laktátu (LTHR):
+   Aeróbny prah ≈ 0.86 × LTHR    (napr. LTHR 175 → strop Easy ~150 bpm)
+POZOR: Garminova hranica Z2/Z3 je len matematický predel zón, NIE fyziologická stena —
+skutočný strop Easy je o niečo vyššie (v spodnej časti Z3). Easy pásmo preto chápeme ako
+„od spodku Z2 po aeróbny prah". Recovery behy drž pri spodnom okraji tohto pásma.
+PRETO: Easy a dlhé behy zadávaj s HR cieľom (hr_min/hr_max) do Easy pásma (po AeT).
 Tempo a intervaly môžu mať tempový cieľ (pace), lebo tam ide o konkrétny výkon —
 ideálne však kombináciu tempa a kontroly tepom.
 

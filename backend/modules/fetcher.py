@@ -284,6 +284,20 @@ def get_max_hr_from_activities(client, days: int = 90) -> Optional[int]:
     return None
 
 
+def _easy_band(lthr: Optional[int], z2: tuple, z3: tuple) -> tuple:
+    """Easy/regeneračné pásmo podľa Humphreyho: od spodku Z2 po AERÓBNY PRAH.
+    Aeróbny prah ≈ 0.86 × LTHR (recovery beh musí ostať POD prahom laktátu).
+    Garminovo Z2-Z3 rozhranie je len matematický predel, nie hranica regenerácie —
+    preto Easy siaha o niečo vyššie, do spodnej časti Z3 (napr. LTHR 175 → strop ~150)."""
+    floor = z2[0]
+    if lthr:
+        aet = round(lthr * 0.86)
+        # clamp: nikdy nie pod Garmin Z2 strop, nikdy nie nad stred Z3
+        aet = max(z2[1], min(aet, round((z3[0] + z3[1]) / 2)))
+        return (floor, aet)
+    return z2  # bez LTHR ostaň pri Garmin Z2
+
+
 def get_garmin_hr_zones(client) -> Optional[dict]:
     """Stiahne REÁLNE nakonfigurované HR zóny priamo z Garminu.
     Preferuje šport-špecifické bežecké zóny (sport=RUNNING), fallback na DEFAULT.
@@ -314,19 +328,22 @@ def get_garmin_hr_zones(client) -> Optional[dict]:
         z4 = (floors[3], floors[4])
         z5 = (floors[4], max_hr)
 
+        lthr = z.get("lactateThresholdHeartRateUsed")
+        easy = _easy_band(lthr, z2, z3)
+
         return {
             "source": f"Garmin/{z.get('sport', 'DEFAULT')}",
             "method": z.get("trainingMethod"),
-            "lthr": z.get("lactateThresholdHeartRateUsed"),
+            "lthr": lthr,
             "max_hr": max_hr,
             "resting_hr": z.get("restingHeartRateUsed"),
             "zones": {"z1": z1, "z2": z2, "z3": z3, "z4": z4, "z5": z5},
             # Hanson mapovanie na reálne Garmin zóny:
-            "easy":      z2,   # regeneračné aeróbne pásmo (Easy/dlhé behy)
-            "moderate":  z3,   # marathon/strednej intenzity
-            "tempo":     z4,   # HMP/tempo (pri polmaratóne ~prahová intenzita)
-            "threshold": z4,   # prah laktátu (LT)
-            "speed":     z5,   # rýchlostné/silové intervaly
+            "easy":      easy,            # Easy/dlhé: Z2 až po aeróbny prah (~0.86 LTHR)
+            "moderate":  (easy[1], z4[0]),  # od aeróbneho prahu po spodok Z4
+            "tempo":     z4,              # HMP/tempo (pri polmaratóne ~prahová intenzita)
+            "threshold": z4,              # prah laktátu (LT)
+            "speed":     z5,              # rýchlostné/silové intervaly
         }
     except Exception as e:
         print(f"  ⚠️  Garmin HR zones: {e}")
@@ -350,14 +367,15 @@ def compute_hr_zones(lthr: Optional[int], max_hr: Optional[int], resting_hr: Opt
     Použije sa LEN ako fallback, ak Garmin nevráti nakonfigurované zóny.
     Priorita: LTHR → Max HR → None."""
     if lthr:
-        # Hansonova metóda: zóny odvodzujeme primárne od LTHR
+        # Hansonova metóda: zóny odvodzujeme primárne od LTHR.
+        # Easy strop = aeróbny prah (~0.86 LTHR), aby regeneračný beh ostal pod LT.
         return {
             "source": "LTHR",
             "lthr": lthr,
-            "easy":      (round(lthr * 0.75), round(lthr * 0.83)),   # cca Z1-Z2
-            "moderate":  (round(lthr * 0.83), round(lthr * 0.89)),   # cca Z3
-            "tempo":     (round(lthr * 0.89), round(lthr * 0.94)),   # Hanson Tempo
-            "threshold": (round(lthr * 0.94), round(lthr * 1.00)),   # AT/LT
+            "easy":      (round(lthr * 0.72), round(lthr * 0.86)),   # po aeróbny prah
+            "moderate":  (round(lthr * 0.86), round(lthr * 0.94)),   # nad AeT pod LT
+            "tempo":     (round(lthr * 0.94), round(lthr * 1.00)),   # Hanson Tempo/HMP
+            "threshold": (round(lthr * 0.97), round(lthr * 1.00)),   # AT/LT
             "speed":     (round(lthr * 1.00), round(lthr * 1.06)),   # Speed/Strength
         }
     if max_hr:
