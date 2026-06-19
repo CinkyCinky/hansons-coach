@@ -173,7 +173,7 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] pt-4">
+    <div className="flex flex-col h-[calc(100dvh-130px)] pt-4">
       {/* Header */}
       <header className="mb-3 shrink-0">
         <div className="flex items-center justify-between">

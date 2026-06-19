@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, BarChart, Bar
+  Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine
 } from "recharts";
-import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, RefreshCcw } from "lucide-react";
+import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, RefreshCcw, Info } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 
@@ -34,6 +34,7 @@ const CHART_STYLE = {
 export default function Reports() {
   const store = useStore();
   const [tab, setTab] = useState<"weekly" | "runs">("weekly");
+  const [showLegend, setShowLegend] = useState(false);
 
   useEffect(() => {
     store.loadReport();
@@ -66,6 +67,10 @@ export default function Reports() {
     tempoStr: formatPace(r.avg_pace_sec),
   }));
 
+  // Týždenný objem (km/týždeň) — kľúčová Hanson metrika
+  const volumeData = (data?.weekly_volume ?? []) as { week: string; km: number }[];
+  const goalPace: number | null = data?.goal_pace_sec ?? null;
+
   // Kombinovaný týždenný graf (spánok + BB) — zarovnané podľa dátumu, nie podľa indexu
   const bbByDay: Record<string, number> = {};
   bbChartData.forEach((b: any) => {
@@ -78,20 +83,40 @@ export default function Reports() {
   }));
 
   return (
-    <div className="flex flex-col gap-5 pt-4 pb-10">
+    <div className="flex flex-col gap-5 pt-4 pb-32">
       <header className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold mb-1">Reporty</h1>
           <p className="text-gray-400 text-sm">Posledných 7 dní</p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors disabled:opacity-50"
-        >
-          <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowLegend((v) => !v)}
+            className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors"
+            aria-label="Čo znamenajú tieto údaje?"
+          >
+            <Info size={16} />
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+          >
+            <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </header>
+
+      {showLegend && (
+        <div className="glass-card p-4 text-xs text-gray-300 flex flex-col gap-2 leading-relaxed">
+          <p><b className="text-amber-300">Týždenný objem</b> — koľko km nabeháš za týždeň. Pri Hansonovi je postupný nárast objemu najdôležitejší (princíp kumulovanej únavy).</p>
+          <p><b className="text-primary">Tempo trend</b> — priemerné tempo behov (min/km, nižšie = rýchlejšie). Zelená prerušovaná čiara je tvoje cieľové polmaratónske tempo.</p>
+          <p><b className="text-emerald-300">Kadencia</b> — počet krokov za minútu (spm).</p>
+          <p><b className="text-indigo-300">Spánok</b> — priemerná dĺžka spánku za noc.</p>
+          <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms). „BALANCED"/vyššie = dobrá regenerácia. „Minulú noc" sa zobrazí, keď ju hodinky cez noc namerajú.</p>
+          <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100). Dôležité na zvládanie únavy počas tvrdého bloku.</p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="bg-[#1a1a24] p-1 rounded-full flex relative">
@@ -224,12 +249,42 @@ export default function Reports() {
       {tab === "runs" && data && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-5">
 
-          {/* Graf: tempo trend */}
-          {runsChartData.length > 0 && (
+          {/* Graf: Týždenný objem (km/týždeň) — hlavná Hanson metrika */}
+          {volumeData.length > 0 && (
             <div className="glass-card p-4">
-              <h3 className="text-base font-bold mb-4 flex items-center gap-2">
+              <h3 className="text-base font-bold mb-1 flex items-center gap-2">
+                <Activity className="text-amber-400" size={18} /> Týždenný objem (km)
+              </h3>
+              <p className="text-xs text-gray-500 mb-4">Postupný nárast objemu je jadro Hansonovej metódy.</p>
+              <div className="h-40 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={volumeData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" vertical={false} />
+                    <XAxis dataKey="week" stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
+                    <Tooltip
+                      {...CHART_STYLE}
+                      cursor={{ fill: "rgba(255,255,255,0.06)" }}
+                      formatter={(v: any) => [`${v} km`, "Týždeň"]}
+                    />
+                    <Bar dataKey="km" name="km" fill="#f97316" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Graf: tempo trend (s referenciou cieľového tempa) */}
+          {runsChartData.length >= 3 && (
+            <div className="glass-card p-4">
+              <h3 className="text-base font-bold mb-1 flex items-center gap-2">
                 <TrendingUp className="text-primary" size={18} /> Tempo trend
               </h3>
+              {goalPace && (
+                <p className="text-xs text-gray-500 mb-4">
+                  Prerušovaná čiara = cieľové tempo {formatPace(goalPace)}/km
+                </p>
+              )}
               <div className="h-44 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={runsChartData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
@@ -247,28 +302,11 @@ export default function Reports() {
                       {...CHART_STYLE}
                       formatter={(v: any) => [formatPace(v as number), "Tempo"]}
                     />
+                    {goalPace && (
+                      <ReferenceLine y={goalPace} stroke="#34d399" strokeDasharray="4 4" strokeWidth={1.5} />
+                    )}
                     <Line type="monotone" dataKey="tempo" name="Tempo" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3, fill: "#3b82f6" }} connectNulls />
                   </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Graf: km per beh */}
-          {runsChartData.length > 0 && (
-            <div className="glass-card p-4">
-              <h3 className="text-base font-bold mb-4 flex items-center gap-2">
-                <Activity className="text-amber-400" size={18} /> Objem behov (km)
-              </h3>
-              <div className="h-36 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={runsChartData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" vertical={false} />
-                    <XAxis dataKey="day" stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip {...CHART_STYLE} formatter={(v: any) => [`${v} km`, "Vzdialenosť"]} />
-                    <Bar dataKey="km" name="km" fill="#f97316" radius={[4, 4, 0, 0]} />
-                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>

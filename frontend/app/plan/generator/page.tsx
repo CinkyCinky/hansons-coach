@@ -73,7 +73,7 @@ export default function Generator() {
   };
 
   return (
-    <div className="flex flex-col gap-6 pt-4 pb-24">
+    <div className="flex flex-col gap-6 pt-4 pb-32">
       <header className="flex items-center gap-3">
         <Link href="/plan">
           <ArrowLeft className="text-gray-400 hover:text-white" />

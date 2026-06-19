@@ -168,7 +168,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="flex flex-col gap-6 pt-4 pb-24">
+    <div className="flex flex-col gap-6 pt-4 pb-32">
       <div className="mb-2">
         <h1 className="text-2xl font-bold">Nastavenia</h1>
         <p className="text-gray-400 text-sm">Spravuj svoj profil a ciele</p>

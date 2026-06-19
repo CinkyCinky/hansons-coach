@@ -50,9 +50,15 @@ def get_hrv_data(client) -> Optional[dict]:
         except Exception:
             pass
 
-    if results:
-        return results[0]  # Najnovší
-    return None
+    if not results:
+        return None
+    # Najnovší deň pre status/weekly_avg; last_night z najnovšieho dňa, ktorý ho má
+    # (dnešná noc nemusí byť ešte spracovaná → bola by null).
+    latest = results[0]
+    latest["last_night"] = next(
+        (r["last_night"] for r in results if r.get("last_night") is not None), None
+    )
+    return latest
 
 
 def get_sleep_data(client, days: int = 7) -> list:

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Moon, Heart, Battery, Activity, Flame, ChevronRight,
-  Loader2, Bot, RefreshCcw, Zap, TrendingUp
+  Loader2, Bot, RefreshCcw, Zap, TrendingUp, Info
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -28,6 +28,7 @@ function formatDate(): string {
 
 export default function Dashboard() {
   const store = useStore();
+  const [showLegend, setShowLegend] = useState(false);
 
   useEffect(() => {
     store.loadDashboard();
@@ -186,9 +187,28 @@ export default function Dashboard() {
 
       {/* Metriky — 2×2 grid */}
       <section>
-        <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
-          <Activity size={20} className="text-gray-400" /> Ranný Report
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Activity size={20} className="text-gray-400" /> Ranný Report
+          </h3>
+          <button
+            onClick={() => setShowLegend((v) => !v)}
+            className="text-gray-400 hover:text-white p-1.5 -mr-1.5"
+            aria-label="Čo znamenajú tieto metriky?"
+          >
+            <Info size={18} />
+          </button>
+        </div>
+
+        {showLegend && (
+          <div className="glass-card p-4 mb-3 text-xs text-gray-300 flex flex-col gap-2 leading-relaxed">
+            <p><b className="text-indigo-300">Spánok</b> — dĺžka a kvalita spánku za noc (skóre 0–100). Lepší spánok = lepšia regenerácia.</p>
+            <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu, ukazovateľ regenerácie a stresu. „BALANCED"/vyššie = oddýchnuté telo.</p>
+            <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100). Ráno vysoké = si nabitý, nízke = treba oddych.</p>
+            <p><b className="text-amber-300">Pokojový tep</b> — tep v pokoji (bpm). Nižší býva znakom lepšej kondície.</p>
+            <p><b className="text-sky-300">Pripravenosť</b> — ako je telo pripravené na záťaž (0–100). Nízke = zvoľ ľahší tréning.</p>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           {/* Spánok */}
