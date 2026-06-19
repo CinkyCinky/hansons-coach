@@ -216,9 +216,12 @@ REÁLNYCH dát zverenca z Garminu (vek, váha, VO2max, LTHR, HR zóny, tempá).
 Cieľový čas na polmaratón: {target_time}.
 OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
 {training_timeline_note(profile)}
+{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
 {athlete_context}
 
 Úloha: Vytvor tréningový plán na najbližších 7 dní (od zajtra).
+AK SI VO FÁZE TAPER (T18): vygeneruj LEN zostupový týždeň — žiadne tvrdé intervaly,
+objem dole ~50–60 %, dlhý beh max 8–10 km Easy, max jeden krátky beh s pár HMP úsekmi.
 Dodatočná požiadavka zverenca: "{constraints}"
 PRÍSNE rešpektuj osobné poznámky (deň odpočinku, čas behu, zranenia).
 
@@ -262,9 +265,11 @@ def generate_single_workout(profile: dict, description: str, client=None,
     when = f" na dátum {for_date}" if for_date else ""
 
     prompt = f"""Si špičkový tréner Hanson Half-Marathon Method. Cieľový čas: {target_time}.
+{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
 {athlete_context}
 
 Vygeneruj JEDEN bežecký tréning{when} podľa tejto požiadavky: "{description}"
+(Ak je fáza TAPER/T18, drž tréning ľahký a krátky — žiadne tvrdé intervaly.)
 
 PRAVIDLÁ:
 • Drž sa Hanson metodiky a typu tréningu (Easy/Tempo/Speed/Strength/Long).
@@ -379,6 +384,7 @@ Tréning na dátum {target_date_str}: "{old_workout_name}".
 Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
 OSOBNÉ POZNÁMKY: {ai_context}
 {training_timeline_note(profile)}
+{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
 {athlete_context}
 
 PRAVIDLÁ:

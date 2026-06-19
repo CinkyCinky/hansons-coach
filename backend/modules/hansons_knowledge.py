@@ -198,6 +198,84 @@ def athlete_block(athlete: Optional[dict]) -> str:
     return "\n".join(parts) + "\n"
 
 
+# ── Fáza prípravy (RAMP / SPEED / STRENGTH / TAPER) ──────────────────────────
+
+TAPER_GUIDANCE = (
+    "PRETEKOVÝ TÝŽDEŇ / TAPER (T18): toto je zostupový týždeň — cieľom je SVIEŽOSŤ, nie fitness.\n"
+    "• Výrazne zníž objem (cca 50–60 % oproti vrcholu), ale ZACHOVAJ frekvenciu a trochu HMP tempa.\n"
+    "• ŽIADNE nové vzdialenosti, žiadne tvrdé intervaly. Max 1 krátky beh s pár úsekmi v HMP na 'ostrosť'.\n"
+    "• Dlhý beh skráť (max ~8–10 km) a bež ho Easy.\n"
+    "• Priorita: spánok, sacharidy, hydratácia, ľahké rozklusanie deň pred pretekmi.\n"
+    "• Je normálne cítiť 'ťažké nohy' a nervozitu — to taper, nie strata formy. Upokoj zverenca."
+)
+
+
+def current_training_week(profile: dict) -> int:
+    """Aktuálny týždeň prípravy (1–18) z training_start_date (zhodné s main._calculate_training_week)."""
+    try:
+        start = datetime.date.fromisoformat(str(profile.get("training_start_date", "2026-06-01"))[:10])
+        delta = (datetime.date.today() - start).days
+        return max(1, min(18, delta // 7 + 1))
+    except Exception:
+        return 1
+
+
+def training_phase(week: int) -> Dict[str, str]:
+    """Mapuje aktuálny týždeň prípravy (1–18) na Hanson fázu + krátky pokyn pre trénera."""
+    if week <= 1:
+        return {"key": "intro", "label": "Úvod (T1)",
+                "note": "Úvodný týždeň — len Easy behy, adaptácia. Žiadne SOS tréningy."}
+    if week <= 10:
+        return {"key": "speed", "label": f"Speed fáza (T{week})",
+                "note": "SPEED fáza — krátke intervaly @ 5k–10k tempo. SOS: Speed (ut), Tempo (št), Dlhý (ne)."}
+    if week <= 17:
+        return {"key": "strength", "label": f"Strength fáza (T{week})",
+                "note": "STRENGTH fáza — dlhé intervaly @ 10k tempo. SOS: Strength (ut), Tempo (št), Dlhý (ne)."}
+    return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
+
+
+def phase_block(week: int) -> str:
+    """Formátovaný blok o aktuálnej fáze prípravy pre prompt."""
+    ph = training_phase(week)
+    return f"\nFÁZA PRÍPRAVY: {ph['label']} (týždeň {week}/18)\n{ph['note']}\n"
+
+
+# ── Interpretácia tréningovej záťaže (acute:chronic ratio) ───────────────────
+
+def training_load_block(training_load: Optional[dict]) -> str:
+    """Z Garmin training_load (acute/chronic/ratio) vyrobí Hanson interpretáciu pre prompt.
+    A:C ratio je kľúčový ukazovateľ preťaženia: >1.4 = riziko, <0.8 = podtrénovanie."""
+    if not training_load:
+        return ""
+    acute = training_load.get("acute_load")
+    chronic = training_load.get("chronic_load")
+    ratio = training_load.get("ratio")
+    # Ak Garmin nevrátil ratio, skús dopočítať z acute/chronic
+    if ratio in (None, 0) and acute and chronic:
+        try:
+            ratio = round(acute / chronic, 2)
+        except Exception:
+            ratio = None
+    if ratio is None:
+        return ""
+    try:
+        r = float(ratio)
+    except Exception:
+        return ""
+    if r > 1.5:
+        verdict = "VYSOKÉ RIZIKO preťaženia — výrazne uber objem/intenzitu, zváž extra Easy/rest deň."
+    elif r > 1.4:
+        verdict = "Zvýšené riziko preťaženia (>1.4) — zmäkči najbližší SOS tréning, dbaj na regeneráciu."
+    elif r >= 0.8:
+        verdict = "Záťaž v optimálnom pásme (0.8–1.4) — pokračuj podľa plánu."
+    else:
+        verdict = "Podtrénovanie (<0.8) — je priestor pridať objem/Easy beh, ak to forma dovolí."
+    return (
+        f"\nTRÉNINGOVÁ ZÁŤAŽ (acute:chronic): akútna {acute or 'N/A'}, chronická {chronic or 'N/A'}, "
+        f"ratio {r}. {verdict}\n"
+    )
+
+
 def hr_zones_block(hr_zones: Optional[dict], lthr_pace: Optional[str] = None) -> str:
     """Formátuje HR zóny pre prompt. Ak ide o reálne Garmin zóny, zobrazí aj surové Z1–Z5."""
     if not hr_zones:
