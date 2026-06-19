@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle } from "lucide-react";
+import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { fetchProfile, updateProfile } from "@/lib/api";
+import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 function validateTargetTime(val: string): boolean {
@@ -29,6 +29,11 @@ export default function Settings() {
   const [aiContext, setAiContext] = useState("");
   // Vlastný začiatok prípravy (override automatického výpočtu race - 18 týždňov)
   const [customStart, setCustomStart] = useState(false);
+
+  // Štruktúrovaná pamäť trénera (fakty)
+  const [facts, setFacts] = useState<any[]>([]);
+  const [newFact, setNewFact] = useState("");
+  const [factBusy, setFactBusy] = useState(false);
 
   // Informácia o časovej osi prípravy
   const [raceDateWarning, setRaceDateWarning] = useState<string | null>(null);
@@ -107,6 +112,35 @@ export default function Settings() {
       })
       .catch(() => setLoading(false));
   }, []);
+
+  // Načítaj štruktúrované fakty pamäte
+  useEffect(() => {
+    fetchMemory()
+      .then((d) => setFacts(d.facts || []))
+      .catch(() => {});
+  }, []);
+
+  const handleAddFact = async () => {
+    const content = newFact.trim();
+    if (!content || factBusy) return;
+    setFactBusy(true);
+    try {
+      const res = await addMemoryFact(content);
+      if (res?.fact) setFacts((f) => [...f, res.fact]);
+      setNewFact("");
+    } catch {
+      // ignoruj — tabuľka môže ešte chýbať
+    } finally {
+      setFactBusy(false);
+    }
+  };
+
+  const handleDeleteFact = async (id: string) => {
+    setFacts((f) => f.filter((x) => x.id !== id)); // optimisticky
+    try {
+      await deleteMemoryFact(id);
+    } catch {}
+  };
 
   const handleSave = async () => {
     // Validácia formátu cieľového času
@@ -319,20 +353,66 @@ export default function Settings() {
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1 flex items-center gap-1">
            Osobný AI Profil a Pamäť
         </h3>
-        <div className="glass-card p-4 flex flex-col gap-4">
+        <div className="glass-card p-4 flex flex-col gap-5">
+          {/* Štruktúrované fakty */}
           <div>
             <label className="text-xs text-gray-400 mb-2 block">
-              Tu vidíš, čo o tebe AI Tréner vie. Zohľadní to pri každom plánovaní a konverzácii.
+              Čo o tebe AI Tréner vie. Fakty si dopisuje sám z chatu — môžeš ich pridať aj zmazať.
             </label>
+            {facts.length > 0 ? (
+              <div className="flex flex-col gap-2 mb-3">
+                {facts.map((f) => (
+                  <div
+                    key={f.id}
+                    className="flex items-center justify-between gap-2 bg-[#1a1a24] border border-white/10 rounded-xl px-3 py-2"
+                  >
+                    <span className="text-sm text-gray-200">{f.content}</span>
+                    <button
+                      onClick={() => handleDeleteFact(f.id)}
+                      className="text-gray-500 hover:text-rose-400 shrink-0"
+                      aria-label="Zmazať fakt"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-600 mb-3">
+                Zatiaľ žiadne fakty. Tréner si ich začne pamätať z konverzácie.
+              </p>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={newFact}
+                onChange={(e) => setNewFact(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddFact();
+                }}
+                placeholder="Pridať fakt (napr. Bolí ma ľavé koleno)"
+                className="flex-1 bg-[#1a1a24] border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50"
+              />
+              <button
+                onClick={handleAddFact}
+                disabled={!newFact.trim() || factBusy}
+                className="bg-primary hover:bg-blue-600 disabled:opacity-40 text-white rounded-xl px-3 flex items-center justify-center"
+                aria-label="Pridať fakt"
+              >
+                {factBusy ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Voľné poznámky (staršie, voliteľné) */}
+          <div>
+            <label className="text-xs text-gray-400 mb-2 block">Voľné poznámky (nepovinné)</label>
             <textarea
               value={aiContext}
               onChange={(e) => setAiContext(e.target.value)}
-              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary/50 min-h-[120px] text-sm"
-              placeholder="Napr.: Behávam večer. Mám Garmin 265S. Stredy nebehávam."
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary/50 min-h-[90px] text-sm"
+              placeholder="Napr.: Behávam večer. Mám Garmin 265S."
             />
-            <p className="text-xs text-emerald-500/70 mt-2 ml-1">
-              Tip: Tréner si sem bude automaticky dopisovať nové dôležité fakty, ktoré mu povieš v chate!
-            </p>
+            <p className="text-xs text-gray-600 mt-1 ml-1">Uloží sa tlačidlom „Uložiť profil" nižšie.</p>
           </div>
         </div>
       </section>

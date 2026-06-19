@@ -96,6 +96,21 @@ export async function updateProfile(data: any) {
   });
 }
 
+export async function fetchMemory() {
+  return fetchWithAuth('/api/memory');
+}
+
+export async function addMemoryFact(content: string, category = 'note') {
+  return fetchWithAuth('/api/memory', {
+    method: 'POST',
+    body: JSON.stringify({ content, category }),
+  });
+}
+
+export async function deleteMemoryFact(id: string) {
+  return fetchWithAuth(`/api/memory/${id}`, { method: 'DELETE' });
+}
+
 export async function sendChatMessage(
   message: string,
   history: any[] = [],

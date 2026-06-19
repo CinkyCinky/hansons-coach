@@ -22,6 +22,7 @@ from modules.database import (
     verify_token, get_user_profile, update_user_profile, encrypt_password,
     get_garmin_snapshot, save_garmin_snapshot,
     save_metric_history, get_metric_history,
+    get_memory_facts, add_memory_fact, delete_memory_fact,
 )
 from modules import workout_generator
 from modules import hansons_knowledge
@@ -86,6 +87,11 @@ class ProfileUpdate(BaseModel):
     race_date: Optional[str] = None  # YYYY-MM-DD
     ai_context: Optional[str] = None
     display_name: Optional[str] = None
+
+
+class MemoryFactRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=500)
+    category: str = "note"
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -340,6 +346,30 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
         error_details = traceback.format_exc()
         print(error_details)
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Pamäť trénera (štruktúrované fakty) ───────────────────────────────────────
+
+@app.get("/api/memory")
+def list_memory(user_id: str = Depends(get_current_user)):
+    """Vráti štruktúrované fakty pamäte trénera."""
+    return {"facts": get_memory_facts(user_id)}
+
+
+@app.post("/api/memory")
+def create_memory(req: MemoryFactRequest, user_id: str = Depends(get_current_user)):
+    """Pridá jeden fakt do pamäte trénera."""
+    fact = add_memory_fact(user_id, req.content.strip(), req.category or "note")
+    if not fact:
+        raise HTTPException(status_code=500, detail="Fakt sa nepodarilo uložiť (skontroluj tabuľku athlete_memory).")
+    return {"fact": fact}
+
+
+@app.delete("/api/memory/{fact_id}")
+def remove_memory(fact_id: str, user_id: str = Depends(get_current_user)):
+    """Vymaže fakt z pamäte trénera."""
+    delete_memory_fact(user_id, fact_id)
+    return {"status": "deleted"}
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────
@@ -880,6 +910,8 @@ def chat_with_coach(
     target_time = profile.get("target_time", "neuvedený")
     training_week = _calculate_training_week(profile)
     ai_context = profile.get("ai_context", "")
+    memory_facts = get_memory_facts(user_id)
+    memory_block = "\n".join(f"- {f.get('content', '')}" for f in memory_facts) or "(zatiaľ žiadne)"
 
     # Model selection
     model_name = GEMINI_MODELS.get(req.model, GEMINI_MODELS["flash"])
@@ -1001,7 +1033,8 @@ Najbližší tréning: {next_w_str}
         f"Keď sa zverenec pýta na priebeh/plnenie týždňa alebo chce upraviť plán, zavolaj "
         f"check_recent_compliance; ak našlo vynechané SOS tréningy, aktívne navrhni ich presun "
         f"(nikdy 2 SOS za sebou). "
-        f"DODATOČNÉ POZNÁMKY O POUŽÍVATEĽOVI (ai_context): {ai_context}\n"
+        f"ČO O ZVERENCOVI VIEŠ (pamäť trénera):\n{memory_block}\n"
+        f"Doplnkové voľné poznámky: {ai_context}\n"
         f"{workout_generator.training_timeline_note(profile)}"
         f"DÔLEŽITÁ INŠTRUKCIA K PAMÄTI: Ak ti používateľ napíše nejakú novú podstatnú informáciu (zranenie, zmena vybavenia, preferencie), "
         f"začni svoju odpoveď tagom <MEMORY>tu zapíš nový fakt</MEMORY>. "
@@ -1380,17 +1413,18 @@ Najbližší tréning: {next_w_str}
         if not response_text:
             response_text = "Prepáč, túto požiadavku som teraz nezvládol spracovať. Skús ju preformulovať. 🏃"
         
-        # Spracovanie pamäte
+        # Spracovanie pamäte — nové fakty ukladáme štruktúrovane (tabuľka athlete_memory)
         import re
         match = re.search(r'<MEMORY>(.*?)</MEMORY>', response_text, re.IGNORECASE | re.DOTALL)
         if match:
             new_fact = match.group(1).strip()
-            existing_context = profile.get('ai_context') or ''
-            # deduplikácia alebo jednoduché pridanie
-            if new_fact.lower() not in existing_context.lower():
-                updated_context = existing_context + "\n- " + new_fact if existing_context else "- " + new_fact
-                update_user_profile(user_id, {"ai_context": updated_context.strip()})
-            
+            # deduplikácia proti existujúcim faktom aj starým voľným poznámkam
+            existing = (
+                " ".join((f.get("content") or "") for f in memory_facts).lower()
+                + " " + (profile.get("ai_context") or "").lower()
+            )
+            if new_fact and new_fact.lower() not in existing:
+                add_memory_fact(user_id, new_fact, "note")
             # Odstránenie tagu z odpovede
             response_text = re.sub(r'<MEMORY>.*?</MEMORY>', '', response_text, flags=re.IGNORECASE | re.DOTALL).strip()
             
