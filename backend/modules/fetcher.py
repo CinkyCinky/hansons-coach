@@ -2,8 +2,31 @@
 modules/fetcher.py — Sťahovanie dát z Garmin Connect
 """
 
+import logging
+import time
 from datetime import date, timedelta
 from typing import Optional
+
+logger = logging.getLogger("hansons.fetcher")
+
+
+def _garmin_call(fn, *args, retries: int = 2, base_delay: float = 0.6, **kwargs):
+    """Zavolá Garmin endpoint s exponenciálnym backoffom. Pri rate-limite (429) alebo
+    dočasnej chybe to skúsi znova namiesto tvrdého zlyhania. Po vyčerpaní pokusov re-raise."""
+    attempt = 0
+    while True:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            attempt += 1
+            msg = str(e).lower()
+            transient = "429" in msg or "too many" in msg or "timeout" in msg or "temporarily" in msg
+            if attempt > retries or not transient:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning("Garmin %s zlyhal (%s) — pokus %d/%d, čakám %.1fs",
+                           getattr(fn, "__name__", "call"), e, attempt, retries, delay)
+            time.sleep(delay)
 
 
 def get_recent_activities(client, days: int = 7) -> list:
@@ -11,7 +34,7 @@ def get_recent_activities(client, days: int = 7) -> list:
     try:
         # Limit škálujeme podľa okna (aktívny bežec má >20 aktivít za 35 dní)
         limit = min(max(20, days * 3), 200)
-        activities = client.get_activities(0, limit)
+        activities = _garmin_call(client.get_activities, 0, limit)
         if not activities:
             return []
 
@@ -37,7 +60,7 @@ def get_hrv_data(client) -> Optional[dict]:
     for i in range(7):
         d = (date.today() - timedelta(days=i)).isoformat()
         try:
-            hrv = client.get_hrv_data(d)
+            hrv = _garmin_call(client.get_hrv_data, d)
             if hrv and hrv.get("hrvSummary"):
                 summary = hrv["hrvSummary"]
                 results.append({
@@ -67,7 +90,7 @@ def get_sleep_data(client, days: int = 7) -> list:
     for i in range(days):
         d = (date.today() - timedelta(days=i)).isoformat()
         try:
-            sleep = client.get_sleep_data(d)
+            sleep = _garmin_call(client.get_sleep_data, d)
             if sleep and sleep.get("dailySleepDTO"):
                 dto = sleep["dailySleepDTO"]
                 duration_sec = dto.get("sleepTimeSeconds", 0)
@@ -88,7 +111,7 @@ def get_body_battery(client) -> Optional[dict]:
     try:
         today = date.today().isoformat()
         week_ago = (date.today() - timedelta(days=6)).isoformat()
-        bb_data = client.get_body_battery(week_ago, today)
+        bb_data = _garmin_call(client.get_body_battery, week_ago, today)
 
         if not bb_data:
             return None
@@ -134,7 +157,7 @@ def get_training_readiness(client) -> Optional[dict]:
     """Stiahne Training Readiness skóre."""
     try:
         today = date.today().isoformat()
-        data = client.get_training_readiness(today)
+        data = _garmin_call(client.get_training_readiness, today)
         if data:
             # Garmin vracia list alebo dict
             if isinstance(data, list) and data:
@@ -158,7 +181,7 @@ def get_training_load(client) -> Optional[dict]:
     """Stiahne Training Load dáta."""
     try:
         today = date.today().isoformat()
-        stats = client.get_training_status(today)
+        stats = _garmin_call(client.get_training_status, today)
         if stats:
             return {
                 "acute_load": stats.get("acuteTrainingLoad"),
@@ -175,7 +198,7 @@ def get_stats_summary(client) -> Optional[dict]:
     """Stiahne základné denné štatistiky."""
     try:
         today = date.today().isoformat()
-        stats = client.get_stats(today)
+        stats = _garmin_call(client.get_stats, today)
         if stats:
             return {
                 "resting_hr": stats.get("restingHeartRate"),
@@ -208,7 +231,7 @@ def get_lactate_threshold(client) -> Optional[dict]:
     """Stiahne LTHR (tep) a LT tempo z Garminu.
     Reálna štruktúra: {'speed_and_heart_rate': {'speed': .., 'heartRate': ..}}."""
     try:
-        data = client.get_lactate_threshold()
+        data = _garmin_call(client.get_lactate_threshold)
         if not data:
             return None
         if isinstance(data, list) and data:
@@ -237,7 +260,7 @@ def get_athlete_profile(client) -> Optional[dict]:
     vek, váha, výška, pohlavie, VO2max, LTHR. Toto sú dáta, ktoré tréner potrebuje
     na presný výpočet zón a záťaže (rovnako ako lokálny tréner)."""
     try:
-        prof = client.get_user_profile() or {}
+        prof = _garmin_call(client.get_user_profile) or {}
         ud = prof.get("userData", {}) if isinstance(prof, dict) else {}
 
         # Vek z dátumu narodenia
@@ -272,7 +295,7 @@ def get_max_hr_from_activities(client, days: int = 90) -> Optional[int]:
     """Odhadne Max HR z histórie aktivít (najvyšší zaznamenaný tep)."""
     try:
         limit = min(days * 2, 200)
-        activities = client.get_activities(0, limit)
+        activities = _garmin_call(client.get_activities, 0, limit)
         max_hr = 0
         for act in (activities or []):
             mhr = act.get("maxHR") or 0
@@ -304,7 +327,7 @@ def get_garmin_hr_zones(client) -> Optional[dict]:
     Garmin vracia 'floor' (spodný okraj) každej z 5 zón; strop zóny N = floor zóny N+1,
     strop Z5 = maxHeartRateUsed. Mapuje 5 Garmin zón na Hanson tréningové názvy."""
     try:
-        data = client.connectapi("/biometric-service/heartRateZones")
+        data = _garmin_call(client.connectapi, "/biometric-service/heartRateZones")
         if not data or not isinstance(data, list):
             return None
 

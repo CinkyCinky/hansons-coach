@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import datetime
 import json
@@ -35,8 +35,9 @@ if FRONTEND_URL:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins if FRONTEND_URL else ["*"],
-    allow_origin_regex=r"https://.*\.vercel\.app" if "vercel.app" in FRONTEND_URL else None,
+    # Len explicitné originy: localhost (vývoj) + presná FRONTEND_URL (produkcia).
+    # Žiadny "*" ani broad "*.vercel.app" regex — ten by povolil aj cudzie vercel.app projekty.
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,9 +50,11 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 # Mapovanie UI prepínača (flash/pro) na Gemini 3.x modely:
 #   flash = rýchly, stabilný tréner (Gemini 3.5 Flash)
 #   pro   = najsilnejšie uvažovanie + 2M kontext (Gemini 3.1 Pro — preview)
+# Cez ENV sa dá kedykoľvek prepnúť model (napr. z preview na stabilný gemini-2.5-pro)
+# bez zásahu do kódu — stačí nastaviť GEMINI_MODEL_PRO / GEMINI_MODEL_FLASH na Render.
 GEMINI_MODELS = {
-    "flash": "gemini-3.5-flash",
-    "pro": "gemini-3.1-pro-preview",
+    "flash": os.getenv("GEMINI_MODEL_FLASH", "gemini-3.5-flash"),
+    "pro": os.getenv("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview"),
 }
 
 logger = logging.getLogger("hansons")
@@ -66,8 +69,8 @@ def _server_error(e: Exception, message: str) -> HTTPException:
 # ── Models ──────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    message: str
-    history: List[Dict[str, str]] = []
+    message: str = Field(max_length=4000)               # strop dĺžky správy (anti-abuse)
+    history: List[Dict[str, str]] = Field(default_factory=list, max_length=80)
     model: str = "flash"  # "flash" | "pro"
     local_time: Optional[str] = None
 
@@ -122,6 +125,12 @@ def _scheduled_items(scheduled) -> list:
 def _is_planned_workout(item: dict) -> bool:
     """True len pre reálne naplánované tréningy (nie aktivity, váhy, eventy)."""
     return item.get("itemType") == "workout" and bool(item.get("workoutId"))
+
+
+def _is_sos_title(title: str) -> bool:
+    """Heuristika: je to kľúčový (SOS) tréning? Speed/Strength/Tempo/Dlhý beh/intervaly."""
+    t = (title or "").lower()
+    return any(k in t for k in ("tempo", "speed", "strength", "sila", "interval", "long", "dlh", "rýchlost", "rychlost"))
 
 
 def _get_scheduled_range(client, start: datetime.date, end: datetime.date) -> list:
@@ -363,6 +372,13 @@ def get_dashboard_advice(
         values = [v for v in [metrics.sleep_score, metrics.body_battery, metrics.readiness] if v is not None]
         form_score = int(sum(values) / len(values)) if values else 50
 
+        # Tréningová záťaž (acute:chronic) — kľúčový Hanson ukazovateľ preťaženia
+        load_note = ""
+        try:
+            load_note = hansons_knowledge.training_load_block(fetcher.get_training_load(client))
+        except Exception:
+            pass
+
         prompt = f"""Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca a daj mu 2-3 krátke úderné vety.
 Ak sú hodnoty slabé (Body Battery alebo Pripravenosť pod 50), odporúč mu nech si v sekcii Plán prepočíta tréning.
 Ak sú hodnoty super, povzbuď ho. Používaj slovenčinu, buď povzbudivý, občas emoji.
@@ -372,7 +388,7 @@ Stav formy dnes: {form_score}/100
 - HRV: {metrics.hrv_status}
 - Body Battery: {metrics.body_battery}/100
 - Pripravenosť: {metrics.readiness}/100
-{next_workout_str}"""
+{load_note}{next_workout_str}"""
 
         response = gemini_client.models.generate_content(
             model=GEMINI_MODELS["flash"],
@@ -875,6 +891,7 @@ Posledné behy (14 dní):
 {chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
 
 Najbližší tréning: {next_w_str}
+{hansons_knowledge.training_load_block(training_load)}{hansons_knowledge.phase_block(training_week)}
 --- KONIEC ---"""
     except Exception as e:
         garmin_context = f"(Garmin dáta sa nepodarilo načítať: {e})"
@@ -901,6 +918,9 @@ Najbližší tréning: {next_w_str}
         f"presuň oba — najprv uvoľni cieľový deň. Dbaj, aby v jeden deň neostali dva tréningy. "
         f"Pri väčšej zmene rozpíš používateľovi finálny rozvrh (deň → tréning) a až potom vykonaj presuny. "
         f"Nikdy sa NEPÝTAJ na veci, ktoré vieš z Garmin dát. "
+        f"Keď sa zverenec pýta na priebeh/plnenie týždňa alebo chce upraviť plán, zavolaj "
+        f"check_recent_compliance; ak našlo vynechané SOS tréningy, aktívne navrhni ich presun "
+        f"(nikdy 2 SOS za sebou). "
         f"DODATOČNÉ POZNÁMKY O POUŽÍVATEĽOVI (ai_context): {ai_context}\n"
         f"{workout_generator.training_timeline_note(profile)}"
         f"DÔLEŽITÁ INŠTRUKCIA K PAMÄTI: Ak ti používateľ napíše nejakú novú podstatnú informáciu (zranenie, zmena vybavenia, preferencie), "
@@ -1194,13 +1214,53 @@ Najbližší tréning: {next_w_str}
         except Exception as e:
             return f"Chyba pri úprave cieľa: {str(e)}"
 
+    def check_recent_compliance(days_back: int = 10) -> str:
+        """Skontroluje za posledných N dní (1–21), ktoré naplánované tréningy zverenec splnil a
+        ktoré vynechal — zvlášť upozorní na vynechané KĽÚČOVÉ (SOS) tréningy (Speed/Strength/
+        Tempo/Dlhý beh). Použi, keď sa zverenec pýta na priebeh týždňa, plnenie plánu alebo chce
+        upraviť plán — vieš tak navrhnúť presun vynechaných SOS podľa Hanson pravidiel."""
+        try:
+            n = min(max(int(days_back or 10), 1), 21)
+            today = datetime.date.today()
+            start = today - datetime.timedelta(days=n)
+            today_str = today.strftime("%Y-%m-%d")
+            start_str = start.strftime("%Y-%m-%d")
+            items = _get_scheduled_range(client, start, today)
+            planned = [
+                i for i in items
+                if _is_planned_workout(i) and start_str <= (i.get("date") or "")[:10] < today_str
+            ]
+            if not planned:
+                return f"Za posledných {n} dní nie sú v minulosti žiadne naplánované tréningy."
+            running_types = ("running", "track_running", "treadmill_running", "trail_running")
+            acts = fetcher.get_recent_activities(client, days=n + 1) or []
+            done_dates = {
+                (a.get("startTimeLocal") or "")[:10] for a in acts
+                if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
+            }
+            lines, missed_sos = [], 0
+            for it in sorted(planned, key=lambda x: x.get("date", "")):
+                d = (it.get("date") or "")[:10]
+                title = it.get("title") or it.get("workoutName") or "Beh"
+                done = d in done_dates or bool(it.get("activityId"))
+                sos = _is_sos_title(title)
+                if not done and sos:
+                    missed_sos += 1
+                status = "✅ splnené" if done else ("❌ VYNECHANÉ — SOS!" if sos else "❌ vynechané")
+                lines.append(f"  • {d}: {title} — {status}")
+            head = (f"Vynechané SOS tréningy: {missed_sos} — navrhni presun podľa Hanson pravidiel.\n"
+                    if missed_sos else "Žiadne vynechané SOS tréningy 👍\n")
+            return head + "Posledné naplánované tréningy:\n" + "\n".join(lines)
+        except Exception as e:
+            return f"Chyba pri kontrole plnenia: {str(e)}"
+
     try:
         # Nástroje = obyčajné Python funkcie (definované vyššie). Nová google-genai SDK
         # z nich sama vyrobí schému a cez automatické volanie funkcií (AFC) spustí celú
         # slučku volaní, kým model nedá finálnu textovú odpoveď.
         tools = [get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details,
                  reschedule_workout, delete_garmin_workout, create_and_schedule_workout,
-                 modify_workout, update_training_goal]
+                 modify_workout, update_training_goal, check_recent_compliance]
 
         # História chatu → google-genai formát (role: user/model). Gemini musí začať
         # userom, preto zahodíme úvodný pozdrav (model) na začiatku.
@@ -1221,13 +1281,22 @@ Najbližší tréning: {next_w_str}
             # AFC slučka — dosť krokov na reorganizáciu celého týždňa (viac presunov)
             automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=10),
         )
-        response = gemini_client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = gemini_client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+            response_text = (response.text or "").strip()
+        except Exception:
+            # Graceful fallback (200, nie 500), keď Gemini zlyhá/limit — frontend ukáže správu.
+            logger.exception("Gemini chat zlyhal")
+            return {
+                "response": "Prepáč, AI tréner je teraz chvíľu nedostupný 😴. Skús o chvíľu znova — "
+                            "medzitým sa drž svojho naplánovaného tréningu.",
+                "model_used": model_name,
+            }
 
-        response_text = (response.text or "").strip()
         if not response_text:
             response_text = "Prepáč, túto požiadavku som teraz nezvládol spracovať. Skús ju preformulovať. 🏃"
         
