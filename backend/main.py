@@ -18,7 +18,10 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.auth import get_client
 from modules import fetcher
-from modules.database import verify_token, get_user_profile, update_user_profile, encrypt_password
+from modules.database import (
+    verify_token, get_user_profile, update_user_profile, encrypt_password,
+    get_garmin_snapshot, save_garmin_snapshot,
+)
 from modules import workout_generator
 from modules import hansons_knowledge
 
@@ -208,6 +211,58 @@ def _flatten_workout_steps(steps):
     return rows, total_m
 
 
+# ── Garmin denný snapshot cache ───────────────────────────────────────────────
+# Pomaly sa meniace wellness dáta cachujeme raz denne do Supabase (garmin_snapshots).
+# Šetrí to opakovaný drahý fan-out na Garmin (najmä chat = ~10 volaní/správa) a 429,
+# a prežije aj "uspanie" Render free tieru.
+SNAPSHOT_TTL_MIN = 30  # intradenné zmeny BB/readiness sú malé; Refresh na dashboarde cache obíde
+
+
+def _snapshot_fresh(fetched_at_str, ttl_min: int = SNAPSHOT_TTL_MIN) -> bool:
+    try:
+        ts = datetime.datetime.fromisoformat(str(fetched_at_str).replace("Z", "+00:00"))
+        return (datetime.datetime.now(datetime.timezone.utc) - ts).total_seconds() < ttl_min * 60
+    except Exception:
+        return False
+
+
+def _build_wellness(client) -> dict:
+    """Pozbiera pomaly sa meniace wellness dáta (drahý fan-out na Garmin)."""
+    lthr_data = fetcher.get_lactate_threshold(client) or {}
+    athlete = fetcher.get_athlete_profile(client) or {}
+    stats = fetcher.get_stats_summary(client) or {}
+    base_max_hr = fetcher.get_max_hr_from_activities(client, days=90)
+    hr_zones = fetcher.resolve_hr_zones(
+        client,
+        lthr=lthr_data.get("lthr") or athlete.get("lthr"),
+        max_hr=base_max_hr,
+        resting_hr=stats.get("resting_hr"),
+    )
+    return {
+        "sleep": fetcher.get_sleep_data(client, days=7) or [],
+        "hrv": fetcher.get_hrv_data(client) or {},
+        "body_battery": fetcher.get_body_battery(client) or {},
+        "readiness": fetcher.get_training_readiness(client) or {},
+        "stats": stats,
+        "training_load": fetcher.get_training_load(client) or {},
+        "lthr": lthr_data,
+        "athlete": athlete,
+        "hr_zones": hr_zones,
+        "max_hr": (hr_zones or {}).get("max_hr") or base_max_hr,
+    }
+
+
+def _wellness_snapshot(client, user_id: str, force: bool = False) -> dict:
+    """Wellness snapshot z cache (ak je čerstvý), inak ho stiahne z Garminu a uloží."""
+    if not force:
+        cached = get_garmin_snapshot(user_id)
+        if cached and cached.get("data") and _snapshot_fresh(cached.get("fetched_at")):
+            return cached["data"]
+    data = _build_wellness(client)
+    save_garmin_snapshot(user_id, data)
+    return data
+
+
 # ── Basic endpoints ───────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -269,24 +324,26 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
 
 @app.get("/api/dashboard/today")
 def get_dashboard_today(
+    refresh: bool = False,
     user_id: str = Depends(get_current_user),
     client=Depends(get_garmin_client),
 ):
-    """Vráti dnešné dáta (Spánok, HRV, Body Battery, Pripravenosť) + posledné aktivity."""
+    """Vráti dnešné dáta (Spánok, HRV, Body Battery, Pripravenosť) + posledné aktivity.
+    ?refresh=true obíde denný cache a stiahne čerstvé dáta z Garminu."""
     today = datetime.datetime.now().strftime("%Y-%m-%d")
 
     try:
         profile = get_user_profile(user_id) or {}
         training_week = _calculate_training_week(profile)
 
-        sleep_data = fetcher.get_sleep_data(client, days=1)
-        sleep = sleep_data[0] if sleep_data else {}
-        hrv = fetcher.get_hrv_data(client) or {}
-        stats = fetcher.get_stats_summary(client) or {}
-        readiness = fetcher.get_training_readiness(client) or {}
-        bb = fetcher.get_body_battery(client) or {}
-        training_load = fetcher.get_training_load(client) or {}
-        activities = fetcher.get_recent_activities(client, days=7)
+        snap = _wellness_snapshot(client, user_id, force=refresh)
+        sleep = snap["sleep"][0] if snap["sleep"] else {}
+        hrv = snap["hrv"]
+        stats = snap["stats"]
+        readiness = snap["readiness"]
+        bb = snap["body_battery"]
+        training_load = snap["training_load"]
+        activities = fetcher.get_recent_activities(client, days=7)  # čerstvé (odráža nové behy)
 
         # Dnešný naplánovaný tréning
         today_workout = None
@@ -701,11 +758,12 @@ def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(g
         # Okno pre objemový graf: od začiatku prípravy, max ~12 týždňov (čitateľnosť + API limit)
         report_days = min(max(14, (today - start).days + 1), 84)
 
+        snap = _wellness_snapshot(client, user_id)
         activities = fetcher.get_recent_activities(client, days=report_days) or []
-        sleep_data = fetcher.get_sleep_data(client, days=7) or []
-        hrv_data = fetcher.get_hrv_data(client) or {}
-        bb_data = fetcher.get_body_battery(client) or {}
-        training_load = fetcher.get_training_load(client) or {}
+        sleep_data = snap["sleep"]
+        hrv_data = snap["hrv"]
+        bb_data = snap["body_battery"]
+        training_load = snap["training_load"]
 
         running_types = ("running", "track_running", "treadmill_running", "trail_running")
         running = [
@@ -806,25 +864,20 @@ def chat_with_coach(
     # Načítaj Garmin kontext
     garmin_context = ""
     try:
-        activities = fetcher.get_recent_activities(client, days=14)
-        sleep_data = fetcher.get_sleep_data(client, days=7)
-        hrv = fetcher.get_hrv_data(client) or {}
-        bb = fetcher.get_body_battery(client) or {}
-        readiness = fetcher.get_training_readiness(client) or {}
-        stats = fetcher.get_stats_summary(client) or {}
-        training_load = fetcher.get_training_load(client) or {}
-        lthr_data = fetcher.get_lactate_threshold(client) or {}
-        athlete = fetcher.get_athlete_profile(client) or {}
+        # Wellness dáta z denného cache (šetrí ~10 Garmin volaní na každú správu).
+        snap = _wellness_snapshot(client, user_id)
+        activities = fetcher.get_recent_activities(client, days=14)  # čerstvé (odráža nové behy)
+        sleep_data = snap["sleep"]
+        hrv = snap["hrv"]
+        bb = snap["body_battery"]
+        readiness = snap["readiness"]
+        stats = snap["stats"]
+        training_load = snap["training_load"]
+        lthr_data = snap["lthr"]
+        athlete = snap["athlete"]
         resting_hr = stats.get("resting_hr")
-        # Primárne reálne bežecké zóny z Garminu (RUNNING → DEFAULT → výpočet)
-        hr_zones = fetcher.resolve_hr_zones(
-            client,
-            lthr=lthr_data.get("lthr") or athlete.get("lthr"),
-            max_hr=fetcher.get_max_hr_from_activities(client, days=90),
-            resting_hr=resting_hr,
-        )
-        # Max HR pre snapshot: preferuj nakonfigurovaný Garmin, inak z histórie
-        max_hr = (hr_zones or {}).get("max_hr") or fetcher.get_max_hr_from_activities(client, days=90)
+        hr_zones = snap["hr_zones"]
+        max_hr = snap["max_hr"]
 
         runs_summary = []
         for a in (activities or [])[:7]:
