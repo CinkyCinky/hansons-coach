@@ -379,21 +379,35 @@ Stav formy dnes: {form_score}/100
 # ── Plan ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/plan/scheduled")
-def get_scheduled_plan(client=Depends(get_garmin_client)):
-    """Vráti naplánované tréningy z Garmin kalendára, obohatené o activityId pre splnené behy."""
+def get_scheduled_plan(user_id: str = Depends(get_current_user), client=Depends(get_garmin_client)):
+    """Vráti naplánované tréningy + absolvované behy za celé obdobie prípravy (Hanson 18 týž.)."""
     today = datetime.date.today()
+    profile = get_user_profile(user_id) or {}
+    # Okno plánu = od začiatku prípravy po preteky (nie arbitrárny počet dní)
     try:
-        # Garmin API vracia 1 mesiac → načítame celé okno plánu (~5 mesiacov pre 18 týždňov)
-        items = _get_scheduled_range(
-            client, today - datetime.timedelta(days=40), today + datetime.timedelta(days=150)
-        )
+        start = datetime.date.fromisoformat(str(profile.get("training_start_date"))[:10])
+    except Exception:
+        start = today - datetime.timedelta(days=126)  # default 18 týž. dozadu
+    try:
+        end = datetime.date.fromisoformat(str(profile.get("race_date"))[:10])
+    except Exception:
+        end = today + datetime.timedelta(days=150)
+    if end < today:
+        end = today + datetime.timedelta(days=30)
+    # Poistka proti extrémom (Garmin API limit aktivít ~200)
+    if (today - start).days > 220:
+        start = today - datetime.timedelta(days=220)
+    try:
+        items = _get_scheduled_range(client, start - datetime.timedelta(days=7), end)
         # Zobrazíme len reálne naplánované tréningy (nie aktivity, váhy, tenis, eventy)
         items = [i for i in items if _is_planned_workout(i)]
 
         today_str = today.strftime("%Y-%m-%d")
         try:
             running_types = ("running", "track_running", "treadmill_running", "trail_running")
-            recent_activities = fetcher.get_recent_activities(client, days=40) or []
+            # Absolvované behy od začiatku prípravy (nie pevných 40 dní)
+            lookback = max(14, (today - start).days + 1)
+            recent_activities = fetcher.get_recent_activities(client, days=lookback) or []
             runs = [
                 a for a in recent_activities
                 if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
@@ -623,64 +637,107 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
 
 # ── Reports ───────────────────────────────────────────────────────────────────
 
+def _goal_pace_sec_per_km(target_time) -> Optional[int]:
+    """Cieľové tempo (s/km) z cieľového času na polmaratón (21.0975 km)."""
+    try:
+        parts = [int(x) for x in str(target_time).split(":")]
+        if len(parts) == 3:
+            total = parts[0] * 3600 + parts[1] * 60 + parts[2]
+        elif len(parts) == 2:
+            total = parts[0] * 60 + parts[1]
+        else:
+            return None
+        return round(total / 21.0975) if total > 0 else None
+    except Exception:
+        return None
+
+
 @app.get("/api/reports/weekly")
-def get_weekly_report(client=Depends(get_garmin_client)):
+def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(get_garmin_client)):
     """
-    Vráti reálne Garmin dáta za posledných 7 dní pre Reports stránku:
-    - aktivity (km, tempo, HR, kadencia)
-    - spánok (hodiny, skóre)
-    - HRV (ms weekly_avg, last_night)
-    - body battery
+    Reports pre Hansonovu metódu:
+    - Regenerácia za 7 dní: spánok, HRV, Body Battery (zvládanie kumulovanej únavy)
+    - Behy za posledných 7 dní (tempo/HR/kadencia) + cieľové tempo ako referencia
+    - Týždenný objem (km/týždeň) cez celý cyklus prípravy — kľúčová Hanson metrika
     """
     try:
-        activities = fetcher.get_recent_activities(client, days=7) or []
+        today = datetime.date.today()
+        profile = get_user_profile(user_id) or {}
+        try:
+            start = datetime.date.fromisoformat(str(profile.get("training_start_date"))[:10])
+        except Exception:
+            start = today - datetime.timedelta(days=126)
+        # Okno pre objemový graf: od začiatku prípravy, max ~12 týždňov (čitateľnosť + API limit)
+        report_days = min(max(14, (today - start).days + 1), 84)
+
+        activities = fetcher.get_recent_activities(client, days=report_days) or []
         sleep_data = fetcher.get_sleep_data(client, days=7) or []
         hrv_data = fetcher.get_hrv_data(client) or {}
         bb_data = fetcher.get_body_battery(client) or {}
 
-        # Spracuj behy pre graf
+        running_types = ("running", "track_running", "treadmill_running", "trail_running")
+        running = [
+            a for a in activities
+            if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
+        ]
+
+        # Posledné behy (7 dní) pre zoznam + tempo trend
+        seven_ago = (today - datetime.timedelta(days=7)).isoformat()
         runs = []
-        for act in activities:
-            if (act.get("activityType", {}).get("typeKey") or "").lower() not in (
-                "running", "track_running", "treadmill_running"
-            ):
+        for act in running:
+            d = (act.get("startTimeLocal") or "")[:10]
+            if d < seven_ago:
                 continue
             avg_speed = act.get("averageSpeed")
             avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
             runs.append({
-                "date": (act.get("startTimeLocal") or "")[:10],
+                "date": d,
                 "name": act.get("activityName", "Beh"),
                 "distance_km": round((act.get("distance") or 0) / 1000, 2),
                 "avg_pace_sec": avg_pace_sec,
-                "avg_pace_str": (
-                    f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}"
-                    if avg_pace_sec else None
-                ),
+                "avg_pace_str": (f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}" if avg_pace_sec else None),
                 "avg_hr": round(act["averageHR"]) if act.get("averageHR") else None,
                 "avg_cadence": round(cad) if (cad := (act.get("averageRunningCadenceInStepsPerMinute") or act.get("averageCadence"))) else None,
                 "calories": round(act["calories"]) if act.get("calories") else None,
             })
 
         total_km = round(sum(r["distance_km"] for r in runs), 1)
+
+        # Týždenný objem (Po–Ne) cez celý cyklus
+        buckets: Dict[datetime.date, float] = {}
+        for act in running:
+            d = (act.get("startTimeLocal") or "")[:10]
+            try:
+                ad = datetime.date.fromisoformat(d)
+            except Exception:
+                continue
+            ws = ad - datetime.timedelta(days=ad.weekday())  # pondelok daného týždňa
+            buckets[ws] = buckets.get(ws, 0.0) + (act.get("distance") or 0) / 1000
+
+        cur_ws = today - datetime.timedelta(days=today.weekday())
+        n_weeks = min(12, max(1, report_days // 7))
+        weekly_volume = []
+        for i in range(n_weeks - 1, -1, -1):
+            ws = cur_ws - datetime.timedelta(weeks=i)
+            weekly_volume.append({"week": ws.strftime("%d.%m."), "km": round(buckets.get(ws, 0.0), 1)})
+
         avg_sleep = (
             round(sum(s.get("duration_hours") or 0 for s in sleep_data) / len(sleep_data), 1)
             if sleep_data else None
         )
 
-        # Body battery denné hodnoty pre graf
         bb_daily = []
         if bb_data.get("raw"):
             for entry in bb_data["raw"]:
-                bb_daily.append({
-                    "date": entry.get("date", ""),
-                    "charged": entry.get("charged"),
-                })
+                bb_daily.append({"date": entry.get("date", ""), "charged": entry.get("charged")})
 
         return {
             "period_days": 7,
             "total_km": total_km,
             "avg_sleep_hours": avg_sleep,
             "runs": runs,
+            "weekly_volume": weekly_volume,
+            "goal_pace_sec": _goal_pace_sec_per_km(profile.get("target_time")),
             "sleep": sleep_data,
             "hrv": hrv_data,
             "body_battery": {
