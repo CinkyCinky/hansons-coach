@@ -782,14 +782,16 @@ def chat_with_coach(
         stats = fetcher.get_stats_summary(client) or {}
 
         runs_summary = []
-        for a in (activities or [])[:5]:
+        for a in (activities or [])[:7]:
             d_km = round((a.get("distance") or 0) / 1000, 1)
             avg_speed = a.get("averageSpeed")
             pace_sec = round(1000 / avg_speed) if avg_speed else None
             pace_str = f"{pace_sec // 60}:{pace_sec % 60:02d}/km" if pace_sec else "N/A"
+            act_name = a.get("activityName") or "Beh"
+            act_id = a.get("activityId", "")
             runs_summary.append(
-                f"  - {(a.get('startTimeLocal') or '')[:10]}: {d_km}km @ {pace_str}, "
-                f"HR {a.get('averageHR', '?')}bpm, "
+                f"  - {(a.get('startTimeLocal') or '')[:10]} [{act_name}] (ID:{act_id}): "
+                f"{d_km}km @ {pace_str}, HR {a.get('averageHR', '?')}bpm, "
                 f"kadencia {a.get('averageRunningCadenceInStepsPerMinute', '?')} spm"
             )
 
@@ -854,6 +856,78 @@ Najbližší tréning: {next_w_str}
     )
 
     # Definícia funkcií (nástrojov) pre model
+    def get_activity_laps(date: str) -> str:
+        """Načíta podrobné lap/split dáta pre aktivitu na daný dátum (YYYY-MM-DD alebo 'yesterday'/'dnes').
+        Vracia tempo, HR a kadencia pre každý úsek/lap — nevyhnutné pri analýze intervalových tréningov."""
+        try:
+            # Preložiť aliasy
+            today = datetime.date.today()
+            if date.lower() in ("yesterday", "vcera", "včera"):
+                target_date = (today - datetime.timedelta(days=1)).isoformat()
+            elif date.lower() in ("today", "dnes"):
+                target_date = today.isoformat()
+            else:
+                target_date = date[:10]
+
+            # Nájdi aktivitu na daný dátum
+            acts = fetcher.get_recent_activities(client, days=14) or []
+            matching = [
+                a for a in acts
+                if (a.get("startTimeLocal") or "")[:10] == target_date
+            ]
+            if not matching:
+                return f"Žiadna aktivita na dátum {target_date} nebola nájdená."
+
+            act = matching[0]
+            act_id = act.get("activityId")
+            act_name = act.get("activityName", "Beh")
+            d_km = round((act.get("distance") or 0) / 1000, 2)
+            avg_speed = act.get("averageSpeed")
+            avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
+            avg_pace_str = f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}/km" if avg_pace_sec else "N/A"
+
+            result = (
+                f"Aktivita: {act_name} ({target_date})\n"
+                f"Celková vzdialenosť: {d_km} km, priemerné tempo: {avg_pace_str}, "
+                f"avg HR: {round(act.get('averageHR') or 0)} bpm, "
+                f"avg kadencia: {round(act.get('averageRunningCadenceInStepsPerMinute') or 0)} spm\n\n"
+            )
+
+            # Načítaj splits
+            try:
+                splits_data = client.get_activity_splits(act_id)
+                laps = []
+                if isinstance(splits_data, dict):
+                    laps = splits_data.get("lapDTOs") or splits_data.get("splits") or []
+                elif isinstance(splits_data, list):
+                    laps = splits_data
+
+                if laps:
+                    result += f"Lapy ({len(laps)}):\n"
+                    for i, lap in enumerate(laps, 1):
+                        lap_dist_m = lap.get("distance") or 0
+                        lap_dist_km = round(lap_dist_m / 1000, 3)
+                        lap_speed = lap.get("averageSpeed")
+                        lap_pace_sec = round(1000 / lap_speed) if lap_speed else None
+                        lap_pace_str = f"{lap_pace_sec // 60}:{lap_pace_sec % 60:02d}/km" if lap_pace_sec else "N/A"
+                        lap_hr = round(lap.get("averageHR") or 0) or "N/A"
+                        lap_max_hr = round(lap.get("maxHR") or 0) or "N/A"
+                        lap_cad = round(lap.get("averageRunningCadenceInStepsPerMinute") or lap.get("averageCadence") or 0) or "N/A"
+                        lap_dur_sec = lap.get("duration") or 0
+                        dur_str = f"{int(lap_dur_sec // 60)}:{int(lap_dur_sec % 60):02d}" if lap_dur_sec else "N/A"
+                        result += (
+                            f"  Lap {i}: {lap_dist_km}km | {lap_pace_str} | "
+                            f"HR {lap_hr}/{lap_max_hr} bpm | kadencia {lap_cad} spm | čas {dur_str}\n"
+                        )
+                else:
+                    result += "(Lap dáta nie sú dostupné pre túto aktivitu.)"
+            except Exception as e:
+                result += f"(Chyba pri načítaní lapov: {str(e)})"
+
+            return result.strip()
+        except Exception as e:
+            return f"Chyba pri načítaní aktivity: {str(e)}"
+
     def list_garmin_workouts(days_ahead: int = 14) -> str:
         """Zobrazí zoznam naplánovaných tréningov na najbližších N dní (1-45 dní). Vráti formátovaný zoznam."""
         try:
@@ -1010,7 +1084,7 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
         model = genai.GenerativeModel(
             model_name=model_name,
             system_instruction=system_instruction,
-            tools=[list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout, create_and_schedule_workout]
+            tools=[get_activity_laps, list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout, create_and_schedule_workout]
                   if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
         )
 
@@ -1051,7 +1125,9 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
 
                 # Zavoláme správnu funkciu a zachytíme výsledok
                 result = None
-                if fn_name == "delete_garmin_workout":
+                if fn_name == "get_activity_laps":
+                    result = get_activity_laps(fn_args.get("date", ""))
+                elif fn_name == "delete_garmin_workout":
                     result = delete_garmin_workout(fn_args.get("date", ""))
                 elif fn_name == "list_garmin_workouts":
                     result = list_garmin_workouts(fn_args.get("days_ahead", 14))
