@@ -20,7 +20,7 @@ export default function Navigation() {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-4 pt-2 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0f] to-transparent">
+    <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pt-2 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] bg-[#0a0a0f] border-t border-white/5">
       <div className="max-w-md mx-auto glass-card flex justify-between items-center px-6 py-3">
         {tabs.map((tab) => {
           const Icon = tab.icon;

@@ -5,7 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, BarChart, Bar
 } from "recharts";
-import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, RefreshCcw } from "lucide-react";
+import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, RefreshCcw, Info } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 
@@ -34,6 +34,7 @@ const CHART_STYLE = {
 export default function Reports() {
   const store = useStore();
   const [tab, setTab] = useState<"weekly" | "runs">("weekly");
+  const [showLegend, setShowLegend] = useState(false);
 
   useEffect(() => {
     store.loadReport();
@@ -78,20 +79,40 @@ export default function Reports() {
   }));
 
   return (
-    <div className="flex flex-col gap-5 pt-4 pb-10">
+    <div className="flex flex-col gap-5 pt-4 pb-32">
       <header className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold mb-1">Reporty</h1>
           <p className="text-gray-400 text-sm">Posledných 7 dní</p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors disabled:opacity-50"
-        >
-          <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowLegend((v) => !v)}
+            className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors"
+            aria-label="Čo znamenajú tieto údaje?"
+          >
+            <Info size={16} />
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+          >
+            <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
       </header>
+
+      {showLegend && (
+        <div className="glass-card p-4 text-xs text-gray-300 flex flex-col gap-2 leading-relaxed">
+          <p><b className="text-primary">Celkovo km</b> — súčet nabehaných kilometrov za 7 dní.</p>
+          <p><b className="text-indigo-300">Spánok</b> — priemerná dĺžka spánku za noc.</p>
+          <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms). „BALANCED"/vyššie = dobrá regenerácia. „Minulú noc" sa zobrazí, keď ju hodinky cez noc namerajú.</p>
+          <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100).</p>
+          <p><b className="text-primary">Tempo</b> — priemerné tempo behu (min/km). Nižšie = rýchlejšie.</p>
+          <p><b className="text-emerald-300">Kadencia</b> — počet krokov za minútu (spm).</p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="bg-[#1a1a24] p-1 rounded-full flex relative">
@@ -224,8 +245,15 @@ export default function Reports() {
       {tab === "runs" && data && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-5">
 
+          {/* Málo behov na zmysluplný graf */}
+          {runsChartData.length > 0 && runsChartData.length < 3 && (
+            <div className="glass-card p-4 text-sm text-gray-400">
+              Na grafy trendu treba aspoň 3 behy. Tvoje behy nájdeš v zozname nižšie.
+            </div>
+          )}
+
           {/* Graf: tempo trend */}
-          {runsChartData.length > 0 && (
+          {runsChartData.length >= 3 && (
             <div className="glass-card p-4">
               <h3 className="text-base font-bold mb-4 flex items-center gap-2">
                 <TrendingUp className="text-primary" size={18} /> Tempo trend
@@ -255,7 +283,7 @@ export default function Reports() {
           )}
 
           {/* Graf: km per beh */}
-          {runsChartData.length > 0 && (
+          {runsChartData.length >= 3 && (
             <div className="glass-card p-4">
               <h3 className="text-base font-bold mb-4 flex items-center gap-2">
                 <Activity className="text-amber-400" size={18} /> Objem behov (km)
@@ -266,8 +294,12 @@ export default function Reports() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" vertical={false} />
                     <XAxis dataKey="day" stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
                     <YAxis stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip {...CHART_STYLE} formatter={(v: any) => [`${v} km`, "Vzdialenosť"]} />
-                    <Bar dataKey="km" name="km" fill="#f97316" radius={[4, 4, 0, 0]} />
+                    <Tooltip
+                      {...CHART_STYLE}
+                      cursor={{ fill: "rgba(255,255,255,0.06)" }}
+                      formatter={(v: any) => [`${v} km`, "Vzdialenosť"]}
+                    />
+                    <Bar dataKey="km" name="km" fill="#f97316" radius={[4, 4, 0, 0]} maxBarSize={48} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

@@ -392,26 +392,46 @@ def get_scheduled_plan(client=Depends(get_garmin_client)):
 
         today_str = today.strftime("%Y-%m-%d")
         try:
-            recent_activities = fetcher.get_recent_activities(client, days=35) or []
-            act_by_date: Dict[str, list] = {}
-            for act in recent_activities:
-                act_date = (act.get("startTimeLocal") or "")[:10]
-                if act_date:
-                    act_by_date.setdefault(act_date, []).append(act)
+            running_types = ("running", "track_running", "treadmill_running", "trail_running")
+            recent_activities = fetcher.get_recent_activities(client, days=40) or []
+            runs = [
+                a for a in recent_activities
+                if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
+            ]
+            runs_by_date: Dict[str, list] = {}
+            for a in runs:
+                d = (a.get("startTimeLocal") or "")[:10]
+                if d:
+                    runs_by_date.setdefault(d, []).append(a)
 
+            # 1) Naplánovaným minulým tréningom priraď splnenú aktivitu (zelená fajka)
+            used_ids = set()
             for item in items:
                 item_date = (item.get("date") or "")[:10]
                 if item_date and item_date < today_str and not item.get("activityId"):
-                    day_acts = act_by_date.get(item_date, [])
-                    if day_acts:
-                        running = [
-                            a for a in day_acts
-                            if (a.get("activityType", {}).get("typeKey") or "").lower()
-                            in ("running", "track_running", "treadmill_running")
-                        ]
-                        chosen = running[0] if running else day_acts[0]
+                    day_runs = runs_by_date.get(item_date, [])
+                    if day_runs:
+                        chosen = day_runs[0]
                         item["activityId"] = chosen.get("activityId")
                         item["activityName"] = chosen.get("activityName", "")
+                        used_ids.add(chosen.get("activityId"))
+
+            # 2) Pridaj absolvované behy, ktoré nepatria k žiadnemu naplánovanému tréningu
+            for a in runs:
+                aid = a.get("activityId")
+                if aid in used_ids:
+                    continue
+                d = (a.get("startTimeLocal") or "")[:10]
+                if not d:
+                    continue
+                items.append({
+                    "date": d,
+                    "title": a.get("activityName") or "Beh",
+                    "activityId": aid,
+                    "activityName": a.get("activityName") or "Beh",
+                    "itemType": "activity",
+                    "sportType": {"typeKey": "Beh"},
+                })
         except Exception as enrich_err:
             print(f"Activity enrichment failed: {enrich_err}")
 

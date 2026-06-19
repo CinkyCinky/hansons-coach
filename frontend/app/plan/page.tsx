@@ -160,7 +160,7 @@ export default function Plan() {
   }
 
   return (
-    <div className="flex flex-col gap-6 pt-4 pb-24">
+    <div className="flex flex-col gap-6 pt-4 pb-32">
       <header className="flex justify-between items-start">
         <div>
           <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
