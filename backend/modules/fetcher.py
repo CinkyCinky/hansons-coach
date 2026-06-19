@@ -185,3 +185,75 @@ def get_stats_summary(client) -> Optional[dict]:
     except Exception as e:
         print(f"  ⚠️  Stats: {e}")
     return None
+
+
+def get_lactate_threshold(client) -> Optional[dict]:
+    """Stiahne LTHR (Lactate Threshold Heart Rate) z Garminu."""
+    try:
+        data = client.get_lactate_threshold()
+        if not data:
+            return None
+        # Garmin vracia rôzne štruktúry podľa zariadenia
+        if isinstance(data, list) and data:
+            data = data[0]
+        lthr = (
+            data.get("heartRateThreshold")
+            or data.get("lactateThresholdHeartRate")
+            or data.get("value")
+        )
+        pace_raw = data.get("lactateThresholdSpeed") or data.get("pace")
+        lthr_pace_str = None
+        if pace_raw and float(pace_raw) > 0:
+            pace_sec = round(1000 / float(pace_raw))
+            lthr_pace_str = f"{pace_sec // 60}:{pace_sec % 60:02d}/km"
+        return {
+            "lthr": int(lthr) if lthr else None,
+            "lthr_pace": lthr_pace_str,
+        }
+    except Exception as e:
+        print(f"  ⚠️  LTHR: {e}")
+    return None
+
+
+def get_max_hr_from_activities(client, days: int = 90) -> Optional[int]:
+    """Odhadne Max HR z histórie aktivít (najvyšší zaznamenaný tep)."""
+    try:
+        limit = min(days * 2, 200)
+        activities = client.get_activities(0, limit)
+        max_hr = 0
+        for act in (activities or []):
+            mhr = act.get("maxHR") or 0
+            if mhr > max_hr:
+                max_hr = mhr
+        return int(max_hr) if max_hr > 100 else None
+    except Exception as e:
+        print(f"  ⚠️  Max HR: {e}")
+    return None
+
+
+def compute_hr_zones(lthr: Optional[int], max_hr: Optional[int], resting_hr: Optional[int]) -> Optional[dict]:
+    """Vypočíta tréningové HR zóny podľa Hansons Half-Marathon metódy.
+    Priorita: LTHR → Max HR → None."""
+    if lthr:
+        # Hansonova metóda: zóny odvodzujeme primárne od LTHR
+        return {
+            "source": "LTHR",
+            "lthr": lthr,
+            "easy":      (round(lthr * 0.75), round(lthr * 0.83)),   # cca Z1-Z2
+            "moderate":  (round(lthr * 0.83), round(lthr * 0.89)),   # cca Z3
+            "tempo":     (round(lthr * 0.89), round(lthr * 0.94)),   # Hanson Tempo
+            "threshold": (round(lthr * 0.94), round(lthr * 1.00)),   # AT/LT
+            "speed":     (round(lthr * 1.00), round(lthr * 1.06)),   # Speed/Strength
+        }
+    if max_hr:
+        # Fallback: klasické % z Max HR
+        return {
+            "source": "MaxHR",
+            "max_hr": max_hr,
+            "easy":      (round(max_hr * 0.60), round(max_hr * 0.70)),
+            "moderate":  (round(max_hr * 0.70), round(max_hr * 0.80)),
+            "tempo":     (round(max_hr * 0.80), round(max_hr * 0.87)),
+            "threshold": (round(max_hr * 0.87), round(max_hr * 0.93)),
+            "speed":     (round(max_hr * 0.93), round(max_hr * 1.00)),
+        }
+    return None

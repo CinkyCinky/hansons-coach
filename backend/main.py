@@ -775,11 +775,16 @@ def chat_with_coach(
     garmin_context = ""
     try:
         activities = fetcher.get_recent_activities(client, days=14)
-        sleep_data = fetcher.get_sleep_data(client, days=3)
+        sleep_data = fetcher.get_sleep_data(client, days=7)
         hrv = fetcher.get_hrv_data(client) or {}
         bb = fetcher.get_body_battery(client) or {}
         readiness = fetcher.get_training_readiness(client) or {}
         stats = fetcher.get_stats_summary(client) or {}
+        training_load = fetcher.get_training_load(client) or {}
+        lthr_data = fetcher.get_lactate_threshold(client) or {}
+        max_hr = fetcher.get_max_hr_from_activities(client, days=90)
+        resting_hr = stats.get("resting_hr")
+        hr_zones = fetcher.compute_hr_zones(lthr_data.get("lthr"), max_hr, resting_hr)
 
         runs_summary = []
         for a in (activities or [])[:7]:
@@ -818,14 +823,38 @@ def chat_with_coach(
             pass
 
         first_sleep = sleep_data[0] if sleep_data else {}
+        sleep_summary = ", ".join(
+            f"{s.get('date','?')}: {s.get('duration_hours','?')}h skóre {s.get('score','?')}"
+            for s in (sleep_data or [])[:5]
+        )
+
+        # HR zóny — formátovaný text
+        zones_str = "N/A"
+        if hr_zones:
+            src = hr_zones.get("source", "")
+            base = f"LTHR={hr_zones.get('lthr')} bpm" if src == "LTHR" else f"MaxHR={hr_zones.get('max_hr')} bpm"
+            zones_str = (
+                f"Zdroj: {src} ({base})\n"
+                f"  Easy:      {hr_zones['easy'][0]}-{hr_zones['easy'][1]} bpm\n"
+                f"  Moderate:  {hr_zones['moderate'][0]}-{hr_zones['moderate'][1]} bpm\n"
+                f"  Tempo:     {hr_zones['tempo'][0]}-{hr_zones['tempo'][1]} bpm\n"
+                f"  Threshold: {hr_zones['threshold'][0]}-{hr_zones['threshold'][1]} bpm\n"
+                f"  Speed:     {hr_zones['speed'][0]}-{hr_zones['speed'][1]} bpm"
+            )
+
         garmin_context = f"""
 --- GARMIN DÁTA ---
 Týždeň prípravy: {training_week}/18
 Body Battery: {bb.get('today_charged', 'N/A')}/100
 HRV: {hrv.get('status', 'N/A')} (last night: {hrv.get('last_night', 'N/A')} ms, weekly avg: {hrv.get('weekly_avg', 'N/A')} ms)
-Pokojový tep: {stats.get('resting_hr', 'N/A')} bpm
-Pripravenosť: {readiness.get('score', 'N/A')}/100
-Spánok dnes: {first_sleep.get('duration_hours', 'N/A')} hod (skóre: {first_sleep.get('score', 'N/A')})
+Pokojový tep: {resting_hr or 'N/A'} bpm | Max HR (z histórie): {max_hr or 'N/A'} bpm
+LTHR: {lthr_data.get('lthr', 'N/A')} bpm | LTHR tempo: {lthr_data.get('lthr_pace', 'N/A')}
+Pripravenosť: {readiness.get('score', 'N/A')}/100 ({readiness.get('level', '')})
+Training Load: akútna {training_load.get('acute_load', 'N/A')} | chronická {training_load.get('chronic_load', 'N/A')} | ratio {training_load.get('ratio', 'N/A')} | status: {training_load.get('status', 'N/A')}
+Spánok (posl. 5 dní): {sleep_summary or 'N/A'}
+
+HR ZÓNY (Hanson metóda):
+{zones_str}
 
 Posledné behy (14 dní):
 {chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
@@ -856,6 +885,24 @@ Najbližší tréning: {next_w_str}
     )
 
     # Definícia funkcií (nástrojov) pre model
+    def get_hr_zones() -> str:
+        """Vráti aktuálne vypočítané HR tréningové zóny pre Hanson metódu (Easy, Tempo, Speed, atď.)
+        na základe LTHR alebo Max HR z Garmin účtu."""
+        if not hr_zones:
+            return "HR zóny nie sú k dispozícii — Garmin API nevrátilo LTHR ani Max HR."
+        src = hr_zones.get("source", "")
+        base = f"LTHR={hr_zones.get('lthr')} bpm" if src == "LTHR" else f"MaxHR={hr_zones.get('max_hr')} bpm"
+        return (
+            f"HR zóny ({src}, základ: {base}):\n"
+            f"  Easy:      {hr_zones['easy'][0]}-{hr_zones['easy'][1]} bpm\n"
+            f"  Moderate:  {hr_zones['moderate'][0]}-{hr_zones['moderate'][1]} bpm\n"
+            f"  Tempo:     {hr_zones['tempo'][0]}-{hr_zones['tempo'][1]} bpm\n"
+            f"  Threshold: {hr_zones['threshold'][0]}-{hr_zones['threshold'][1]} bpm\n"
+            f"  Speed:     {hr_zones['speed'][0]}-{hr_zones['speed'][1]} bpm\n\n"
+            f"Easy behy: zameraj sa na zónu Easy ({hr_zones['easy'][0]}-{hr_zones['easy'][1]} bpm) — nie na tempo.\n"
+            f"LTHR tempo: {lthr_data.get('lthr_pace', 'N/A')} (referencia pre Tempo behy)"
+        )
+
     def get_activity_laps(date: str) -> str:
         """Načíta podrobné lap/split dáta pre aktivitu na daný dátum (YYYY-MM-DD alebo 'yesterday'/'dnes').
         Vracia tempo, HR a kadencia pre každý úsek/lap — nevyhnutné pri analýze intervalových tréningov."""
@@ -1084,7 +1131,7 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
         model = genai.GenerativeModel(
             model_name=model_name,
             system_instruction=system_instruction,
-            tools=[get_activity_laps, list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout, create_and_schedule_workout]
+            tools=[get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout, create_and_schedule_workout]
                   if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
         )
 
@@ -1125,7 +1172,9 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
 
                 # Zavoláme správnu funkciu a zachytíme výsledok
                 result = None
-                if fn_name == "get_activity_laps":
+                if fn_name == "get_hr_zones":
+                    result = get_hr_zones()
+                elif fn_name == "get_activity_laps":
                     result = get_activity_laps(fn_args.get("date", ""))
                 elif fn_name == "delete_garmin_workout":
                     result = delete_garmin_workout(fn_args.get("date", ""))
