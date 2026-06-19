@@ -888,6 +888,12 @@ Najbližší tréning: {next_w_str}
         f"Odpovede prispôsob mobilnej aplikácii – stručne, ale neobetuj odbornosť. "
         f"Pri analýze tréningu/intervalov si vyžiadaj detaily nástrojom get_activity_laps. "
         f"Easy a dlhé behy VŽDY odporúčaj podľa TEPU (Easy HR zóna), nie podľa tempa — vysvetli prečo. "
+        f"REORGANIZÁCIA TÝŽDŇA: keď používateľ nemôže absolvovať tréning v daný deň a chce upraviť plán, "
+        f"NAJPRV si zavolaj list_garmin_workouts a pozri si CELÝ týždeň. Potom navrhni presun podľa Hanson pravidiel "
+        f"(nikdy 2 SOS tréningy za sebou — medzi Speed/Tempo/Long musí byť Easy deň; dlhý beh nechaj na víkend). "
+        f"Presúvaj cez reschedule_workout (naozaj presunie, nezduplikuje). Ak dva tréningy kolidujú v jeden deň, "
+        f"presuň oba — najprv uvoľni cieľový deň. Dbaj, aby v jeden deň neostali dva tréningy. "
+        f"Pri väčšej zmene rozpíš používateľovi finálny rozvrh (deň → tréning) a až potom vykonaj presuny. "
         f"Nikdy sa NEPÝTAJ na veci, ktoré vieš z Garmin dát. "
         f"DODATOČNÉ POZNÁMKY O POUŽÍVATEĽOVI (ai_context): {ai_context}\n"
         f"{workout_generator.training_timeline_note(profile)}"
@@ -1035,12 +1041,31 @@ Najbližší tréning: {next_w_str}
             return f"Chyba pri čítaní detailov: {str(e)}"
 
     def reschedule_workout(workout_id: str, new_date: str) -> str:
-        """Presuní tréning na nový dátum. Format: YYYY-MM-DD."""
+        """Presunie existujúci tréning na nový dátum (YYYY-MM-DD). Tréning identifikuj cez
+        workout_id (z list_garmin_workouts). Funkcia naozaj PRESUNIE — najprv zruší pôvodný
+        záznam v kalendári a potom naplánuje na nový dátum (nezostane duplikát na starom dni)."""
         try:
-            if not hasattr(client, 'schedule_workout'):
-                return "Presun tréningu nie je podporovaný."
+            today = datetime.date.today()
+            # Nájdi všetky kalendárové výskyty tohto workoutId (3 mesiace dopredu/mesiac dozadu)
+            items = _get_scheduled_range(
+                client, today - datetime.timedelta(days=31), today + datetime.timedelta(days=90)
+            )
+            occurrences = [
+                it for it in items
+                if str(it.get("workoutId")) == str(workout_id) and it.get("id")
+            ]
+            # Zruš pôvodné naplánovania (schedule id = 'id'), aby nevznikol duplikát
+            unscheduled = 0
+            for occ in occurrences:
+                try:
+                    client.unschedule_workout(occ["id"])
+                    unscheduled += 1
+                except Exception:
+                    pass
+            # Naplánuj na nový dátum
             client.schedule_workout(workout_id, new_date)
-            return f"Tréning ID {workout_id} bol úspešne presunený na {new_date}."
+            note = "" if unscheduled else " (pôvodný termín sa nenašiel — vytvoril sa nový záznam)"
+            return f"Tréning {workout_id} presunutý na {new_date}{note}."
         except Exception as e:
             return f"Chyba pri presune tréningu: {str(e)}"
 
@@ -1061,86 +1086,115 @@ Najbližší tréning: {next_w_str}
         except Exception as e:
             return f"Chyba pri mazaní: {str(e)}"
 
-    def create_and_schedule_workout(date: str, description: str) -> str:
-        """Vygeneruje nový tréning podľa požiadavky a naplánu ho na daný dátum. Format dátumu: YYYY-MM-DD."""
+    def _build_and_schedule(workout_data: dict, date: str) -> Optional[str]:
+        """Z AI JSON postaví Garmin tréning, nahrá ho a naplánuje na dátum. Vráti workoutId."""
+        garmin_steps = [
+            workout_generator.create_garmin_step(step, i)
+            for i, step in enumerate(workout_data.get("steps", []), 1)
+        ]
+        segment = workout_generator.WorkoutSegment(
+            segmentOrder=1,
+            sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+            workoutSteps=garmin_steps,
+        )
+        garmin_workout = workout_generator.RunningWorkout(
+            workoutName=workout_data.get("workout_name", "Beh"),
+            description=workout_data.get("description", ""),
+            estimatedDurationInSecs=0,
+            workoutSegments=[segment],
+        )
+        resp = client.upload_running_workout(garmin_workout)
+        new_id = resp.get("workoutId")
+        if new_id:
+            client.schedule_workout(new_id, date)
+        return new_id
+
+    def _remove_workout_by_id(workout_id) -> bool:
+        """Zruší všetky kalendárové výskyty daného tréningu a vymaže šablónu. Presné mazanie."""
         try:
-            # Validácia dátumu
-            target_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+            today = datetime.date.today()
+            items = _get_scheduled_range(
+                client, today - datetime.timedelta(days=31), today + datetime.timedelta(days=90)
+            )
+            for occ in items:
+                if str(occ.get("workoutId")) == str(workout_id) and occ.get("id"):
+                    try:
+                        client.unschedule_workout(occ["id"])
+                    except Exception:
+                        pass
+            client.delete_workout(workout_id)
+            return True
+        except Exception:
+            return False
 
-            # Nastavy kontext pre generovanie
+    def create_and_schedule_workout(date: str, description: str) -> str:
+        """Vygeneruje NOVÝ tréning podľa požiadavky (Hanson metodika + tvoje Garmin dáta/zóny)
+        a naplánuje ho na daný dátum (YYYY-MM-DD). Easy/dlhé dostanú HR cieľ, tempo/intervaly tempo."""
+        try:
+            datetime.datetime.strptime(date, "%Y-%m-%d")  # validácia
             profile = get_user_profile(user_id) or {}
-
-            # Vygeneruj AI návrh na jeden tréning
-            gen_model = genai.GenerativeModel('gemini-2.5-pro')
-            target_time = profile.get("target_time", "neuvedený")
-            ai_context = profile.get("ai_context", "")
-
-            gen_prompt = f"""Si bežecký tréner (Hanson Half-Marathon Method).
-Cieľový čas: {target_time}
-Osobné poznámky: {ai_context}
-
-Vygeneruj JEDEN tréning na dátum {date} podľa tejto požiadavky: {description}
-
-Vráť odpoveď VÝLUČNE vo formáte JSON:
-{{
-  "workout_name": "Názov",
-  "description": "Popis",
-  "steps": [
-    {{"type": "warmup|run|recover|cooldown", "distance_km": 2.0, "pace_min": "5:30", "pace_max": "5:20"}}
-  ]
-}}"""
-
-            gen_response = gen_model.generate_content(gen_prompt)
-            response_text = gen_response.text.strip()
-
-            # Parse JSON
-            if response_text.startswith("```json"):
-                response_text = response_text.replace("```json", "", 1)
-            if response_text.endswith("```"):
-                response_text = response_text[:response_text.rfind("```")]
-
-            workout_data = json.loads(response_text.strip())
-
-            # Konvertuj na Garmin format
-            garmin_steps = []
-            for i, step in enumerate(workout_data.get("steps", []), 1):
-                g_step = workout_generator.create_garmin_step(step, i)
-                garmin_steps.append(g_step)
-
-            segment = workout_generator.WorkoutSegment(
-                segmentOrder=1,
-                sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
-                workoutSteps=garmin_steps
-            )
-
-            garmin_workout = workout_generator.RunningWorkout(
-                workoutName=workout_data.get("workout_name", "Beh"),
-                description=workout_data.get("description", ""),
-                estimatedDurationInSecs=0,
-                workoutSegments=[segment]
-            )
-
-            # Upload do Garminu
-            resp = client.upload_running_workout(garmin_workout)
-            new_id = resp.get("workoutId")
-
+            workout_data = workout_generator.generate_single_workout(profile, description, client, date)
+            new_id = _build_and_schedule(workout_data, date)
             if new_id:
-                # Schedule na dátum
-                client.schedule_workout(new_id, date)
-                return f"✓ Nový tréning '{workout_data.get('workout_name')}' bol vytvorený a naplánovaný na {date}."
-            else:
-                return "Chyba: Garmin nevrátil ID nového tréningu."
-
+                return f"✓ Nový tréning '{workout_data.get('workout_name')}' naplánovaný na {date}."
+            return "Chyba: Garmin nevrátil ID nového tréningu."
         except json.JSONDecodeError:
             return "Chyba: AI nevygenerovala platný JSON."
         except Exception as e:
             return f"Chyba pri vytváraní tréningu: {str(e)}"
 
+    def modify_workout(workout_id: str, date: str, change_request: str) -> str:
+        """Uprav/zmeň existujúci naplánovaný tréning (napr. 'sprav ho kratší 6km', 'zmäkči na easy',
+        'pridaj rozcvičku'). workout_id z list_garmin_workouts, date = jeho dátum (YYYY-MM-DD).
+        Vytvorí upravenú verziu na ten istý deň a starý tréning odstráni (žiadny duplikát)."""
+        try:
+            datetime.datetime.strptime(date, "%Y-%m-%d")  # validácia
+            profile = get_user_profile(user_id) or {}
+            # Doplň kontext pôvodného tréningu, ak sa dá
+            try:
+                old = client.get_workout_by_id(workout_id)
+                old_name = old.get("workoutName", "") if isinstance(old, dict) else ""
+            except Exception:
+                old_name = ""
+            desc = f"Uprav existujúci tréning '{old_name}' podľa: {change_request}"
+            workout_data = workout_generator.generate_single_workout(profile, desc, client, date)
+            new_id = _build_and_schedule(workout_data, date)
+            if not new_id:
+                return "Chyba: Garmin nevrátil ID upraveného tréningu."
+            _remove_workout_by_id(workout_id)  # odstráň pôvodný
+            return f"✓ Tréning upravený: '{workout_data.get('workout_name')}' na {date}."
+        except json.JSONDecodeError:
+            return "Chyba: AI nevygenerovala platný JSON."
+        except Exception as e:
+            return f"Chyba pri úprave tréningu: {str(e)}"
+
+    def update_training_goal(target_time: str = "", race_date: str = "") -> str:
+        """Aktualizuje tréningový cieľ: cieľový čas na polmaratón (napr. '1:45:00') a/alebo
+        dátum pretekov (YYYY-MM-DD). Zmení sa profil → prepočítajú sa tempá aj fáza prípravy."""
+        try:
+            updates = {}
+            if target_time:
+                updates["target_time"] = target_time
+            if race_date:
+                datetime.datetime.strptime(race_date, "%Y-%m-%d")  # validácia
+                updates["race_date"] = race_date
+            if not updates:
+                return "Nezadal si nový cieľ ani dátum pretekov."
+            update_user_profile(user_id, updates)
+            parts = []
+            if "target_time" in updates: parts.append(f"cieľ {updates['target_time']}")
+            if "race_date" in updates: parts.append(f"preteky {updates['race_date']}")
+            return f"✓ Aktualizované: {', '.join(parts)}. Tempá a fáza prípravy sa prepočítajú."
+        except Exception as e:
+            return f"Chyba pri úprave cieľa: {str(e)}"
+
     try:
         model = genai.GenerativeModel(
             model_name=model_name,
             system_instruction=system_instruction,
-            tools=[get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout, create_and_schedule_workout]
+            tools=[get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details,
+                   reschedule_workout, delete_garmin_workout, create_and_schedule_workout,
+                   modify_workout, update_training_goal]
                   if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
         )
 
@@ -1153,7 +1207,7 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
         response = chat.send_message(req.message)
 
         # Spracovanie Function Calls (opakované kým model vola funkcie)
-        max_iterations = 5
+        max_iterations = 8  # viac krokov pre reorganizáciu celého týždňa (viac presunov)
         iteration = 0
         while iteration < max_iterations and response.candidates and response.candidates[0].content.parts:
             iteration += 1
@@ -1195,6 +1249,10 @@ Vráť odpoveď VÝLUČNE vo formáte JSON:
                     result = reschedule_workout(fn_args.get("workout_id", ""), fn_args.get("new_date", ""))
                 elif fn_name == "create_and_schedule_workout":
                     result = create_and_schedule_workout(fn_args.get("date", ""), fn_args.get("description", ""))
+                elif fn_name == "modify_workout":
+                    result = modify_workout(fn_args.get("workout_id", ""), fn_args.get("date", ""), fn_args.get("change_request", ""))
+                elif fn_name == "update_training_goal":
+                    result = update_training_goal(fn_args.get("target_time", ""), fn_args.get("race_date", ""))
                 else:
                     result = f"Neznáma funkcia: {fn_name}"
 

@@ -231,6 +231,53 @@ Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
 
     return json.loads(text.strip())
 
+def generate_single_workout(profile: dict, description: str, client=None,
+                            for_date: Optional[str] = None) -> dict:
+    """Vygeneruje JEDEN tréning podľa požiadavky — s plnou Hanson metodikou + živými
+    Garmin dátami (zóny, LTHR, tempá). Easy/dlhé → HR cieľ, Tempo/intervaly → pace.
+    Vráti dict: {workout_name, description, steps:[...]}. Zdieľa create aj modify."""
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        raise Exception("Gemini API kľúč nie je nastavený.")
+    genai.configure(api_key=GEMINI_API_KEY)
+
+    target_time = profile.get("target_time", "neuvedený")
+    athlete_context = _gather_athlete_context(client, profile)
+    when = f" na dátum {for_date}" if for_date else ""
+
+    prompt = f"""Si špičkový tréner Hanson Half-Marathon Method. Cieľový čas: {target_time}.
+{athlete_context}
+
+Vygeneruj JEDEN bežecký tréning{when} podľa tejto požiadavky: "{description}"
+
+PRAVIDLÁ:
+• Drž sa Hanson metodiky a typu tréningu (Easy/Tempo/Speed/Strength/Long).
+• EASY a DLHÉ kroky → HR cieľ (hr_min/hr_max z Easy pásma), NIE tempo.
+• TEMPO → HMP tempo (pace_min/pace_max). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
+• Warmup/cooldown → Easy HR alebo voľné tempo.
+
+Vráť odpoveď VÝLUČNE vo formáte JSON:
+{{
+  "workout_name": "Napr. Easy Run 8km / Tempo 6km @ HMP",
+  "description": "Krátky popis vrátane účelu",
+  "steps": [
+    {{ "type": "warmup|run|recover|cooldown", "distance_km": 2.0, "hr_min": 130, "hr_max": 150 }},
+    {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }}
+  ]
+}}
+Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy/dlhé→HR, Tempo/intervaly→pace.
+Vraciaš LEN platný JSON."""
+
+    model = genai.GenerativeModel('gemini-2.5-pro')
+    response = model.generate_content(prompt)
+    text = response.text.strip()
+    if text.startswith("```json"):
+        text = text.replace("```json", "", 1)
+    if text.endswith("```"):
+        text = text[:text.rfind("```")]
+    return json.loads(text.strip())
+
+
 def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, RunningWorkout]]:
     """Konvertuje AI JSON plán na Garmin objekty"""
     garmin_workouts = []
