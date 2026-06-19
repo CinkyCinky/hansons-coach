@@ -66,11 +66,15 @@ export default function Reports() {
     tempoStr: formatPace(r.avg_pace_sec),
   }));
 
-  // Kombinovaný týždenný graf (spánok + BB)
-  const comboData = sleepChartData.map((s: any, i: number) => ({
+  // Kombinovaný týždenný graf (spánok + BB) — zarovnané podľa dátumu, nie podľa indexu
+  const bbByDay: Record<string, number> = {};
+  bbChartData.forEach((b: any) => {
+    if (b.day != null) bbByDay[b.day] = b.bb;
+  });
+  const comboData = sleepChartData.map((s: any) => ({
     day: s.day,
     spánok: s.spánok,
-    bb: bbChartData[i]?.bb ?? null,
+    bb: bbByDay[s.day] ?? null,
   }));
 
   return (

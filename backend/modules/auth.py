@@ -21,7 +21,7 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 def _save_tokens_to_supabase(user_id: str, token_store: Path):
     """Uloží tokeny z /tmp späť do Supabase pre trvalú persistenciu."""
     try:
-        garth_file = token_store / "garth.json"
+        garth_file = token_store / "garmin_tokens.json"
         if garth_file.exists():
             with open(garth_file, "r") as f:
                 tokens_data = json.load(f)
@@ -36,7 +36,7 @@ def _load_tokens_from_supabase(user_id: str, token_store: Path, profile: dict):
     if db_tokens:
         try:
             token_store.mkdir(parents=True, exist_ok=True)
-            with open(token_store / "garth.json", "w") as f:
+            with open(token_store / "garmin_tokens.json", "w") as f:
                 json.dump(db_tokens, f)
             return True
         except Exception as e:

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
-  Activity, Flame, ChevronRight, BarChart2
+  Activity, Flame, ChevronRight, BarChart2, ChevronLeft
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,15 +13,8 @@ import {
 } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
-const TRAINING_START = new Date("2026-06-01");
-const TOTAL_WEEKS = 18;
-
-function getTrainingWeek(): number {
-  const diffMs = Date.now() - TRAINING_START.getTime();
-  return Math.max(1, Math.min(TOTAL_WEEKS, Math.floor(diffMs / (7 * 24 * 3600 * 1000)) + 1));
-}
-
 // HR zóna farby pre tréningové kroky
+
 const STEP_COLORS: Record<string, { border: string; text: string; label: string }> = {
   warmup:   { border: "border-l-orange-400", text: "text-orange-400",  label: "Rozcvička" },
   interval: { border: "border-l-rose-400",   text: "text-rose-400",    label: "Intervalový beh" },
@@ -28,6 +22,14 @@ const STEP_COLORS: Record<string, { border: string; text: string; label: string 
   recovery: { border: "border-l-emerald-400",text: "text-emerald-400", label: "Zotavenie" },
   cooldown: { border: "border-l-green-400",  text: "text-green-400",   label: "Vychladenie" },
 };
+
+// Slovenský popis posunu týždňa so správnym skloňovaním
+function relWeekLabel(off: number): string {
+  if (off === 0) return "Tento týždeň";
+  const n = Math.abs(off);
+  if (off < 0) return n === 1 ? "Minulý týždeň" : `Pred ${n} týždňami`;
+  return n === 1 ? "Budúci týždeň" : `O ${n} ${n < 5 ? "týždne" : "týždňov"}`;
+}
 
 export default function Plan() {
   const store = useStore();
@@ -42,9 +44,35 @@ export default function Plan() {
   const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>({});
   const [proposal, setProposal] = useState<any>(null);
   const [isConfirming, setIsConfirming] = useState(false);
+  // Týždeňová navigácia: 0 = aktuálny týždeň, -1 = pred., 1 = budc.
+  const [weekOffset, setWeekOffset] = useState(0);
 
-  const trainingWeek = getTrainingWeek();
-  const progressPct = Math.round((trainingWeek / TOTAL_WEEKS) * 100);
+  // Aktuálny týždeň z backendu (dashboard)
+  const trainingWeek = store.dashboard?.training_week ?? null;
+  const TOTAL_WEEKS = 18;
+  const progressPct = trainingWeek ? Math.round((trainingWeek / TOTAL_WEEKS) * 100) : 0;
+
+  // Výpočet rozpätia zobrazeného týždňa
+  const weekRange = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    // Začiatok aktuálneho týždňa = pondelok
+    const day = today.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() + mondayOffset + weekOffset * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    return { start: weekStart, end: weekEnd };
+  }, [weekOffset]);
+
+  // Filtrované tréningy pre aktuálne zobrazený týždeň
+  const visibleWorkouts = useMemo(() => {
+    return workouts.filter((w: any) => {
+      const d = new Date(w.date + "T00:00:00");
+      return d >= weekRange.start && d <= weekRange.end;
+    });
+  }, [workouts, weekRange]);
 
   useEffect(() => {
     store.loadPlan();
@@ -138,12 +166,12 @@ export default function Plan() {
           <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
           <p className="text-gray-400 text-sm">Hanson Advanced Half-Marathon</p>
         </div>
-        <button
-          onClick={() => (window.location.href = "/plan/generator")}
+        <Link
+          href="/plan/generator"
           className="bg-primary hover:bg-blue-600 text-white p-2 rounded-xl text-sm font-bold shadow-[0_0_15px_rgba(59,130,246,0.3)] transition-colors"
         >
           Generátor
-        </button>
+        </Link>
       </header>
 
       {error && (
@@ -193,12 +221,25 @@ export default function Plan() {
               "{proposal.coach_message}"
             </p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
               <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3">
                 <p className="text-xs font-bold text-rose-400 uppercase mb-2">❌ Pôvodný tréning</p>
-                <p className="font-bold">
+                <p className="font-bold mb-2">
                   {proposal.original_workout?.title || proposal.original_workout?.workoutName}
                 </p>
+                {/* Kroky pôvodného tréningu */}
+                {proposal.original_steps?.length > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    {proposal.original_steps.map((s: any, idx: number) => (
+                      <div key={idx} className="text-xs text-gray-400 flex justify-between bg-black/20 p-1.5 rounded">
+                        <span className="capitalize">{s.type}</span>
+                        <span>{s.distance_km ? `${s.distance_km}km` : ""}{s.target ? ` @ ${s.target}` : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 italic">Kroky pôvodného tréningu nie sú dostupné.</p>
+                )}
               </div>
               <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
                 <p className="text-xs font-bold text-emerald-400 uppercase mb-2">✅ AI Návrh</p>
@@ -258,17 +299,48 @@ export default function Plan() {
           <h2 className="text-xl font-bold flex items-center gap-2">
             <Calendar className="text-primary" size={20} /> Garmin Kalendár
           </h2>
-          <span className="bg-white/10 px-3 py-1 rounded-full text-xs">{workouts.length} tréningov</span>
+          <span className="bg-white/10 px-3 py-1 rounded-full text-xs">{visibleWorkouts.length} tréningov</span>
+        </div>
+
+        {/* Týždeňová navigácia */}
+        <div className="flex items-center justify-between mb-4 glass-card px-3 py-2">
+          <button
+            onClick={() => { setWeekOffset(o => o - 1); setExpandedId(null); }}
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-400 hover:text-white"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <div className="text-center">
+            <p className="text-sm font-bold">
+              {weekRange.start.toLocaleDateString("sk-SK", { day: "numeric", month: "long" })} – {weekRange.end.toLocaleDateString("sk-SK", { day: "numeric", month: "long" })}
+            </p>
+            <p className="text-xs text-gray-500">
+              {relWeekLabel(weekOffset)}
+            </p>
+          </div>
+          <button
+            onClick={() => { setWeekOffset(o => o + 1); setExpandedId(null); }}
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-400 hover:text-white"
+          >
+            <ChevronRight size={20} />
+          </button>
         </div>
 
         <div className="flex flex-col gap-3">
-          {workouts.length === 0 && !error && (
-            <p className="text-center text-gray-500 my-8">
-              Žiadne naplánované tréningy v tomto mesiaci.
-            </p>
+          {visibleWorkouts.length === 0 && !error && (
+            <div className="text-center py-10">
+              <p className="text-gray-500 mb-3">
+                {loading ? "Načítavam..." : "Tento týždeň nemáš žiadne naplánované tréningy."}
+              </p>
+              {!loading && weekOffset !== 0 && (
+                <button onClick={() => setWeekOffset(0)} className="text-primary text-sm underline">
+                  Zobraziť aktuálny týždeň
+                </button>
+              )}
+            </div>
           )}
 
-          {workouts.map((workout: any, i: number) => {
+          {visibleWorkouts.map((workout: any, i: number) => {
             const wDate = new Date(workout.date + "T00:00:00");
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -309,8 +381,11 @@ export default function Plan() {
                   </div>
 
                   <div className="shrink-0">
-                    {isPast && <CheckCircle2 className="text-emerald-400" size={22} />}
-                    {isToday && <Clock className="text-primary" size={22} />}
+                    {/* Zelená fajka IBA ak existuje activityId (reálne absolvovaný) */}
+                    {workout.activityId && <CheckCircle2 className="text-emerald-400" size={22} />}
+                    {/* Šedé koláč = minulý, ale bez activity */}
+                    {isPast && !workout.activityId && <CheckCircle2 className="text-gray-600" size={22} />}
+                    {isToday && !workout.activityId && <Clock className="text-primary" size={22} />}
                     {!isPast && !isToday && <Circle className="text-gray-600" size={22} />}
                   </div>
                 </div>
@@ -413,9 +488,11 @@ export default function Plan() {
                                     >
                                       <div className="flex items-start justify-between mb-1">
                                         <span className={`font-bold text-sm ${c.text}`}>{c.label}</span>
-                                        {step.distance_km && (
+                                        {step.distance_km ? (
                                           <span className="text-gray-400 text-xs">{step.distance_km} km</span>
-                                        )}
+                                        ) : step.duration_min ? (
+                                          <span className="text-gray-400 text-xs">{step.duration_min} min</span>
+                                        ) : null}
                                       </div>
                                       {step.target && (
                                         <p className="text-xs text-gray-400 mb-1">

@@ -7,6 +7,43 @@ from garminconnect.workout import (
     RunningWorkout, WorkoutSegment, ExecutableStep, StepType, ConditionType, TargetType
 )
 
+def training_timeline_note(profile: dict) -> str:
+    """Slovenský pokyn pre AI o časovej osi prípravy (skorý/štandardný/zhustený/neskorý nábeh)."""
+    race = profile.get("race_date")
+    start = profile.get("training_start_date")
+    if not race:
+        return ""
+    try:
+        today = datetime.date.today()
+        race_d = datetime.date.fromisoformat(str(race)[:10])
+        start_d = (
+            datetime.date.fromisoformat(str(start)[:10])
+            if start else race_d - datetime.timedelta(days=126)
+        )
+        eff = max(today, start_d)  # trénovať v minulosti sa nedá
+        prep_weeks = max(0, round((race_d - eff).days / 7))
+        weeks_to_race = max(0, (race_d - today).days // 7)
+        if prep_weeks >= 19:
+            sit = ("Zverenec má viac než štandardných 18 týždňov — začni opatrne, prvé týždne "
+                   "nižší objem a viac ľahkých (Easy) behov, postupne nabiehaj na plný Hanson objem.")
+        elif prep_weeks >= 16:
+            sit = "Štandardný 18-týždňový Hanson plán."
+        elif prep_weeks >= 10:
+            sit = ("Menej než 18 týždňov — plán zhusti: vynechaj najľahšiu úvodnú fázu a rýchlejšie "
+                   "zvyšuj záťaž, ale rozumne, bez rizika zranenia.")
+        elif prep_weeks >= 4:
+            sit = ("Veľmi krátka príprava — zameraj sa na kľúčové tréningy (tempo, dlhý beh), "
+                   "drž realistické očakávania a varuj pred preťažením.")
+        else:
+            sit = ("Na plnú Hanson prípravu je už neskoro — odporuč brať preteky skôr ako tréningové "
+                   "a nepreháňať to s tempom.")
+        return (f"\nČASOVÝ KONTEXT: dnes {today.isoformat()}, preteky {race_d.isoformat()}, "
+                f"začiatok prípravy {start_d.isoformat()}, do pretekov ~{weeks_to_race} týž., "
+                f"reálne ~{prep_weeks} týž. prípravy. {sit}\n")
+    except Exception:
+        return ""
+
+
 # Pomocné funkcie na prevod tempa
 def pace_to_ms(pace_str: str) -> float:
     """Prevedie tempo '5:30' na m/s"""
@@ -59,9 +96,12 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
         step.targetValueTwo = float(hr_max)
         return step
 
-    # ── Pace target ──
-    ms_min = pace_to_ms(pace_max or "6:00")   # max pace = faster = higher m/s
-    ms_max = pace_to_ms(pace_min or "6:30")   # min pace = slower = lower m/s
+    # ── Pace target (len ak je tempo skutočne zadané) ──
+    if pace_min or pace_max:
+        ms_min = pace_to_ms(pace_max or pace_min)   # rýchlejšie tempo = vyššie m/s
+        ms_max = pace_to_ms(pace_min or pace_max)   # pomalšie tempo = nižšie m/s
+    else:
+        ms_min = ms_max = 0.0
 
     if ms_min > 0 and ms_max > 0:
         target_dict = {
@@ -109,7 +149,8 @@ def generate_weekly_plan(profile: dict, constraints: str) -> dict:
     Si profesionálny bežecký tréner, expert na Hanson Half-Marathon Method.
     Cieľový čas zverenca na polmaratón je: {target_time}.
     DÔLEŽITÉ OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
-    
+    {training_timeline_note(profile)}
+
     Úloha: Vytvor tréningový plán na najbližších 7 dní (od zajtra).
     Zohľadni túto dodatočnú požiadavku: "{constraints}"
     Taktiež PRÍSNE zohľadni osobné poznámky zverenca (napr. preferovaný deň odpočinku, čas behu).
@@ -203,17 +244,24 @@ def update_next_workout(client, profile: dict) -> dict:
         lthr_data = {"error": str(e)}
         
     now = datetime.datetime.now()
-    scheduled = client.get_scheduled_workouts(now.year, now.month)
-    if isinstance(scheduled, dict):
-        items = scheduled.get('calendarItems', scheduled.get('workoutScheduledDTOList', []))
-    else:
-        items = scheduled or []
-        
-    # Find all workouts from today onwards
+    # Garmin API vracia 1 mesiac → načítame aktuálny aj nasledujúci mesiac
+    items = []
+    for off in range(0, 2):
+        yy = now.year + (now.month - 1 + off) // 12
+        mm = (now.month - 1 + off) % 12 + 1
+        try:
+            sched = client.get_scheduled_workouts(yy, mm)
+            raw = sched.get('calendarItems', sched.get('workoutScheduledDTOList', [])) if isinstance(sched, dict) else (sched or [])
+            items.extend(raw)
+        except Exception:
+            pass
+
+    # Find all PLANNED workouts from today onwards (nie aktivity/váhy/eventy)
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     upcoming_workouts = [
-        item for item in items 
+        item for item in items
         if item.get("date") and item.get("date") >= today_str
+        and item.get("itemType") == "workout" and item.get("workoutId")
     ]
     
     # Sort by date
@@ -240,6 +288,7 @@ def update_next_workout(client, profile: dict) -> dict:
     Zverenec má na dátum {target_date_str} naplánovaný tréning: {old_workout_name}.
     Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
     Osobné poznámky: {ai_context}
+    {training_timeline_note(profile)}
     Jeho aktuálny LTHR (Lactate Threshold) a HR dáta z Garminu: {json.dumps(lthr_data)}
     
     Úloha: Prepočítaj tento jeden tréning (Hanson Half-Marathon Method) tak, aby presne zodpovedal jeho fyzičke a jeho zvykom (Osobné poznámky). 

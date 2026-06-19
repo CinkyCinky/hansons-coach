@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Bot, Loader2, Zap, Brain } from "lucide-react";
 import { motion } from "framer-motion";
-import { sendChatMessage } from "@/lib/api";
+import { sendChatMessage, fetchProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 type Model = "flash" | "pro";
@@ -30,19 +30,50 @@ export default function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [model, setModel] = useState<Model>("flash");
   const [isInitializing, setIsInitializing] = useState(true);
+  const [displayName, setDisplayName] = useState<string>("Bežec");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll
+  // Auto-scroll — rolujeme kontajner správ, nie celú stránku
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, []);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+    scrollToBottom();
+  }, [messages, isLoading, scrollToBottom]);
+
+  // Auto-resize textarea
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const maxH = 160; // max 160px (~6 riadkov)
+    ta.style.height = Math.min(ta.scrollHeight, maxH) + "px";
+  }, []);
+
+  useEffect(() => {
+    autoResize();
+  }, [input, autoResize]);
+
+  // Načítaj meno z profilu
+  useEffect(() => {
+    fetchProfile()
+      .then((p) => {
+        const name = p.display_name || p.garmin_email?.split("@")[0] || "Bežec";
+        setDisplayName(name);
+      })
+      .catch(() => {});
+  }, []);
 
   // Dynamický pozdrav pri načítaní chatu
   useEffect(() => {
     const initChat = async () => {
       setIsInitializing(true);
       try {
-        // Načítaj dnešné dáta ak ešte nie sú
         await store.loadDashboard();
 
         const d = store.dashboard;
@@ -52,38 +83,38 @@ export default function Chat() {
           const todayW = d.today_workout?.title;
           const week = d.training_week;
           if (todayW) {
-            greetContext = `Ahoj Maroš! Dnes ťa čaká: **${todayW}**.`;
+            greetContext = `Ahoj ${displayName}! Dnes ťa čaká: **${todayW}**.`;
             if (bb) greetContext += ` Tvoja Body Battery je na ${bb}/100.`;
           } else {
-            greetContext = `Ahoj Maroš! Sme v týždni ${week ?? "?"}/18.`;
+            greetContext = `Ahoj ${displayName}! Sme v týždni ${week ?? "?"}/18.`;
             if (bb) greetContext += ` Tvoja Body Battery je ${bb}/100.`;
           }
           greetContext += " Ako ti môžem pomôcť?";
         }
 
-        setMessages([
-          {
-            id: "1",
-            role: "model",
-            content: greetContext,
-          },
-        ]);
+        // Neprepisuj už rozpísanú konverzáciu (efekt sa môže spustiť znova po načítaní profilu)
+        setMessages((prev) =>
+          prev.length > 1 ? prev : [{ id: "1", role: "model", content: greetContext }]
+        );
       } catch {
-        setMessages([
-          {
-            id: "1",
-            role: "model",
-            content:
-              "Ahoj Maroš! Som tvoj AI bežecký tréner podľa Hansons metódy. Ako ti môžem pomôcť?",
-          },
-        ]);
+        setMessages((prev) =>
+          prev.length > 1
+            ? prev
+            : [
+                {
+                  id: "1",
+                  role: "model",
+                  content: `Ahoj ${displayName}! Som tvoj AI bežecký tréner podľa Hansons metódy. Ako ti môžem pomôcť?`,
+                },
+              ]
+        );
       } finally {
         setIsInitializing(false);
       }
     };
     initChat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [displayName]);
 
   const handleSend = async (e: React.FormEvent | null, overrideInput?: string) => {
     e?.preventDefault();
@@ -91,6 +122,11 @@ export default function Chat() {
     if (!userMsg || isLoading) return;
 
     setInput("");
+    // Reset textarea height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+
     const newMessages: Message[] = [
       ...messages,
       { id: Date.now().toString(), role: "user", content: userMsg },
@@ -114,18 +150,25 @@ export default function Chat() {
           content: res.response,
         },
       ]);
-    } catch (error) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
           role: "model",
-          content:
-            "Prepáč, momentálne sa neviem spojiť so serverom. Skús to prosím neskôr.",
+          content: "Prepáč, momentálne sa neviem spojiť so serverom. Skús to prosím neskôr.",
         },
       ]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Odoslanie na Enter, nový riadok na Shift+Enter
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend(null);
     }
   };
 
@@ -179,7 +222,10 @@ export default function Chat() {
       </header>
 
       {/* Chat Messages */}
-      <div className="flex-1 overflow-y-auto mb-4 flex flex-col gap-4 pr-1 scrollbar-hide">
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto mb-3 flex flex-col gap-4 pr-1 scrollbar-hide"
+      >
         {isInitializing ? (
           <div className="flex justify-start">
             <div className="glass-card rounded-2xl rounded-bl-none px-4 py-3 flex items-center gap-2 text-gray-400">
@@ -196,7 +242,7 @@ export default function Chat() {
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 whitespace-pre-wrap ${
+                className={`max-w-[85%] rounded-2xl px-4 py-3 whitespace-pre-wrap text-sm ${
                   msg.role === "user"
                     ? "bg-primary text-white rounded-br-none shadow-[0_0_15px_rgba(59,130,246,0.3)]"
                     : "glass-card text-gray-200 rounded-bl-none"
@@ -226,32 +272,33 @@ export default function Chat() {
         {SUGGESTED_CHIPS.map((chip) => (
           <button
             key={chip}
-            onClick={() => {
-              setInput(chip);
-              handleSend(null, chip);
-            }}
-            className="shrink-0 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-4 py-1.5 text-xs text-gray-300 transition-colors"
+            onClick={() => handleSend(null, chip)}
+            disabled={isLoading}
+            className="shrink-0 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full px-4 py-1.5 text-xs text-gray-300 transition-colors disabled:opacity-40"
           >
             {chip}
           </button>
         ))}
       </div>
 
-      {/* Input */}
+      {/* Input — textarea s auto-resize */}
       <form onSubmit={handleSend} className="shrink-0 relative">
-        <input
-          type="text"
+        <textarea
+          ref={textareaRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Opýtaj sa trénera..."
-          className="w-full bg-[#1a1a24] border border-white/10 rounded-full pl-5 pr-12 py-4 text-white focus:outline-none focus:border-primary/50 transition-colors"
+          onKeyDown={handleKeyDown}
+          placeholder="Opýtaj sa trénera... (Enter = odošli, Shift+Enter = nový riadok)"
+          rows={1}
+          className="w-full bg-[#1a1a24] border border-white/10 rounded-2xl pl-5 pr-14 py-3.5 text-white focus:outline-none focus:border-primary/50 transition-colors resize-none overflow-y-auto leading-relaxed text-sm"
+          style={{ minHeight: "52px", maxHeight: "160px" }}
         />
         <button
           type="submit"
           disabled={!input.trim() || isLoading}
-          className="absolute right-2 top-2 bottom-2 aspect-square bg-primary hover:bg-blue-600 disabled:bg-gray-700 disabled:text-gray-500 rounded-full flex items-center justify-center transition-colors text-white"
+          className="absolute right-2 bottom-2 w-10 h-10 bg-primary hover:bg-blue-600 disabled:bg-gray-700 disabled:text-gray-500 rounded-xl flex items-center justify-center transition-colors text-white"
         >
-          <Send size={18} />
+          <Send size={16} />
         </button>
       </form>
     </div>
