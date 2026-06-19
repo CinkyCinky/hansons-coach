@@ -285,6 +285,7 @@ def get_dashboard_today(
         stats = fetcher.get_stats_summary(client) or {}
         readiness = fetcher.get_training_readiness(client) or {}
         bb = fetcher.get_body_battery(client) or {}
+        training_load = fetcher.get_training_load(client) or {}
         activities = fetcher.get_recent_activities(client, days=7)
 
         # Dnešný naplánovaný tréning
@@ -329,6 +330,7 @@ def get_dashboard_today(
                 "readiness_status": readiness.get("level"),
                 "feedback": readiness.get("feedback", ""),
             },
+            "training_load": training_load,
             "activities": running_activities[:5],
             "today_workout": today_workout,
         }
