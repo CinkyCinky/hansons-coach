@@ -1,4 +1,5 @@
 import os
+import datetime
 from supabase import create_client, Client
 from cryptography.fernet import Fernet
 from typing import Optional, Dict, Any
@@ -52,3 +53,40 @@ def verify_token(token: str):
     except Exception as e:
         print(f"Token verification error: {e}")
         return None
+
+
+def get_garmin_snapshot(user_id: str) -> Optional[Dict[str, Any]]:
+    """Vráti dnešný cache snapshot Garmin dát ({data, fetched_at}) alebo None."""
+    if not supabase:
+        return None
+    try:
+        today = datetime.date.today().isoformat()
+        res = (
+            supabase.table("garmin_snapshots")
+            .select("data,fetched_at")
+            .eq("user_id", user_id)
+            .eq("date", today)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"Snapshot read error: {e}")
+        return None
+
+
+def save_garmin_snapshot(user_id: str, data: Dict[str, Any]):
+    """Uloží/aktualizuje dnešný snapshot (upsert podľa user_id+date)."""
+    if not supabase:
+        return
+    try:
+        supabase.table("garmin_snapshots").upsert(
+            {
+                "user_id": user_id,
+                "date": datetime.date.today().isoformat(),
+                "data": data,
+                "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            },
+            on_conflict="user_id,date",
+        ).execute()
+    except Exception as e:
+        print(f"Snapshot save error: {e}")

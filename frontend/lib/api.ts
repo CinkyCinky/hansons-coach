@@ -29,8 +29,8 @@ async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
 // Tieto funkcie sú volané zo store-u, nie priamo z komponentov.
 
 export async function fetchDashboard(forceRefresh = false) {
-  // forceRefresh parameter zachovaný pre kompatibilitu, cache riadi store
-  return fetchWithAuth('/api/dashboard/today');
+  // forceRefresh (tlačidlo Refresh) obíde aj denný backend cache → čerstvé Garmin dáta
+  return fetchWithAuth('/api/dashboard/today' + (forceRefresh ? '?refresh=true' : ''));
 }
 
 export async function fetchDashboardAdvice(metrics: any) {
