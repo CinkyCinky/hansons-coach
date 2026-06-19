@@ -129,3 +129,45 @@ def get_metric_history(user_id: str, days: int = 90) -> list:
     except Exception as e:
         print(f"Metric history read error: {e}")
         return []
+
+
+def get_memory_facts(user_id: str) -> list:
+    """Vráti štruktúrované fakty pamäte trénera (id, category, content) pre používateľa."""
+    if not supabase:
+        return []
+    try:
+        res = (
+            supabase.table("athlete_memory")
+            .select("id,category,content,created_at")
+            .eq("user_id", user_id)
+            .order("created_at")
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Memory read error: {e}")
+        return []
+
+
+def add_memory_fact(user_id: str, content: str, category: str = "note") -> Optional[Dict[str, Any]]:
+    """Pridá jeden fakt do pamäte trénera. Vráti vložený riadok."""
+    if not supabase:
+        return None
+    try:
+        res = supabase.table("athlete_memory").insert(
+            {"user_id": user_id, "category": category or "note", "content": content}
+        ).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        print(f"Memory add error: {e}")
+        return None
+
+
+def delete_memory_fact(user_id: str, fact_id: str):
+    """Vymaže fakt pamäte (len vlastný riadok)."""
+    if not supabase:
+        return
+    try:
+        supabase.table("athlete_memory").delete().eq("user_id", user_id).eq("id", fact_id).execute()
+    except Exception as e:
+        print(f"Memory delete error: {e}")
