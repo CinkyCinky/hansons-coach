@@ -20,6 +20,32 @@ function shortDate(dateStr: string): string {
   return `${d.getDate()}.${d.getMonth() + 1}.`;
 }
 
+function VolumeRing({ pct, value, sub }: { pct: number; value: string; sub: string }) {
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(1, pct));
+  const off = c * (1 - clamped);
+  return (
+    <div className="flex items-center gap-4">
+      <svg width="96" height="96" viewBox="0 0 100 100" className="shrink-0">
+        <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" />
+        <circle
+          cx="50" cy="50" r={r} fill="none" stroke="#f97316" strokeWidth="8" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={off} transform="rotate(-90 50 50)"
+        />
+        <text x="50" y="55" textAnchor="middle" fill="#ffffff" fontSize="22" fontWeight="700">
+          {Math.round(clamped * 100)}%
+        </text>
+      </svg>
+      <div>
+        <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Tento týždeň</p>
+        <p className="text-2xl font-bold">{value}</p>
+        <p className="text-xs text-gray-500 mt-1 max-w-[180px]">{sub}</p>
+      </div>
+    </div>
+  );
+}
+
 function getLoadStatus(ratio?: number | null) {
   if (ratio == null) return null;
   if (ratio > 1.5) return { label: "Vysoké riziko preťaženia", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20", dot: "🔴" };
@@ -86,6 +112,13 @@ export default function Reports() {
     acRatio = Math.round((tl.acute_load / tl.chronic_load) * 100) / 100;
   }
   const loadStatus = getLoadStatus(acRatio);
+
+  // Týždenný objem: tento týždeň vs najsilnejší týždeň cyklu (čestný cieľ bez vymyslených čísel)
+  const thisWeekKm = volumeData.length ? volumeData[volumeData.length - 1].km : 0;
+  const lastWeekKm = volumeData.length > 1 ? volumeData[volumeData.length - 2].km : 0;
+  const peakKm = volumeData.reduce((m, w) => Math.max(m, w.km), 0);
+  const volPct = peakKm > 0 ? thisWeekKm / peakKm : 0;
+  const volDelta = lastWeekKm > 0 ? Math.round(((thisWeekKm - lastWeekKm) / lastWeekKm) * 100) : null;
 
   // Kombinovaný týždenný graf (spánok + BB) — zarovnané podľa dátumu, nie podľa indexu
   const bbByDay: Record<string, number> = {};
@@ -290,6 +323,19 @@ export default function Reports() {
       {/* ── TAB: Behy ── */}
       {tab === "runs" && data && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-5">
+
+          {/* Kruh: týždenný objem ako % najsilnejšieho týždňa */}
+          {volumeData.length > 0 && peakKm > 0 && (
+            <div className="glass-card p-4">
+              <VolumeRing
+                pct={volPct}
+                value={`${thisWeekKm} km`}
+                sub={`${Math.round(volPct * 100)}% tvojho najsilnejšieho týždňa (${peakKm} km)${
+                  volDelta != null ? ` • ${volDelta >= 0 ? "+" : ""}${volDelta}% vs minulý` : ""
+                }`}
+              />
+            </div>
+          )}
 
           {/* Graf: Týždenný objem (km/týždeň) — hlavná Hanson metrika */}
           {volumeData.length > 0 && (
