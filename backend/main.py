@@ -768,6 +768,7 @@ Najbližší tréning: {next_w_str}
         f"Odpovede prispôsob mobilnej aplikácii – max 4-5 viet. "
         f"Nikdy sa NEPÝTAJ na veci, ktoré vieš z Garmin dát. "
         f"DODATOČNÉ POZNÁMKY O POUŽÍVATEĽOVI (ai_context): {ai_context}\n"
+        f"{workout_generator.training_timeline_note(profile)}"
         f"DÔLEŽITÁ INŠTRUKCIA K PAMÄTI: Ak ti používateľ napíše nejakú novú podstatnú informáciu (zranenie, zmena vybavenia, preferencie), "
         f"začni svoju odpoveď tagom <MEMORY>tu zapíš nový fakt</MEMORY>. "
         f"Príklad: <MEMORY>Bolí ho koleno, stredy chce mať voľné</MEMORY> Dávaj si na to koleno pozor...\n"

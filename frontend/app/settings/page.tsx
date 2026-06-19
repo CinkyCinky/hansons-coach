@@ -27,48 +27,67 @@ export default function Settings() {
   const [trainingStart, setTrainingStart] = useState("2026-06-01");
   const [raceDate, setRaceDate] = useState("");
   const [aiContext, setAiContext] = useState("");
+  // Vlastný začiatok prípravy (override automatického výpočtu race - 18 týždňov)
+  const [customStart, setCustomStart] = useState(false);
 
-  // Varowanie o dátume pretekov
+  // Informácia o časovej osi prípravy
   const [raceDateWarning, setRaceDateWarning] = useState<string | null>(null);
 
-  // Výpočet začiatku z dátumu pretekov (mínus 18 týždňov = 126 dní)
+  const DAY = 1000 * 60 * 60 * 24;
+  const midnight = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  // Oficiálny Hanson začiatok = preteky - 18 týždňov (126 dní)
+  const officialStartIso = (raceIso: string) => {
+    const s = new Date(raceIso);
+    s.setDate(s.getDate() - 126);
+    return s.toISOString().split("T")[0];
+  };
+
+  // Auto-výpočet začiatku z dátumu pretekov (ak používateľ nemá vlastný)
+  useEffect(() => {
+    if (!raceDate || customStart) return;
+    const auto = officialStartIso(raceDate);
+    setTrainingStart((prev) => (prev === auto ? prev : auto));
+  }, [raceDate, customStart]);
+
+  // Vysvetľujúca správa o časovej osi prípravy
   useEffect(() => {
     if (!raceDate) {
       setRaceDateWarning(null);
       return;
     }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const race = new Date(raceDate);
-    race.setHours(0, 0, 0, 0);
-
-    // Preteky nesmú byť v minulosti
+    const today = midnight(new Date());
+    const race = midnight(new Date(raceDate));
     if (race <= today) {
       setRaceDateWarning("⚠️ Dátum pretekov je v minulosti. Zadaj budúci termín pretekov.");
       return;
     }
 
-    // Vypočítaj začiatok prípravy
-    const start = new Date(race);
-    start.setDate(start.getDate() - 126);
+    const effStart = customStart && trainingStart ? midnight(new Date(trainingStart)) : midnight(new Date(officialStartIso(raceDate)));
+    const achievableStart = effStart < today ? today : effStart; // trénovať v minulosti sa nedá
+    const prepWeeks = Math.max(0, Math.round((race.getTime() - achievableStart.getTime()) / (DAY * 7)));
+    const fmt = (d: Date) => d.toLocaleDateString("sk-SK");
 
-    setTrainingStart(start.toISOString().split("T")[0]);
-
-    // Ak je začiatok v minulosti, informuj koľko týždňov bežec zmeškala
-    if (start < today) {
-      const daysDiff = Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-      const weeksMissed = Math.floor(daysDiff / 7);
-      const currentWeek = Math.min(18, weeksMissed + 1);
-      const daysToRace = Math.ceil((race.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      setRaceDateWarning(
-        `ℹ️ Začiatok prípravy bol ${start.toLocaleDateString("sk-SK")} — t.j. zmeškal si ${weeksMissed} ${weeksMissed === 1 ? "týždeň" : weeksMissed < 5 ? "týždne" : "týždňov"}. ` +
-        `Práve si v ${currentWeek}. týždni (zostáva ${daysToRace} dní do pretekov). ` +
-        `Hanson odporúča: ak si zmeškal viac ako 3 týždne, začni od ľahkých Easy behov a postupne navyšuj objem. Nenahrádzaj vynechané tréningy!`
-      );
+    let msg: string;
+    if (prepWeeks >= 19) {
+      msg = `🌱 Začiatok ${fmt(effStart)} — máš ${prepWeeks} týždňov prípravy (Hanson ideál je 18). Začneš pokojnejšie: prvé týždne budú ľahšie a objem porastie postupne.`;
+    } else if (prepWeeks >= 16) {
+      msg = `✅ Začiatok ${fmt(effStart)} — ${prepWeeks} týždňov prípravy. Presne sedí na štandardný 18-týždňový Hanson plán.`;
+    } else if (prepWeeks >= 10) {
+      msg = `⏱️ Začiatok ${fmt(achievableStart)} — do pretekov máš len ${prepWeeks} týždňov (Hanson ideál je 18). Musíme zabrať: AI tréner plán zhustí a vynechá najľahšiu úvodnú fázu.`;
+    } else if (prepWeeks >= 4) {
+      msg = `⚠️ Pozor: ostáva len ${prepWeeks} týždňov prípravy. To je málo — plán bude náročný a krátený. Zváž, či nie je lepší neskorší termín pretekov.`;
     } else {
-      setRaceDateWarning(null);
+      msg = `🚫 Na poctivú Hanson prípravu je už neskoro (ostáva ~${prepWeeks} týž.). Odporúčam vybrať neskoršie preteky, alebo ber tieto bez tlaku na čas — ako tréningové.`;
     }
-  }, [raceDate]);
+    if (customStart && effStart < today) {
+      msg += " (Tvoj zadaný začiatok je v minulosti — počítame, že časť prípravy už máš za sebou.)";
+    }
+    setRaceDateWarning(msg);
+  }, [raceDate, customStart, trainingStart]);
 
   useEffect(() => {
     fetchProfile()
@@ -79,6 +98,11 @@ export default function Settings() {
         if (profile.training_start_date) setTrainingStart(profile.training_start_date);
         if (profile.race_date) setRaceDate(profile.race_date);
         if (profile.ai_context) setAiContext(profile.ai_context);
+        // Ak uložený začiatok nezodpovedá automatickému (race - 18 týž.), je to vlastný začiatok
+        if (profile.race_date && profile.training_start_date) {
+          const auto = officialStartIso(profile.race_date);
+          if (profile.training_start_date !== auto) setCustomStart(true);
+        }
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -254,17 +278,37 @@ export default function Settings() {
           )}
 
           <div>
-            <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1 opacity-60">
-              <Calendar size={12} /> Začiatok prípravy (vypočítaný, -18 týždňov)
+            <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1">
+              <Calendar size={12} /> Začiatok prípravy {customStart ? "(vlastný)" : "(automaticky, −18 týždňov)"}
             </label>
             <input
               type="date"
               value={trainingStart}
-              readOnly
-              className="w-full bg-[#1a1a24]/50 border border-white/10 rounded-xl px-4 py-2 text-gray-500 focus:outline-none opacity-60"
+              readOnly={!customStart}
+              onChange={(e) => setTrainingStart(e.target.value)}
+              className={`w-full border border-white/10 rounded-xl px-4 py-2 focus:outline-none ${
+                customStart
+                  ? "bg-[#1a1a24] text-white focus:border-primary/50"
+                  : "bg-[#1a1a24]/50 text-gray-500 opacity-60"
+              }`}
             />
+            <label className="flex items-center gap-2 mt-2 ml-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={customStart}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setCustomStart(on);
+                  if (!on && raceDate) setTrainingStart(officialStartIso(raceDate));
+                }}
+                className="accent-primary w-4 h-4"
+              />
+              <span className="text-xs text-gray-400">Chcem zadať vlastný začiatok prípravy</span>
+            </label>
             <p className="text-xs text-gray-600 mt-1 ml-1">
-              Aktuálny týždeň sa vypočíta automaticky z tohto dátumu.
+              {customStart
+                ? "AI tréner porovná tvoj začiatok s odporúčaným (18 týž. pred pretekmi) a podľa toho prispôsobí náročnosť plánu."
+                : "Začiatok sa automaticky počíta ako 18 týždňov pred pretekmi. Aktuálny týždeň sa určí z tohto dátumu."}
             </p>
           </div>
         </div>
@@ -322,7 +366,6 @@ export default function Settings() {
 
       <div className="text-center mt-4 text-xs text-gray-600">
         <p>Hansons Running Coach v2.0.0</p>
-        <p className="mt-0.5">Postavené s Antigravity AI ✨</p>
       </div>
     </div>
   );
