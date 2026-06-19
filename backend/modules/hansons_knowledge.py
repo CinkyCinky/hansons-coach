@@ -167,18 +167,33 @@ def athlete_block(athlete: Optional[dict]) -> str:
 
 
 def hr_zones_block(hr_zones: Optional[dict], lthr_pace: Optional[str] = None) -> str:
-    """Formátuje vypočítané HR zóny pre prompt."""
+    """Formátuje HR zóny pre prompt. Ak ide o reálne Garmin zóny, zobrazí aj surové Z1–Z5."""
     if not hr_zones:
         return ""
     src = hr_zones.get("source", "")
-    base = f"LTHR={hr_zones.get('lthr')} bpm" if src == "LTHR" else f"MaxHR={hr_zones.get('max_hr')} bpm"
-    out = (
-        f"\nHR ZÓNY (Hanson, zdroj {src}, {base}):\n"
-        f"  Easy:      {hr_zones['easy'][0]}–{hr_zones['easy'][1]} bpm  ← pre Easy/dlhé behy\n"
-        f"  Moderate:  {hr_zones['moderate'][0]}–{hr_zones['moderate'][1]} bpm\n"
-        f"  Tempo:     {hr_zones['tempo'][0]}–{hr_zones['tempo'][1]} bpm\n"
-        f"  Threshold: {hr_zones['threshold'][0]}–{hr_zones['threshold'][1]} bpm\n"
-        f"  Speed:     {hr_zones['speed'][0]}–{hr_zones['speed'][1]} bpm\n"
+    bits = []
+    if hr_zones.get("lthr"):     bits.append(f"LTHR={hr_zones['lthr']} bpm")
+    if hr_zones.get("max_hr"):   bits.append(f"MaxHR={hr_zones['max_hr']} bpm")
+    if hr_zones.get("resting_hr"): bits.append(f"pokoj={hr_zones['resting_hr']} bpm")
+    base = ", ".join(bits)
+
+    out = f"\nHR ZÓNY (zdroj: {src}; {base}):\n"
+
+    # Surové Garmin zóny ak sú k dispozícii
+    raw = hr_zones.get("zones")
+    if raw:
+        out += "  Garmin zóny:\n"
+        for k in ("z1", "z2", "z3", "z4", "z5"):
+            if raw.get(k):
+                out += f"    {k.upper()}: {raw[k][0]}–{raw[k][1]} bpm\n"
+
+    out += (
+        "  Hanson mapovanie:\n"
+        f"    Easy/Dlhé:  {hr_zones['easy'][0]}–{hr_zones['easy'][1]} bpm  ← Easy VŽDY sem\n"
+        f"    Moderate:   {hr_zones['moderate'][0]}–{hr_zones['moderate'][1]} bpm\n"
+        f"    Tempo/HMP:  {hr_zones['tempo'][0]}–{hr_zones['tempo'][1]} bpm\n"
+        f"    Threshold:  {hr_zones['threshold'][0]}–{hr_zones['threshold'][1]} bpm\n"
+        f"    Speed:      {hr_zones['speed'][0]}–{hr_zones['speed'][1]} bpm\n"
     )
     if lthr_pace:
         out += f"  LT tempo (referencia): {lthr_pace}\n"

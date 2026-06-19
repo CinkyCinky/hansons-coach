@@ -789,11 +789,16 @@ def chat_with_coach(
         training_load = fetcher.get_training_load(client) or {}
         lthr_data = fetcher.get_lactate_threshold(client) or {}
         athlete = fetcher.get_athlete_profile(client) or {}
-        max_hr = fetcher.get_max_hr_from_activities(client, days=90)
         resting_hr = stats.get("resting_hr")
-        hr_zones = fetcher.compute_hr_zones(
-            lthr_data.get("lthr") or athlete.get("lthr"), max_hr, resting_hr
+        # Primárne reálne bežecké zóny z Garminu (RUNNING → DEFAULT → výpočet)
+        hr_zones = fetcher.resolve_hr_zones(
+            client,
+            lthr=lthr_data.get("lthr") or athlete.get("lthr"),
+            max_hr=fetcher.get_max_hr_from_activities(client, days=90),
+            resting_hr=resting_hr,
         )
+        # Max HR pre snapshot: preferuj nakonfigurovaný Garmin, inak z histórie
+        max_hr = (hr_zones or {}).get("max_hr") or fetcher.get_max_hr_from_activities(client, days=90)
 
         runs_summary = []
         for a in (activities or [])[:7]:
@@ -837,19 +842,10 @@ def chat_with_coach(
             for s in (sleep_data or [])[:5]
         )
 
-        # HR zóny — formátovaný text
-        zones_str = "N/A"
-        if hr_zones:
-            src = hr_zones.get("source", "")
-            base = f"LTHR={hr_zones.get('lthr')} bpm" if src == "LTHR" else f"MaxHR={hr_zones.get('max_hr')} bpm"
-            zones_str = (
-                f"Zdroj: {src} ({base})\n"
-                f"  Easy:      {hr_zones['easy'][0]}-{hr_zones['easy'][1]} bpm\n"
-                f"  Moderate:  {hr_zones['moderate'][0]}-{hr_zones['moderate'][1]} bpm\n"
-                f"  Tempo:     {hr_zones['tempo'][0]}-{hr_zones['tempo'][1]} bpm\n"
-                f"  Threshold: {hr_zones['threshold'][0]}-{hr_zones['threshold'][1]} bpm\n"
-                f"  Speed:     {hr_zones['speed'][0]}-{hr_zones['speed'][1]} bpm"
-            )
+        # HR zóny — jednotné formátovanie (reálne Garmin zóny ak sú)
+        zones_str = hansons_knowledge.hr_zones_block(
+            hr_zones, lthr_data.get("lthr_pace") or athlete.get("lthr_pace")
+        ).strip() or "N/A"
 
         athlete_line = (
             f"Vek: {athlete.get('age', 'N/A')} | Pohlavie: {athlete.get('gender', 'N/A')} | "
@@ -867,8 +863,6 @@ LTHR: {lthr_data.get('lthr') or athlete.get('lthr', 'N/A')} bpm | LT tempo: {lth
 Pripravenosť: {readiness.get('score', 'N/A')}/100 ({readiness.get('level', '')})
 Training Load: akútna {training_load.get('acute_load', 'N/A')} | chronická {training_load.get('chronic_load', 'N/A')} | ratio {training_load.get('ratio', 'N/A')} | status: {training_load.get('status', 'N/A')}
 Spánok (posl. 5 dní): {sleep_summary or 'N/A'}
-
-HR ZÓNY (Hanson metóda):
 {zones_str}
 {hansons_knowledge.paces_block(target_time)}
 Posledné behy (14 dní):
@@ -909,18 +903,13 @@ Najbližší tréning: {next_w_str}
         """Vráti aktuálne vypočítané HR tréningové zóny pre Hanson metódu (Easy, Tempo, Speed, atď.)
         na základe LTHR alebo Max HR z Garmin účtu."""
         if not hr_zones:
-            return "HR zóny nie sú k dispozícii — Garmin API nevrátilo LTHR ani Max HR."
-        src = hr_zones.get("source", "")
-        base = f"LTHR={hr_zones.get('lthr')} bpm" if src == "LTHR" else f"MaxHR={hr_zones.get('max_hr')} bpm"
+            return "HR zóny nie sú k dispozícii — Garmin nevrátil nakonfigurované zóny ani LTHR/MaxHR."
+        block = hansons_knowledge.hr_zones_block(
+            hr_zones, lthr_data.get("lthr_pace") or athlete.get("lthr_pace")
+        ).strip()
         return (
-            f"HR zóny ({src}, základ: {base}):\n"
-            f"  Easy:      {hr_zones['easy'][0]}-{hr_zones['easy'][1]} bpm\n"
-            f"  Moderate:  {hr_zones['moderate'][0]}-{hr_zones['moderate'][1]} bpm\n"
-            f"  Tempo:     {hr_zones['tempo'][0]}-{hr_zones['tempo'][1]} bpm\n"
-            f"  Threshold: {hr_zones['threshold'][0]}-{hr_zones['threshold'][1]} bpm\n"
-            f"  Speed:     {hr_zones['speed'][0]}-{hr_zones['speed'][1]} bpm\n\n"
-            f"Easy behy: zameraj sa na zónu Easy ({hr_zones['easy'][0]}-{hr_zones['easy'][1]} bpm) — nie na tempo.\n"
-            f"LTHR tempo: {lthr_data.get('lthr_pace', 'N/A')} (referencia pre Tempo behy)"
+            block + "\n\n"
+            f"Easy behy: drž sa Easy pásma ({hr_zones['easy'][0]}–{hr_zones['easy'][1]} bpm) — podľa TEPU, nie tempa."
         )
 
     def get_activity_laps(date: str) -> str:

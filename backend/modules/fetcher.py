@@ -284,8 +284,70 @@ def get_max_hr_from_activities(client, days: int = 90) -> Optional[int]:
     return None
 
 
+def get_garmin_hr_zones(client) -> Optional[dict]:
+    """Stiahne REÁLNE nakonfigurované HR zóny priamo z Garminu.
+    Preferuje šport-špecifické bežecké zóny (sport=RUNNING), fallback na DEFAULT.
+    Garmin vracia 'floor' (spodný okraj) každej z 5 zón; strop zóny N = floor zóny N+1,
+    strop Z5 = maxHeartRateUsed. Mapuje 5 Garmin zón na Hanson tréningové názvy."""
+    try:
+        data = client.connectapi("/biometric-service/heartRateZones")
+        if not data or not isinstance(data, list):
+            return None
+
+        by_sport = {(z.get("sport") or "").upper(): z for z in data}
+        z = by_sport.get("RUNNING") or by_sport.get("DEFAULT") or data[0]
+        if not z:
+            return None
+
+        max_hr = z.get("maxHeartRateUsed")
+        floors = [
+            z.get("zone1Floor"), z.get("zone2Floor"), z.get("zone3Floor"),
+            z.get("zone4Floor"), z.get("zone5Floor"),
+        ]
+        if not all(floors) or not max_hr:
+            return None
+
+        # Hranice jednotlivých zón (floor -> strop)
+        z1 = (floors[0], floors[1])
+        z2 = (floors[1], floors[2])
+        z3 = (floors[2], floors[3])
+        z4 = (floors[3], floors[4])
+        z5 = (floors[4], max_hr)
+
+        return {
+            "source": f"Garmin/{z.get('sport', 'DEFAULT')}",
+            "method": z.get("trainingMethod"),
+            "lthr": z.get("lactateThresholdHeartRateUsed"),
+            "max_hr": max_hr,
+            "resting_hr": z.get("restingHeartRateUsed"),
+            "zones": {"z1": z1, "z2": z2, "z3": z3, "z4": z4, "z5": z5},
+            # Hanson mapovanie na reálne Garmin zóny:
+            "easy":      z2,   # regeneračné aeróbne pásmo (Easy/dlhé behy)
+            "moderate":  z3,   # marathon/strednej intenzity
+            "tempo":     z4,   # HMP/tempo (pri polmaratóne ~prahová intenzita)
+            "threshold": z4,   # prah laktátu (LT)
+            "speed":     z5,   # rýchlostné/silové intervaly
+        }
+    except Exception as e:
+        print(f"  ⚠️  Garmin HR zones: {e}")
+    return None
+
+
+def resolve_hr_zones(client, lthr: Optional[int] = None,
+                     max_hr: Optional[int] = None,
+                     resting_hr: Optional[int] = None) -> Optional[dict]:
+    """Jednotný zdroj HR zón. Priorita podľa želania používateľa:
+    1) reálne bežecké zóny z Garminu (RUNNING), 2) DEFAULT z Garminu,
+    3) výpočet z LTHR/MaxHR ak Garmin nič nevráti."""
+    z = get_garmin_hr_zones(client)
+    if z:
+        return z
+    return compute_hr_zones(lthr, max_hr, resting_hr)
+
+
 def compute_hr_zones(lthr: Optional[int], max_hr: Optional[int], resting_hr: Optional[int]) -> Optional[dict]:
     """Vypočíta tréningové HR zóny podľa Hansons Half-Marathon metódy.
+    Použije sa LEN ako fallback, ak Garmin nevráti nakonfigurované zóny.
     Priorita: LTHR → Max HR → None."""
     if lthr:
         # Hansonova metóda: zóny odvodzujeme primárne od LTHR

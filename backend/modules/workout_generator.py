@@ -24,12 +24,13 @@ def _gather_athlete_context(client, profile: dict) -> str:
             blocks.append(hansons_knowledge.athlete_block(athlete))
 
             lthr_data = fetcher.get_lactate_threshold(client) or {}
-            max_hr = fetcher.get_max_hr_from_activities(client, days=90)
             stats = fetcher.get_stats_summary(client) or {}
-            zones = fetcher.compute_hr_zones(
-                lthr_data.get("lthr") or (athlete or {}).get("lthr"),
-                max_hr,
-                stats.get("resting_hr"),
+            # Primárne reálne bežecké zóny z Garminu; fallback výpočet z LTHR/MaxHR
+            zones = fetcher.resolve_hr_zones(
+                client,
+                lthr=lthr_data.get("lthr") or (athlete or {}).get("lthr"),
+                max_hr=fetcher.get_max_hr_from_activities(client, days=90),
+                resting_hr=stats.get("resting_hr"),
             )
             blocks.append(hansons_knowledge.hr_zones_block(
                 zones, lthr_data.get("lthr_pace") or (athlete or {}).get("lthr_pace")
