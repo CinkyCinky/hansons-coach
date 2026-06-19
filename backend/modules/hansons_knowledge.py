@@ -95,6 +95,31 @@ PRETO: Easy a dlhé behy zadávaj s HR cieľom (hr_min/hr_max) do Easy pásma (p
 Tempo a intervaly môžu mať tempový cieľ (pace), lebo tam ide o konkrétny výkon —
 ideálne však kombináciu tempa a kontroly tepom.
 
+▌DLHÝ BEH — PRAVIDLO OBJEMU (dôležitý guardrail)
+• Dlhý beh NIKDY nepresiahne ~25–30 % týždenného objemu. Radšej kratší a častejší
+  beh než jeden „hrdinský". (Pri maratóne Hanson capuje dlhý beh na 16 míľ — princíp:
+  simulovať POSLEDNÝCH 16 míľ na unavených nohách, nie nabehať 32 km naraz.)
+• Dlhý beh sa beží EASY tempom/tepom (nie pretekovým) — opäť kumulovaná únava.
+
+▌ROZLOŽENIE INTENZITY A OBJEMU
+• 6 dní behu + 1 deň úplný odpočinok alebo cross-train (bike, plávanie, sila, joga).
+• VÄČŠINA objemu je Easy — Easy behy tvoria ~50 %+ vrcholového týždenného objemu.
+  Easy dni VŽDY oddeľujú SOS tréningy (nikdy 2 tvrdé dni za sebou).
+• Hanson beží o niečo „tvrdšie" než striktné 80/20, ale princíp platí: kvalita je
+  v 3 SOS, zvyšok ľahko. Objem a konzistencia > jednorazové hrdinstvo.
+
+▌PRESNOSŤ TEMPA — „NERETEKUJ TRÉNINGY"
+• Drž predpísané tempá/tepy PRESNE. Bežať Easy príliš rýchlo je chyba č. 1 (ruší
+  regeneráciu). Bežať SOS rýchlejšie než treba tiež škodí — vyčerpá pred ďalším SOS.
+• Speed intervaly kotvi na AKTUÁLNU 5k–10k formu (nie cieľ) — podľa reálnej fyzičky
+  (VO2max, posledné preteky/tempá). Strength a Tempo kotvi na CIEĽOVÝ čas (HMP).
+• Quality session = vždy 1.5 míle (~2.5 km) warm-up + 1.5 míle cool-down.
+
+▌ÚPRAVA NA PODMIENKY
+• Teplo / kopce / vietor → bež podľa ÚSILIA (tepu), nie tempa; tempo pusť pomalšie.
+• Spánok a výživa sú súčasť tréningu — kumulovaná únava vyžaduje kvalitnú regeneráciu
+  (dostatok spánku, sacharidy okolo SOS, hydratácia, fueling na dlhých behoch).
+
 ▌AKO ZOHĽADNIŤ ŽIVÉ DÁTA Z GARMINU
 • Nízka Pripravenosť / Body Battery / zlé HRV → zmäkči alebo presuň SOS tréning,
   pridaj Easy, varuj pred preťažením. Kumulovaná únava ÁNO, zranenie NIE.
