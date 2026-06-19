@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import datetime
+import json
 import logging
 import os
 import sys
@@ -930,11 +931,86 @@ Najbližší tréning: {next_w_str}
         except Exception as e:
             return f"Chyba pri mazaní: {str(e)}"
 
+    def create_and_schedule_workout(date: str, description: str) -> str:
+        """Vygeneruje nový tréning podľa požiadavky a naplánu ho na daný dátum. Format dátumu: YYYY-MM-DD."""
+        try:
+            # Validácia dátumu
+            target_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+
+            # Nastavy kontext pre generovanie
+            profile = get_user_profile(user_id) or {}
+
+            # Vygeneruj AI návrh na jeden tréning
+            gen_model = genai.GenerativeModel('gemini-2.5-pro')
+            target_time = profile.get("target_time", "neuvedený")
+            ai_context = profile.get("ai_context", "")
+
+            gen_prompt = f"""Si bežecký tréner (Hanson Half-Marathon Method).
+Cieľový čas: {target_time}
+Osobné poznámky: {ai_context}
+
+Vygeneruj JEDEN tréning na dátum {date} podľa tejto požiadavky: {description}
+
+Vráť odpoveď VÝLUČNE vo formáte JSON:
+{{
+  "workout_name": "Názov",
+  "description": "Popis",
+  "steps": [
+    {{"type": "warmup|run|recover|cooldown", "distance_km": 2.0, "pace_min": "5:30", "pace_max": "5:20"}}
+  ]
+}}"""
+
+            gen_response = gen_model.generate_content(gen_prompt)
+            response_text = gen_response.text.strip()
+
+            # Parse JSON
+            if response_text.startswith("```json"):
+                response_text = response_text.replace("```json", "", 1)
+            if response_text.endswith("```"):
+                response_text = response_text[:response_text.rfind("```")]
+
+            workout_data = json.loads(response_text.strip())
+
+            # Konvertuj na Garmin format
+            garmin_steps = []
+            for i, step in enumerate(workout_data.get("steps", []), 1):
+                g_step = workout_generator.create_garmin_step(step, i)
+                garmin_steps.append(g_step)
+
+            segment = workout_generator.WorkoutSegment(
+                segmentOrder=1,
+                sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+                workoutSteps=garmin_steps
+            )
+
+            garmin_workout = workout_generator.RunningWorkout(
+                workoutName=workout_data.get("workout_name", "Beh"),
+                description=workout_data.get("description", ""),
+                estimatedDurationInSecs=0,
+                workoutSegments=[segment]
+            )
+
+            # Upload do Garminu
+            resp = client.upload_running_workout(garmin_workout)
+            new_id = resp.get("workoutId")
+
+            if new_id:
+                # Schedule na dátum
+                client.schedule_workout(new_id, date)
+                return f"✓ Nový tréning '{workout_data.get('workout_name')}' bol vytvorený a naplánovaný na {date}."
+            else:
+                return "Chyba: Garmin nevrátil ID nového tréningu."
+
+        except json.JSONDecodeError:
+            return "Chyba: AI nevygenerovala platný JSON."
+        except Exception as e:
+            return f"Chyba pri vytváraní tréningu: {str(e)}"
+
     try:
         model = genai.GenerativeModel(
             model_name=model_name,
             system_instruction=system_instruction,
-            tools=[list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout]
+            tools=[list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout, create_and_schedule_workout]
                   if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
         )
 
@@ -983,6 +1059,8 @@ Najbližší tréning: {next_w_str}
                     result = get_workout_details(fn_args.get("workout_id", ""))
                 elif fn_name == "reschedule_workout":
                     result = reschedule_workout(fn_args.get("workout_id", ""), fn_args.get("new_date", ""))
+                elif fn_name == "create_and_schedule_workout":
+                    result = create_and_schedule_workout(fn_args.get("date", ""), fn_args.get("description", ""))
                 else:
                     result = f"Neznáma funkcia: {fn_name}"
 
