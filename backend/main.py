@@ -852,16 +852,90 @@ Najbližší tréning: {next_w_str}
         f"\n{garmin_context}"
     )
 
-    # Definícia funkcie (nástroja) pre model
-    def delete_garmin_workout(date: str):
-        """Vymaže tréning naplánovaný na daný dátum v Garmin kalendári. Parameter 'date' musí byť vo formáte YYYY-MM-DD."""
-        pass # Reálna exekúcia prebehne nižšie
+    # Definícia funkcií (nástrojov) pre model
+    def list_garmin_workouts(days_ahead: int = 14) -> str:
+        """Zobrazí zoznam naplánovaných tréningov na najbližších N dní (1-45 dní). Vráti formátovaný zoznam."""
+        try:
+            today = datetime.date.today()
+            end = today + datetime.timedelta(days=min(days_ahead, 45))
+            items = _get_scheduled_range(client, today, end)
+            planned = [i for i in items if _is_planned_workout(i)]
+            if not planned:
+                return "Žiadne naplánované tréningy v tomto období."
+            result = "Naplánované tréningy:\n"
+            for item in sorted(planned, key=lambda x: x.get("date", "")):
+                d = item.get("date", "?")[:10]
+                title = item.get("title") or item.get("workoutName") or "Beh"
+                workout_id = item.get("workoutId", "?")
+                result += f"  • {d}: {title} (ID: {workout_id})\n"
+            return result.strip()
+        except Exception as e:
+            return f"Chyba pri čítaní tréningov: {str(e)}"
+
+    def get_workout_details(workout_id: str) -> str:
+        """Zobrazí detailné informácie o konkrétnom tréningu vrátane krokov a cieľov."""
+        try:
+            if not hasattr(client, 'get_workout_by_id'):
+                return "Detaily tréningu nie sú dostupné."
+            details = client.get_workout_by_id(workout_id)
+            if not details:
+                return f"Tréning ID {workout_id} nebol nájdený."
+
+            workout_name = details.get("workoutName", "Beh")
+            description = details.get("description") or ""
+
+            steps_summary = []
+            for seg in details.get("workoutSegments") or []:
+                rows, _ = _flatten_workout_steps(seg.get("workoutSteps"))
+                steps_summary.extend(rows)
+
+            result = f"Tréning: {workout_name}\n"
+            if description:
+                result += f"Popis: {description}\n"
+            if steps_summary:
+                result += "Kroky:\n"
+                for i, step in enumerate(steps_summary, 1):
+                    dist_str = f"{step.get('distance_km')} km" if step.get('distance_km') else ""
+                    dur_str = f"{step.get('duration_min')} min" if step.get('duration_min') else ""
+                    target_str = f" ({step.get('target')})" if step.get('target') else ""
+                    result += f"  {i}. {step.get('type')}: {dist_str or dur_str}{target_str}\n"
+            return result.strip()
+        except Exception as e:
+            return f"Chyba pri čítaní detailov: {str(e)}"
+
+    def reschedule_workout(workout_id: str, new_date: str) -> str:
+        """Presuní tréning na nový dátum. Format: YYYY-MM-DD."""
+        try:
+            if not hasattr(client, 'schedule_workout'):
+                return "Presun tréningu nie je podporovaný."
+            client.schedule_workout(workout_id, new_date)
+            return f"Tréning ID {workout_id} bol úspešne presunený na {new_date}."
+        except Exception as e:
+            return f"Chyba pri presune tréningu: {str(e)}"
+
+    def delete_garmin_workout(date: str) -> str:
+        """Vymaže všetky tréningy naplánované na daný dátum v Garmin kalendári. Format: YYYY-MM-DD."""
+        try:
+            d = datetime.datetime.strptime(date, "%Y-%m-%d")
+            scheduled = client.get_scheduled_workouts(d.year, d.month)
+            items = scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", [])) if isinstance(scheduled, dict) else scheduled or []
+            deleted = 0
+            for item in items:
+                if item.get("date") == date:
+                    w_id = item.get("workoutId")
+                    if w_id:
+                        client.delete_workout(w_id)
+                        deleted += 1
+            return f"Úspešne vymazané {deleted} tréning(ov) pre dátum {date}." if deleted > 0 else f"Na dátum {date} nebol nájdený žiadny tréning."
+        except Exception as e:
+            return f"Chyba pri mazaní: {str(e)}"
 
     try:
         model = genai.GenerativeModel(
             model_name=model_name,
             system_instruction=system_instruction,
-            tools=[delete_garmin_workout] if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
+            tools=[list_garmin_workouts, get_workout_details, reschedule_workout, delete_garmin_workout]
+                  if model_name.startswith("gemini-1.5") or model_name.startswith("gemini-2") else None
         )
 
         formatted_history = []
@@ -871,55 +945,74 @@ Najbližší tréning: {next_w_str}
 
         chat = model.start_chat(history=formatted_history)
         response = chat.send_message(req.message)
-        
-        # Spracovanie Function Call (ak model chce vymazať tréning)
-        if response.candidates and response.candidates[0].content.parts:
-            # Model môže vrátiť text aj function_call vo viacerých častiach — nájdeme tú správnu
-            part = next(
-                (p for p in response.candidates[0].content.parts if getattr(p, "function_call", None)),
-                None,
-            )
-            if part is not None:
-                fc = part.function_call
-                if fc.name == "delete_garmin_workout":
-                    try:
-                        date_str = fc.args.get("date")
-                    except Exception:
-                        date_str = getattr(fc.args, "date", None)
 
-                    if date_str:
-                        # Logika zmazania
-                        import logging
-                        logging.info(f"Deleting workout for date: {date_str}")
-                        try:
-                            d = datetime.datetime.strptime(date_str, "%Y-%m-%d")
-                            scheduled = client.get_scheduled_workouts(d.year, d.month)
-                            items = scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", [])) if isinstance(scheduled, dict) else scheduled or []
-                            deleted = 0
-                            for item in items:
-                                if item.get("date") == date_str:
-                                    w_id = item.get("workoutId")
-                                    if w_id:
-                                        client.delete_workout(w_id)
-                                        deleted += 1
-                            result_msg = f"Úspešne vymazané tréningy ({deleted}) pre dátum {date_str}." if deleted > 0 else f"Na dátum {date_str} nebol nájdený žiadny tréning."
-                        except Exception as e:
-                            result_msg = f"Chyba pri mazaní: {e}"
-                        
-                        # Pošleme výsledok modelu
-                        response = chat.send_message(
-                            genai.types.ContentDict(
-                                role="user",
-                                parts=[
-                                    genai.types.PartDict(
-                                        function_response=genai.types.FunctionResponseDict(
-                                            name="delete_garmin_workout",
-                                            response={"result": result_msg}
-                                        )
-                                    )
-                                ]
+        # Spracovanie Function Calls (opakované kým model vola funkcie)
+        max_iterations = 5
+        iteration = 0
+        while iteration < max_iterations and response.candidates and response.candidates[0].content.parts:
+            iteration += 1
+
+            # Nájdeme všetky function_call časti
+            function_calls = [
+                p for p in response.candidates[0].content.parts
+                if getattr(p, "function_call", None)
+            ]
+
+            if not function_calls:
+                break
+
+            # Spracujeme všetky function calls
+            function_responses = []
+            for fc_part in function_calls:
+                fc = fc_part.function_call
+                fn_name = fc.name
+
+                # Extraktujeme argumenty (môžu byť dict alebo object)
+                try:
+                    fn_args = dict(fc.args) if hasattr(fc.args, 'items') else vars(fc.args)
+                except Exception:
+                    fn_args = {}
+
+                # Zavoláme správnu funkciu a zachytíme výsledok
+                result = None
+                if fn_name == "delete_garmin_workout":
+                    result = delete_garmin_workout(fn_args.get("date", ""))
+                elif fn_name == "list_garmin_workouts":
+                    result = list_garmin_workouts(fn_args.get("days_ahead", 14))
+                elif fn_name == "get_workout_details":
+                    result = get_workout_details(fn_args.get("workout_id", ""))
+                elif fn_name == "reschedule_workout":
+                    result = reschedule_workout(fn_args.get("workout_id", ""), fn_args.get("new_date", ""))
+                else:
+                    result = f"Neznáma funkcia: {fn_name}"
+
+                # Uložíme response
+                function_responses.append({
+                    "name": fn_name,
+                    "response": {"result": result}
+                })
+
+            # Pošleme všetky výsledky modelu naraz
+            if function_responses:
+                parts = []
+                for resp in function_responses:
+                    parts.append(
+                        genai.types.PartDict(
+                            function_response=genai.types.FunctionResponseDict(
+                                name=resp["name"],
+                                response=resp["response"]
                             )
                         )
+                    )
+
+                response = chat.send_message(
+                    genai.types.ContentDict(
+                        role="user",
+                        parts=parts
+                    )
+                )
+            else:
+                break
 
         response_text = response.text
         
