@@ -1,11 +1,43 @@
 import os
 import json
 import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import google.generativeai as genai
 from garminconnect.workout import (
     RunningWorkout, WorkoutSegment, ExecutableStep, StepType, ConditionType, TargetType
 )
+from modules import fetcher, hansons_knowledge
+
+
+def _gather_athlete_context(client, profile: dict) -> str:
+    """Pozbiera živé dáta z Garminu (osobný profil, LTHR, HR zóny) + vypočítané tempá
+    a vráti hotový textový blok pre AI prompt. Toto robí trénera 'múdrym'."""
+    blocks = [hansons_knowledge.HANSONS_METHODOLOGY]
+
+    goal = profile.get("target_time")
+    if goal:
+        blocks.append(hansons_knowledge.paces_block(goal))
+
+    if client is not None:
+        try:
+            athlete = fetcher.get_athlete_profile(client)
+            blocks.append(hansons_knowledge.athlete_block(athlete))
+
+            lthr_data = fetcher.get_lactate_threshold(client) or {}
+            max_hr = fetcher.get_max_hr_from_activities(client, days=90)
+            stats = fetcher.get_stats_summary(client) or {}
+            zones = fetcher.compute_hr_zones(
+                lthr_data.get("lthr") or (athlete or {}).get("lthr"),
+                max_hr,
+                stats.get("resting_hr"),
+            )
+            blocks.append(hansons_knowledge.hr_zones_block(
+                zones, lthr_data.get("lthr_pace") or (athlete or {}).get("lthr_pace")
+            ))
+        except Exception as e:
+            blocks.append(f"\n(Časť živých Garmin dát sa nepodarilo načítať: {e})\n")
+
+    return "".join(b for b in blocks if b)
 
 def training_timeline_note(profile: dict) -> str:
     """Slovenský pokyn pre AI o časovej osi prípravy (skorý/štandardný/zhustený/neskorý nábeh)."""
@@ -134,64 +166,68 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
     return step
 
 
-def generate_weekly_plan(profile: dict, constraints: str) -> dict:
-    """Generates a structured weekly plan using Gemini"""
+def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
+    """Vygeneruje 7-dňový plán podľa Hanson metódy s plnou metodikou + živými Garmin dátami."""
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     if not GEMINI_API_KEY:
         raise Exception("Gemini API kľúč nie je nastavený.")
-        
+
     genai.configure(api_key=GEMINI_API_KEY)
-    
+
     target_time = profile.get("target_time", "neuvedený")
     ai_context = profile.get("ai_context", "")
-    
-    system_prompt = f"""
-    Si profesionálny bežecký tréner, expert na Hanson Half-Marathon Method.
-    Cieľový čas zverenca na polmaratón je: {target_time}.
-    DÔLEŽITÉ OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
-    {training_timeline_note(profile)}
+    athlete_context = _gather_athlete_context(client, profile)
 
-    Úloha: Vytvor tréningový plán na najbližších 7 dní (od zajtra).
-    Zohľadni túto dodatočnú požiadavku: "{constraints}"
-    Taktiež PRÍSNE zohľadni osobné poznámky zverenca (napr. preferovaný deň odpočinku, čas behu).
-    
-    Pravidlá pre Hanson metódu (Paces):
-    - Easy pace: o cca 40-50s pomalšie ako cieľové tempo
-    - Tempo pace: presne cieľové tempo polmaratónu
-    - Speed/Strength intervaly: o 10s rýchlejšie ako cieľové tempo
-    
-    Vygeneruj odpoveď VÝLUČNE vo formáte JSON s nasledujúcou štruktúrou:
+    system_prompt = f"""Si profesionálny bežecký tréner, špičkový expert na Hanson Half-Marathon Method.
+Tvoja úloha je vytvoriť tréningový plán PRESNE podľa Hansonovej metodiky (nižšie) a podľa
+REÁLNYCH dát zverenca z Garminu (vek, váha, VO2max, LTHR, HR zóny, tempá).
+
+Cieľový čas na polmaratón: {target_time}.
+OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
+{training_timeline_note(profile)}
+{athlete_context}
+
+Úloha: Vytvor tréningový plán na najbližších 7 dní (od zajtra).
+Dodatočná požiadavka zverenca: "{constraints}"
+PRÍSNE rešpektuj osobné poznámky (deň odpočinku, čas behu, zranenia).
+
+KĽÚČOVÉ PRAVIDLÁ PRE VÝSTUP:
+• Rešpektuj štruktúru SOS tréningov (Speed/Strength utorok, Tempo štvrtok, Long nedeľa)
+  a aktuálnu fázu plánu (Speed T2–10 / Strength T11–17).
+• EASY a DLHÉ behy zadávaj s HR cieľom (hr_min/hr_max z Easy zóny) — NIE tempom!
+• TEMPO behy zadávaj na HMP tempo (pace_min/pace_max), prípadne aj s kontrolou tepom.
+• INTERVALY (Speed/Strength) zadávaj na tempo (5k resp. 10k), pauzy ako 'recover' pomaly.
+• Pre warmup/cooldown použi Easy HR alebo voľné tempo.
+
+Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
+{{
+  "coach_message": "Komentár a zdôvodnenie pre zverenca po slovensky — spomeň prečo si zvolil dané tepy/tempá.",
+  "workouts": [
     {{
-      "coach_message": "Tvoj komentár a zhodnotenie pre zverenca (po slovensky).",
-      "workouts": [
-        {{
-          "day_offset": 1, // 1 = zajtra, 2 = pozajtra, atd.
-          "workout_name": "Názov tréningu (napr. Tempo Run 8km)",
-          "description": "Popis tréningu",
-          "steps": [
-            {{
-              "type": "warmup|run|recover|cooldown",
-              "distance_km": 2.0,
-              "pace_min": "5:30", // najpomalšie tempo (spodná hranica zóny)
-              "pace_max": "5:20"  // najrýchlejšie tempo (horná hranica zóny)
-            }}
-          ]
-        }}
+      "day_offset": 1,
+      "workout_name": "Napr. Easy Run 8km alebo Tempo 6km @ HMP",
+      "description": "Popis vrátane účelu (regenerácia / rýchlosť / tempo)",
+      "steps": [
+        {{ "type": "warmup|run|recover|cooldown", "distance_km": 2.0,
+           "hr_min": 130, "hr_max": 142 }},
+        {{ "type": "run", "distance_km": 6.0,
+           "pace_min": "5:18", "pace_max": "5:10" }}
       ]
     }}
-    Uisti sa, že vraciaš LEN platný JSON.
-    """
-    
+  ]
+}}
+Pre každý krok použi BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max) — nie oboje povinne.
+Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
+
     model = genai.GenerativeModel('gemini-2.5-pro')
     response = model.generate_content(system_prompt)
-    
-    # Parse JSON z odpovede
+
     text = response.text.strip()
     if text.startswith("```json"):
         text = text.replace("```json", "", 1)
     if text.endswith("```"):
         text = text[:text.rfind("```")]
-        
+
     return json.loads(text.strip())
 
 def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, RunningWorkout]]:
@@ -278,37 +314,44 @@ def update_next_workout(client, profile: dict) -> dict:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     if not GEMINI_API_KEY:
         raise Exception("Gemini API kľúč nie je nastavený.")
-        
+
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-pro')
-    
+
     ai_context = profile.get("ai_context", "")
-    
-    system_prompt = f"""
-    Zverenec má na dátum {target_date_str} naplánovaný tréning: {old_workout_name}.
-    Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
-    Osobné poznámky: {ai_context}
-    {training_timeline_note(profile)}
-    Jeho aktuálny LTHR (Lactate Threshold) a HR dáta z Garminu: {json.dumps(lthr_data)}
-    
-    Úloha: Prepočítaj tento jeden tréning (Hanson Half-Marathon Method) tak, aby presne zodpovedal jeho fyzičke a jeho zvykom (Osobné poznámky). 
-    Ak nemáš dobré LTHR dáta, sprav miernu úpravu podľa bežných Hanson pravidiel.
-    
-    Vráť odpoveď VÝLUČNE vo formáte JSON:
-    {{
-      "coach_message": "Ahoj! Upravil som ti najbližší tréning podľa tvojej aktuálnej fyzičky...",
-      "workout": {{
-        "workout_name": "{old_workout_name} (Updated)",
-        "description": "Prepočítaný tréning podľa LTHR.",
-        "steps": [
-          {{ "type": "warmup", "distance_km": 2.0, "pace_min": "6:30", "pace_max": "6:00" }},
-          {{ "type": "run", "distance_km": 5.0, "pace_min": "5:30", "pace_max": "5:20" }},
-          {{ "type": "cooldown", "distance_km": 2.0, "pace_min": "6:30", "pace_max": "6:00" }}
-        ]
-      }}
-    }}
-    """
-    
+    athlete_context = _gather_athlete_context(client, profile)
+
+    system_prompt = f"""Si špičkový tréner Hanson Half-Marathon Method. Prepočítaj JEDEN naplánovaný
+tréning tak, aby presne sedel na AKTUÁLNU fyzičku zverenca (LTHR, HR zóny, VO2max, tempá) a
+jeho zvyky. Drž sa Hansonovej metodiky a typu tréningu (Easy/Tempo/Speed/Strength/Long).
+
+Tréning na dátum {target_date_str}: "{old_workout_name}".
+Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
+OSOBNÉ POZNÁMKY: {ai_context}
+{training_timeline_note(profile)}
+{athlete_context}
+
+PRAVIDLÁ:
+• Zachovaj typ a účel pôvodného tréningu (ak to bol Easy, ostane Easy; Tempo ostane Tempo...).
+• EASY/DLHÉ kroky → HR cieľ (hr_min/hr_max z Easy zóny), NIE tempo.
+• TEMPO → HMP tempo (pace). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
+• Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči.
+
+Vráť odpoveď VÝLUČNE vo formáte JSON:
+{{
+  "coach_message": "Ahoj! Upravil som ti tréning podľa aktuálnej fyzičky — vysvetli prečo (po slovensky).",
+  "workout": {{
+    "workout_name": "{old_workout_name} (Updated)",
+    "description": "Prepočítaný tréning podľa LTHR / HR zón.",
+    "steps": [
+      {{ "type": "warmup", "distance_km": 2.0, "hr_min": 130, "hr_max": 142 }},
+      {{ "type": "run", "distance_km": 5.0, "hr_min": 138, "hr_max": 150 }},
+      {{ "type": "cooldown", "distance_km": 2.0, "hr_min": 125, "hr_max": 138 }}
+    ]
+  }}
+}}
+Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy→HR, Tempo/intervaly→pace."""
+
     response = model.generate_content(system_prompt)
     text = response.text.strip()
     if text.startswith("```json"): text = text.replace("```json", "", 1)

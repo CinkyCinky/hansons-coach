@@ -19,6 +19,7 @@ from modules.auth import get_client
 from modules import fetcher
 from modules.database import verify_token, get_user_profile, update_user_profile, encrypt_password
 from modules import workout_generator
+from modules import hansons_knowledge
 
 app = FastAPI(title="Hansons Running Coach API", version="2.0.0")
 security = HTTPBearer()
@@ -536,12 +537,17 @@ class PlanGenerateRequest(BaseModel):
     constraints: str
 
 @app.post("/api/plan/generate")
-def api_generate_plan(req: PlanGenerateRequest, user_id: str = Depends(get_current_user)):
+def api_generate_plan(
+    req: PlanGenerateRequest,
+    user_id: str = Depends(get_current_user),
+    client=Depends(get_garmin_client),
+):
     profile = get_user_profile(user_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profil nenájdený")
     try:
-        plan_json = workout_generator.generate_weekly_plan(profile, req.constraints)
+        # client → AI dostane živé dáta (vek/váha/VO2max/LTHR/HR zóny) + plnú metodiku
+        plan_json = workout_generator.generate_weekly_plan(profile, req.constraints, client)
         return plan_json
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa vygenerovať plán. Skús to znova.")
@@ -782,9 +788,12 @@ def chat_with_coach(
         stats = fetcher.get_stats_summary(client) or {}
         training_load = fetcher.get_training_load(client) or {}
         lthr_data = fetcher.get_lactate_threshold(client) or {}
+        athlete = fetcher.get_athlete_profile(client) or {}
         max_hr = fetcher.get_max_hr_from_activities(client, days=90)
         resting_hr = stats.get("resting_hr")
-        hr_zones = fetcher.compute_hr_zones(lthr_data.get("lthr"), max_hr, resting_hr)
+        hr_zones = fetcher.compute_hr_zones(
+            lthr_data.get("lthr") or athlete.get("lthr"), max_hr, resting_hr
+        )
 
         runs_summary = []
         for a in (activities or [])[:7]:
@@ -842,20 +851,26 @@ def chat_with_coach(
                 f"  Speed:     {hr_zones['speed'][0]}-{hr_zones['speed'][1]} bpm"
             )
 
+        athlete_line = (
+            f"Vek: {athlete.get('age', 'N/A')} | Pohlavie: {athlete.get('gender', 'N/A')} | "
+            f"Výška: {athlete.get('height_cm', 'N/A')} cm | Váha: {athlete.get('weight_kg', 'N/A')} kg | "
+            f"VO2max: {athlete.get('vo2max', 'N/A')}"
+        )
         garmin_context = f"""
 --- GARMIN DÁTA ---
 Týždeň prípravy: {training_week}/18
+Športovec: {athlete_line}
 Body Battery: {bb.get('today_charged', 'N/A')}/100
 HRV: {hrv.get('status', 'N/A')} (last night: {hrv.get('last_night', 'N/A')} ms, weekly avg: {hrv.get('weekly_avg', 'N/A')} ms)
 Pokojový tep: {resting_hr or 'N/A'} bpm | Max HR (z histórie): {max_hr or 'N/A'} bpm
-LTHR: {lthr_data.get('lthr', 'N/A')} bpm | LTHR tempo: {lthr_data.get('lthr_pace', 'N/A')}
+LTHR: {lthr_data.get('lthr') or athlete.get('lthr', 'N/A')} bpm | LT tempo: {lthr_data.get('lthr_pace') or athlete.get('lthr_pace', 'N/A')}
 Pripravenosť: {readiness.get('score', 'N/A')}/100 ({readiness.get('level', '')})
 Training Load: akútna {training_load.get('acute_load', 'N/A')} | chronická {training_load.get('chronic_load', 'N/A')} | ratio {training_load.get('ratio', 'N/A')} | status: {training_load.get('status', 'N/A')}
 Spánok (posl. 5 dní): {sleep_summary or 'N/A'}
 
 HR ZÓNY (Hanson metóda):
 {zones_str}
-
+{hansons_knowledge.paces_block(target_time)}
 Posledné behy (14 dní):
 {chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
 
@@ -870,17 +885,22 @@ Najbližší tréning: {next_w_str}
         today_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         
     system_instruction = (
-        f"Si osobný AI bežecký tréner. Prísne sa riadíš Hansons Half-Marathon Advanced metódou. "
+        f"Si osobný AI bežecký tréner — špičkový expert na Hansons Half-Marathon Advanced metódu. "
+        f"Tvoje rady musia vychádzať z metodiky NIŽŠIE a z REÁLNYCH Garmin dát zverenca (vek, váha, "
+        f"VO2max, LTHR, HR zóny, tempá, history). Nehovor všeobecne — argumentuj konkrétnymi číslami. "
         f"Dnešný dátum a čas: {today_full}. "
         f"Cieľový čas: {target_time}. Aktuálny týždeň prípravy: {training_week}/18. "
-        f"VŽDY hovor po slovensky. Buď konkrétny, stručný a povzbudivý. "
-        f"Odpovede prispôsob mobilnej aplikácii – max 4-5 viet. "
+        f"VŽDY hovor po slovensky. Buď konkrétny, vecný a povzbudivý. "
+        f"Odpovede prispôsob mobilnej aplikácii – stručne, ale neobetuj odbornosť. "
+        f"Pri analýze tréningu/intervalov si vyžiadaj detaily nástrojom get_activity_laps. "
+        f"Easy a dlhé behy VŽDY odporúčaj podľa TEPU (Easy HR zóna), nie podľa tempa — vysvetli prečo. "
         f"Nikdy sa NEPÝTAJ na veci, ktoré vieš z Garmin dát. "
         f"DODATOČNÉ POZNÁMKY O POUŽÍVATEĽOVI (ai_context): {ai_context}\n"
         f"{workout_generator.training_timeline_note(profile)}"
         f"DÔLEŽITÁ INŠTRUKCIA K PAMÄTI: Ak ti používateľ napíše nejakú novú podstatnú informáciu (zranenie, zmena vybavenia, preferencie), "
         f"začni svoju odpoveď tagom <MEMORY>tu zapíš nový fakt</MEMORY>. "
         f"Príklad: <MEMORY>Bolí ho koleno, stredy chce mať voľné</MEMORY> Dávaj si na to koleno pozor...\n"
+        f"\n{hansons_knowledge.HANSONS_METHODOLOGY}\n"
         f"\n{garmin_context}"
     )
 

@@ -187,31 +187,84 @@ def get_stats_summary(client) -> Optional[dict]:
     return None
 
 
+def _speed_to_pace_str(speed_raw) -> Optional[str]:
+    """Garmin lactateThresholdSpeed → tempo (min:sec/km).
+    Empiricky: skutočné m/s = uložená hodnota * 10 (napr. 0.322 → 3.22 m/s → 5:10/km).
+    Vyberie tú interpretáciu, ktorá dá reálne tempo (2:30–8:00/km)."""
+    try:
+        v = float(speed_raw)
+        if v <= 0:
+            return None
+        for ms in (v * 10.0, v):  # preferuj *10 interpretáciu
+            pace_sec = round(1000 / ms)
+            if 150 <= pace_sec <= 480:  # sanity: 2:30–8:00 /km
+                return f"{pace_sec // 60}:{pace_sec % 60:02d}/km"
+    except Exception:
+        pass
+    return None
+
+
 def get_lactate_threshold(client) -> Optional[dict]:
-    """Stiahne LTHR (Lactate Threshold Heart Rate) z Garminu."""
+    """Stiahne LTHR (tep) a LT tempo z Garminu.
+    Reálna štruktúra: {'speed_and_heart_rate': {'speed': .., 'heartRate': ..}}."""
     try:
         data = client.get_lactate_threshold()
         if not data:
             return None
-        # Garmin vracia rôzne štruktúry podľa zariadenia
         if isinstance(data, list) and data:
             data = data[0]
-        lthr = (
-            data.get("heartRateThreshold")
-            or data.get("lactateThresholdHeartRate")
-            or data.get("value")
-        )
-        pace_raw = data.get("lactateThresholdSpeed") or data.get("pace")
-        lthr_pace_str = None
-        if pace_raw and float(pace_raw) > 0:
-            pace_sec = round(1000 / float(pace_raw))
-            lthr_pace_str = f"{pace_sec // 60}:{pace_sec % 60:02d}/km"
+
+        shr = data.get("speed_and_heart_rate") if isinstance(data, dict) else None
+        if isinstance(shr, dict):
+            lthr = shr.get("heartRate")
+            speed_raw = shr.get("speed")
+        else:
+            # fallback pre iné verzie API
+            lthr = data.get("heartRate") or data.get("lactateThresholdHeartRate") or data.get("value")
+            speed_raw = data.get("speed") or data.get("lactateThresholdSpeed")
+
         return {
             "lthr": int(lthr) if lthr else None,
-            "lthr_pace": lthr_pace_str,
+            "lthr_pace": _speed_to_pace_str(speed_raw) if speed_raw else None,
         }
     except Exception as e:
         print(f"  ⚠️  LTHR: {e}")
+    return None
+
+
+def get_athlete_profile(client) -> Optional[dict]:
+    """Stiahne osobné údaje športovca z Garmin účtu:
+    vek, váha, výška, pohlavie, VO2max, LTHR. Toto sú dáta, ktoré tréner potrebuje
+    na presný výpočet zón a záťaže (rovnako ako lokálny tréner)."""
+    try:
+        prof = client.get_user_profile() or {}
+        ud = prof.get("userData", {}) if isinstance(prof, dict) else {}
+
+        # Vek z dátumu narodenia
+        age = None
+        bd = ud.get("birthDate")
+        if bd:
+            try:
+                b = date.fromisoformat(str(bd)[:10])
+                today = date.today()
+                age = today.year - b.year - ((today.month, today.day) < (b.month, b.day))
+            except Exception:
+                pass
+
+        weight_g = ud.get("weight")
+        weight_kg = round(weight_g / 1000, 1) if weight_g else None
+
+        return {
+            "age": age,
+            "gender": ud.get("gender"),
+            "weight_kg": weight_kg,
+            "height_cm": round(ud.get("height")) if ud.get("height") else None,
+            "vo2max": ud.get("vo2MaxRunning"),
+            "lthr": ud.get("lactateThresholdHeartRate"),
+            "lthr_pace": _speed_to_pace_str(ud.get("lactateThresholdSpeed")),
+        }
+    except Exception as e:
+        print(f"  ⚠️  Athlete profile: {e}")
     return None
 
 
