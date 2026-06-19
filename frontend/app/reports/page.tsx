@@ -65,6 +65,26 @@ const CHART_STYLE = {
   itemStyle: { fontWeight: "bold" },
 };
 
+function TrendChart({ data, color, label, refLine }: { data: any[]; color: string; label: string; refLine?: number }) {
+  return (
+    <div className="mb-4 last:mb-0">
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <div className="h-32 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" vertical={false} />
+            <XAxis dataKey="day" stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
+            <YAxis stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} domain={["auto", "auto"]} />
+            <Tooltip {...CHART_STYLE} />
+            {refLine != null && <ReferenceLine y={refLine} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1.5} />}
+            <Line type="monotone" dataKey="v" stroke={color} strokeWidth={2.5} dot={{ r: 3, fill: color }} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 export default function Reports() {
   const store = useStore();
   const [tab, setTab] = useState<"weekly" | "runs">("weekly");
@@ -119,6 +139,13 @@ export default function Reports() {
   const peakKm = volumeData.reduce((m, w) => Math.max(m, w.km), 0);
   const volPct = peakKm > 0 ? thisWeekKm / peakKm : 0;
   const volDelta = lastWeekKm > 0 ? Math.round(((thisWeekKm - lastWeekKm) / lastWeekKm) * 100) : null;
+
+  // Trendy formy (vo2max / pokojový tep / A:C ratio) — pribúdajú denne
+  const trends = (data?.metric_trends ?? []) as any[];
+  const vo2Data = trends.filter((t) => t.vo2max != null).map((t) => ({ day: shortDate(t.date), v: t.vo2max }));
+  const rhrData = trends.filter((t) => t.resting_hr != null).map((t) => ({ day: shortDate(t.date), v: t.resting_hr }));
+  const acData = trends.filter((t) => t.ac_ratio != null).map((t) => ({ day: shortDate(t.date), v: t.ac_ratio }));
+  const hasTrends = vo2Data.length >= 3 || rhrData.length >= 3 || acData.length >= 3;
 
   // Kombinovaný týždenný graf (spánok + BB) — zarovnané podľa dátumu, nie podľa indexu
   const bbByDay: Record<string, number> = {};
@@ -315,6 +342,19 @@ export default function Reports() {
                   <p className="text-sm font-bold text-gray-200">{data.hrv.status ?? "--"}</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Trendy formy (pribúdajú denne) */}
+          {hasTrends && (
+            <div className="glass-card p-4">
+              <h3 className="text-base font-bold mb-1 flex items-center gap-2">
+                <TrendingUp className="text-primary" size={18} /> Trendy formy
+              </h3>
+              <p className="text-xs text-gray-500 mb-4">Vývoj kľúčových ukazovateľov v čase.</p>
+              {vo2Data.length >= 3 && <TrendChart data={vo2Data} color="#3b82f6" label="VO2max (vyššie = lepšie)" />}
+              {rhrData.length >= 3 && <TrendChart data={rhrData} color="#f59e0b" label="Pokojový tep (nižšie = lepšie)" />}
+              {acData.length >= 3 && <TrendChart data={acData} color="#34d399" label="A:C záťaž (cieľ 0.8–1.4)" refLine={1.4} />}
             </div>
           )}
         </motion.div>

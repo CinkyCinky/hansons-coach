@@ -90,3 +90,42 @@ def save_garmin_snapshot(user_id: str, data: Dict[str, Any]):
         ).execute()
     except Exception as e:
         print(f"Snapshot save error: {e}")
+
+
+def save_metric_history(user_id: str, vo2max=None, resting_hr=None, ac_ratio=None):
+    """Zaznamená denné kľúčové ukazovatele formy (upsert podľa user_id+date)."""
+    if not supabase:
+        return
+    try:
+        supabase.table("metric_history").upsert(
+            {
+                "user_id": user_id,
+                "date": datetime.date.today().isoformat(),
+                "vo2max": vo2max,
+                "resting_hr": resting_hr,
+                "ac_ratio": ac_ratio,
+            },
+            on_conflict="user_id,date",
+        ).execute()
+    except Exception as e:
+        print(f"Metric history save error: {e}")
+
+
+def get_metric_history(user_id: str, days: int = 90) -> list:
+    """Vráti históriu ukazovateľov (vo2max/resting_hr/ac_ratio) za posledných N dní, vzostupne."""
+    if not supabase:
+        return []
+    try:
+        since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+        res = (
+            supabase.table("metric_history")
+            .select("date,vo2max,resting_hr,ac_ratio")
+            .eq("user_id", user_id)
+            .gte("date", since)
+            .order("date")
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Metric history read error: {e}")
+        return []
