@@ -285,6 +285,7 @@ def get_dashboard_today(
         stats = fetcher.get_stats_summary(client) or {}
         readiness = fetcher.get_training_readiness(client) or {}
         bb = fetcher.get_body_battery(client) or {}
+        training_load = fetcher.get_training_load(client) or {}
         activities = fetcher.get_recent_activities(client, days=7)
 
         # Dnešný naplánovaný tréning
@@ -329,6 +330,7 @@ def get_dashboard_today(
                 "readiness_status": readiness.get("level"),
                 "feedback": readiness.get("feedback", ""),
             },
+            "training_load": training_load,
             "activities": running_activities[:5],
             "today_workout": today_workout,
         }
@@ -703,6 +705,7 @@ def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(g
         sleep_data = fetcher.get_sleep_data(client, days=7) or []
         hrv_data = fetcher.get_hrv_data(client) or {}
         bb_data = fetcher.get_body_battery(client) or {}
+        training_load = fetcher.get_training_load(client) or {}
 
         running_types = ("running", "track_running", "treadmill_running", "trail_running")
         running = [
@@ -767,6 +770,7 @@ def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(g
             "runs": runs,
             "weekly_volume": weekly_volume,
             "goal_pace_sec": _goal_pace_sec_per_km(profile.get("target_time")),
+            "training_load": training_load,
             "sleep": sleep_data,
             "hrv": hrv_data,
             "body_battery": {

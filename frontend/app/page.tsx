@@ -18,12 +18,31 @@ function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: nu
   return { label: "Potrebuješ odpočinok", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20", dot: "🔴" };
 }
 
+function getLoadStatus(ratio?: number | null) {
+  if (ratio == null) return null;
+  if (ratio > 1.5) return { label: "Vysoké riziko preťaženia", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/20", dot: "🔴" };
+  if (ratio > 1.4) return { label: "Zvýšená záťaž — opatrne", color: "text-amber-400", bg: "bg-amber-500/10 border-amber-500/20", dot: "🟠" };
+  if (ratio >= 0.8) return { label: "Optimálna záťaž", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20", dot: "🟢" };
+  return { label: "Podtrénovanie — priestor pridať", color: "text-sky-400", bg: "bg-sky-500/10 border-sky-500/20", dot: "🔵" };
+}
+
 function formatDate(): string {
   return new Date().toLocaleDateString("sk-SK", {
     weekday: "long",
     day: "numeric",
     month: "long",
   });
+}
+
+function timeAgo(ts: number | null): string {
+  if (!ts) return "";
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return "teraz";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `pred ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `pred ${h} h`;
+  return "dávnejšie";
 }
 
 export default function Dashboard() {
@@ -47,9 +66,21 @@ export default function Dashboard() {
 
   if (loading && !data) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen">
-        <Loader2 className="animate-spin text-primary" size={48} />
-        <p className="text-gray-400 mt-4 font-bold">Oživujem trénera...</p>
+      <div className="flex flex-col gap-5 pt-4 pb-32 animate-pulse">
+        <div className="flex justify-between items-end">
+          <div className="space-y-2">
+            <div className="h-3 w-28 bg-white/10 rounded" />
+            <div className="h-8 w-44 bg-white/10 rounded" />
+          </div>
+          <div className="h-7 w-16 bg-white/10 rounded-full" />
+        </div>
+        <div className="h-16 bg-white/5 rounded-2xl" />
+        <div className="h-28 bg-white/5 rounded-2xl" />
+        <div className="grid grid-cols-2 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-24 bg-white/5 rounded-2xl" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -63,6 +94,16 @@ export default function Dashboard() {
   const todayWorkout = d.today_workout ?? null;
 
   const formStatus = getFormStatus(sleep.score, stats.body_battery, readiness.readiness_score);
+
+  // Tréningová záťaž (acute:chronic ratio) — kľúčový Hanson ukazovateľ preťaženia
+  const tl = d.training_load || {};
+  const acuteLoad: number | null = tl.acute_load ?? null;
+  const chronicLoad: number | null = tl.chronic_load ?? null;
+  let acRatio: number | null = tl.ratio ?? null;
+  if (acRatio == null && acuteLoad && chronicLoad) {
+    acRatio = Math.round((acuteLoad / chronicLoad) * 100) / 100;
+  }
+  const loadStatus = getLoadStatus(acRatio);
 
   return (
     <div className="flex flex-col gap-5 pt-4 pb-32">
@@ -88,6 +129,12 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      {data && store.dashboardLoadedAt && (
+        <p className="text-[11px] text-gray-500 -mt-3">
+          Naposledy synchronizované {timeAgo(store.dashboardLoadedAt)}
+        </p>
+      )}
 
       {/* Error */}
       {error && (
@@ -117,6 +164,34 @@ export default function Dashboard() {
             <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Stav formy</p>
             <p className={`font-bold ${formStatus.color}`}>{formStatus.label}</p>
           </div>
+        </motion.div>
+      )}
+
+      {/* Tréningová záťaž (acute:chronic ratio) */}
+      {loadStatus && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`${loadStatus.bg} border rounded-2xl px-4 py-3 flex items-center justify-between gap-3`}
+          title="Pomer akútnej a chronickej tréningovej záťaže (Garmin). Nad 1.4 = riziko preťaženia, pod 0.8 = priestor pridať objem."
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{loadStatus.dot}</span>
+            <div>
+              <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Tréningová záťaž (A:C)</p>
+              <p className={`font-bold ${loadStatus.color}`}>{loadStatus.label}</p>
+            </div>
+          </div>
+          {acRatio != null && (
+            <div className="text-right shrink-0">
+              <p className={`text-2xl font-bold ${loadStatus.color}`}>{acRatio.toFixed(2)}</p>
+              {acuteLoad != null && chronicLoad != null && (
+                <p className="text-[10px] text-gray-500">
+                  akút {Math.round(acuteLoad)} / chron {Math.round(chronicLoad)}
+                </p>
+              )}
+            </div>
+          )}
         </motion.div>
       )}
 
