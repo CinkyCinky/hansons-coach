@@ -1,11 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { LogOut, Save, Loader2, Calendar, Target, Wifi } from "lucide-react";
+import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { fetchProfile, updateProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
+
+function validateTargetTime(val: string): boolean {
+  return /^\d{1,2}:\d{2}:\d{2}$/.test(val.trim());
+}
 
 export default function Settings() {
   const supabase = createClient();
@@ -16,6 +20,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [targetTime, setTargetTime] = useState("1:50:00");
@@ -23,20 +28,52 @@ export default function Settings() {
   const [raceDate, setRaceDate] = useState("");
   const [aiContext, setAiContext] = useState("");
 
+  // Varowanie o dátume pretekov
+  const [raceDateWarning, setRaceDateWarning] = useState<string | null>(null);
+
   // Výpočet začiatku z dátumu pretekov (mínus 18 týždňov = 126 dní)
   useEffect(() => {
-    if (raceDate) {
-      const d = new Date(raceDate);
-      if (!isNaN(d.getTime())) {
-        d.setDate(d.getDate() - 126);
-        setTrainingStart(d.toISOString().split("T")[0]);
-      }
+    if (!raceDate) {
+      setRaceDateWarning(null);
+      return;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const race = new Date(raceDate);
+    race.setHours(0, 0, 0, 0);
+
+    // Preteky nesmú byť v minulosti
+    if (race <= today) {
+      setRaceDateWarning("⚠️ Dátum pretekov je v minulosti. Zadaj budúci termín pretekov.");
+      return;
+    }
+
+    // Vypočítaj začiatok prípravy
+    const start = new Date(race);
+    start.setDate(start.getDate() - 126);
+
+    setTrainingStart(start.toISOString().split("T")[0]);
+
+    // Ak je začiatok v minulosti, informuj koľko týždňov bežec zmeškala
+    if (start < today) {
+      const daysDiff = Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      const weeksMissed = Math.floor(daysDiff / 7);
+      const currentWeek = Math.min(18, weeksMissed + 1);
+      const daysToRace = Math.ceil((race.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      setRaceDateWarning(
+        `ℹ️ Začiatok prípravy bol ${start.toLocaleDateString("sk-SK")} — t.j. zmeškal si ${weeksMissed} ${weeksMissed === 1 ? "týždeň" : weeksMissed < 5 ? "týždne" : "týždňov"}. ` +
+        `Práve si v ${currentWeek}. týždni (zostáva ${daysToRace} dní do pretekov). ` +
+        `Hanson odporúča: ak si zmeškal viac ako 3 týždne, začni od ľahkých Easy behov a postupne navyšuj objem. Nenahrádzaj vynechané tréningy!`
+      );
+    } else {
+      setRaceDateWarning(null);
     }
   }, [raceDate]);
 
   useEffect(() => {
     fetchProfile()
       .then((profile) => {
+        if (profile.display_name) setDisplayName(profile.display_name);
         if (profile.garmin_email) setEmail(profile.garmin_email);
         if (profile.target_time) setTargetTime(profile.target_time);
         if (profile.training_start_date) setTrainingStart(profile.training_start_date);
@@ -48,10 +85,29 @@ export default function Settings() {
   }, []);
 
   const handleSave = async () => {
+    // Validácia formátu cieľového času
+    if (targetTime && !validateTargetTime(targetTime)) {
+      setMessage("Chyba: Cieľový čas musí byť vo formáte HH:MM:SS (napr. 1:50:00)");
+      return;
+    }
+
+    // Dátum pretekov nesmie byť v minulosti
+    if (raceDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const race = new Date(raceDate);
+      race.setHours(0, 0, 0, 0);
+      if (race <= today) {
+        setMessage("Chyba: Dátum pretekov musí byť v budúcnosti.");
+        return;
+      }
+    }
+
     setSaving(true);
     setMessage("");
     try {
       await updateProfile({
+        display_name: displayName || undefined,
         garmin_email: email,
         garmin_password: password || undefined,
         target_time: targetTime,
@@ -72,6 +128,9 @@ export default function Settings() {
   };
 
   const handleLogout = async () => {
+    // Potvrdenie pred odhlásením
+    const confirmed = window.confirm("Naozaj sa chceš odhlásiť?");
+    if (!confirmed) return;
     await supabase.auth.signOut();
     router.push("/login");
   };
@@ -90,6 +149,28 @@ export default function Settings() {
         <h1 className="text-2xl font-bold">Nastavenia</h1>
         <p className="text-gray-400 text-sm">Spravuj svoj profil a ciele</p>
       </div>
+
+      {/* Osobný profil */}
+      <section>
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 ml-1 flex items-center gap-1">
+          <User size={12} /> Osobný profil
+        </h3>
+        <div className="glass-card p-4 flex flex-col gap-4">
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Meno / Prezývka</label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+              placeholder="napr. Maroš"
+            />
+            <p className="text-xs text-gray-600 mt-1 ml-1">
+              Takto ťa bude volať AI Tréner v chate a na dashboarde.
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* Garmin účet */}
       <section>
@@ -140,9 +221,16 @@ export default function Settings() {
               type="text"
               value={targetTime}
               onChange={(e) => setTargetTime(e.target.value)}
-              className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
+              className={`w-full bg-[#1a1a24] border rounded-xl px-4 py-2 text-white focus:outline-none transition-colors ${
+                targetTime && !validateTargetTime(targetTime)
+                  ? "border-rose-500/50 focus:border-rose-500"
+                  : "border-white/10 focus:border-primary/50"
+              }`}
               placeholder="napr. 1:50:00"
             />
+            {targetTime && !validateTargetTime(targetTime) && (
+              <p className="text-xs text-rose-400 mt-1 ml-1">Formát musí byť HH:MM:SS (napr. 1:50:00)</p>
+            )}
           </div>
           <div>
             <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1">
@@ -152,9 +240,19 @@ export default function Settings() {
               type="date"
               value={raceDate}
               onChange={(e) => setRaceDate(e.target.value)}
+              min={new Date().toISOString().split("T")[0]}
               className="w-full bg-[#1a1a24] border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-primary/50"
             />
           </div>
+
+          {/* Varovanie / informácia o dátume */}
+          {raceDateWarning && (
+            <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+              <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-300 leading-relaxed">{raceDateWarning}</p>
+            </div>
+          )}
+
           <div>
             <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1 opacity-60">
               <Calendar size={12} /> Začiatok prípravy (vypočítaný, -18 týždňov)
@@ -216,7 +314,7 @@ export default function Settings() {
 
       <button
         onClick={handleLogout}
-        className="w-full py-4 text-rose-400 font-bold flex justify-center items-center gap-2 mt-2"
+        className="w-full py-4 text-rose-400 font-bold flex justify-center items-center gap-2 mt-2 hover:text-rose-300 transition-colors"
       >
         <LogOut size={18} />
         Odhlásiť sa z aplikácie

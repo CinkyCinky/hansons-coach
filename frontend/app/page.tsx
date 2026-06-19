@@ -9,15 +9,6 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 
-const TRAINING_START = new Date("2026-06-01");
-const TOTAL_WEEKS = 18;
-
-function getTrainingWeek(): number {
-  const diffMs = Date.now() - TRAINING_START.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  return Math.max(1, Math.min(TOTAL_WEEKS, Math.floor(diffDays / 7) + 1));
-}
-
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
   const values = [sleepScore, bodyBattery, readiness].filter((v) => v != null) as number[];
   if (!values.length) return null;
@@ -48,8 +39,10 @@ export default function Dashboard() {
     await store.loadDashboard(true);
   };
 
-  const trainingWeek = getTrainingWeek();
+  // Týždeň prípravy pochádza z backendu (počítaný z profilu)
   const { dashboard: data, dashboardLoading: loading, dashboardError: error, advice } = store;
+  const trainingWeek = data?.training_week ?? "?";
+  const TOTAL_WEEKS = 18;
 
   if (loading && !data) {
     return (
@@ -77,7 +70,7 @@ export default function Dashboard() {
         <div>
           <p className="text-gray-400 text-sm font-medium capitalize">{formatDate()}</p>
           <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-300">
-            Ahoj, Maroš 👋
+            Ahoj, {data?.display_name ?? data?.garmin_email?.split("@")[0] ?? "Bežec"} 👋
           </h1>
         </div>
         <div className="flex gap-2 items-center">

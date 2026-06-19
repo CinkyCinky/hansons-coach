@@ -82,7 +82,11 @@ export default function Login() {
             />
           </div>
 
-          {error && <p className="text-rose-400 text-xs font-bold text-center">{error}</p>}
+          {error && (
+            <p className={`text-xs font-bold text-center ${error.includes("úspešná") ? "text-emerald-400" : "text-rose-400"}`}>
+              {error}
+            </p>
+          )}
 
           <button
             type="submit"

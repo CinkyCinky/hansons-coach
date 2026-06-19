@@ -9,7 +9,9 @@ from typing import Optional
 def get_recent_activities(client, days: int = 7) -> list:
     """Stiahne posledné aktivity za N dní."""
     try:
-        activities = client.get_activities(0, 20)
+        # Limit škálujeme podľa okna (aktívny bežec má >20 aktivít za 35 dní)
+        limit = min(max(20, days * 3), 200)
+        activities = client.get_activities(0, limit)
         if not activities:
             return []
 

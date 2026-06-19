@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
-import { generatePlan, uploadPlan } from "@/lib/api";
+import { generatePlan, uploadPlan, fetchProfile } from "@/lib/api";
+import { useStore } from "@/lib/store";
 
 export default function Generator() {
+  const store = useStore();
   const [days, setDays] = useState({
     Po: true, Ut: true, St: true, Št: true, Pi: true, So: true, Ne: true
   });
   const [message, setMessage] = useState("");
+  const [aiContext, setAiContext] = useState("");
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,12 +22,27 @@ export default function Generator() {
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
 
+  // Načítaj ai_context z profilu pre kontext pri generácii
+  useEffect(() => {
+    fetchProfile()
+      .then((p) => {
+        if (p.ai_context) setAiContext(p.ai_context);
+      })
+      .catch(() => {});
+  }, []);
+
+  const selectedCount = Object.values(days).filter(Boolean).length;
+
   const handleGenerate = async () => {
+    if (loading || selectedCount === 0) return;
     setLoading(true);
     setError(null);
+    setUploadSuccess(false);
     try {
       const availableDays = Object.entries(days).filter(([_, v]) => v).map(([k]) => k).join(", ");
-      const constraints = `Dostupné dni na beh: ${availableDays}. Ďalšie požiadavky od zverenca: ${message || "Žiadne"}.`;
+      // Zloučenie užívateľských inštrukcií s AI kontext (ai_context z profilu)
+      const contextPart = aiContext ? `\n\nDOPLNKOVÉ INFORMÁCIE O ZVERENCOVI (z profilu): ${aiContext}` : "";
+      const constraints = `Dostupné dni na beh: ${availableDays}. Ďalšie požiadavky od zverenca: ${message || "Žiadne"}.${contextPart}`;
       
       const plan = await generatePlan(constraints);
       setGeneratedPlan(plan);
@@ -40,6 +58,8 @@ export default function Generator() {
     setError(null);
     try {
       await uploadPlan(generatedPlan);
+      // Zneplatni cache, aby sa nové tréningy hneď zobrazili v Pláne a na Prehľade
+      store.invalidateAll();
       setUploadSuccess(true);
     } catch (err: any) {
       setError(err.message || "Chyba pri nahrávaní do Garminu.");
@@ -90,7 +110,7 @@ export default function Generator() {
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-3">Odklikni dni, kedy nemôžeš behať.</p>
+            <p className="text-xs text-gray-400 mt-3">Zaznač dni, kedy si dostupný. Tréner sám rozhodne, kedy budeš behať (na základe Hansons metódy a tvojho profilu).</p>
           </div>
 
           <div className="glass-card p-5">
@@ -103,12 +123,16 @@ export default function Generator() {
             />
           </div>
 
-          <button 
+          <button
             onClick={handleGenerate}
-            className="bg-primary hover:bg-blue-600 text-white font-bold py-4 rounded-xl shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all flex items-center justify-center gap-2"
+            disabled={selectedCount === 0}
+            className="bg-primary hover:bg-blue-600 text-white font-bold py-4 rounded-xl shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
           >
             <Send size={18} /> Vygenerovať plán
           </button>
+          {selectedCount === 0 && (
+            <p className="text-xs text-amber-400 text-center -mt-3">Vyber aspoň jeden deň, kedy si dostupný.</p>
+          )}
         </motion.div>
       )}
 

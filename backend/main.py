@@ -62,8 +62,9 @@ class ProfileUpdate(BaseModel):
     garmin_password: Optional[str] = None
     target_time: Optional[str] = None
     training_start_date: Optional[str] = None  # YYYY-MM-DD
-    race_date: Optional[str] = None # YYYY-MM-DD
+    race_date: Optional[str] = None  # YYYY-MM-DD
     ai_context: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 # ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -95,6 +96,93 @@ def _calculate_training_week(profile: dict) -> int:
         return week
     except Exception:
         return 1
+
+
+def _scheduled_items(scheduled) -> list:
+    """Normalizuje odpoveď get_scheduled_workouts na zoznam položiek kalendára."""
+    if isinstance(scheduled, dict):
+        return scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", [])) or []
+    return scheduled or []
+
+
+def _is_planned_workout(item: dict) -> bool:
+    """True len pre reálne naplánované tréningy (nie aktivity, váhy, eventy)."""
+    return item.get("itemType") == "workout" and bool(item.get("workoutId"))
+
+
+def _get_scheduled_range(client, start: datetime.date, end: datetime.date) -> list:
+    """Stiahne a zlúči naplánované tréningy naprieč viacerými mesiacmi (Garmin API vracia 1 mesiac)."""
+    items, seen = [], set()
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        try:
+            for it in _scheduled_items(client.get_scheduled_workouts(y, m)):
+                key = it.get("id") or (it.get("workoutId"), it.get("date"))
+                if key not in seen:
+                    seen.add(key)
+                    items.append(it)
+        except Exception:
+            pass
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return items
+
+
+def _parse_workout_step(step: dict):
+    """Zhrnutie jedného executable kroku. Vráti (row, distance_m)."""
+    step_type = (step.get("stepType") or {}).get("stepTypeKey", "run")
+    cond = (step.get("endCondition") or {}).get("conditionTypeKey")
+    raw_val = step.get("endConditionValue") or 0
+    # endConditionValue je v metroch LEN pre distance kroky (inak sekundy/kalórie/lap)
+    dist_m = raw_val if cond == "distance" else 0
+    dist_km = round(dist_m / 1000, 2) if dist_m else None
+    duration_min = round(raw_val / 60, 1) if cond == "time" and raw_val else None
+
+    notes = step.get("description") or step.get("stepNotes") or step.get("notes") or ""
+    target_type = str((step.get("targetType") or {}).get("workoutTargetTypeKey") or "")
+    t_low = step.get("targetValueOne")
+    t_high = step.get("targetValueTwo")
+    target_str, target_kind = "", "none"
+    if "heart" in target_type.lower() and t_low and t_high:
+        target_str = f"{int(t_low)}-{int(t_high)} bpm"
+        target_kind = "hr"
+    elif t_low and t_high and float(t_low) > 0:
+        try:
+            p_fast = round(1000 / float(t_high))
+            p_slow = round(1000 / float(t_low))
+            target_str = f"{p_fast // 60}:{p_fast % 60:02d}-{p_slow // 60}:{p_slow % 60:02d}/km"
+            target_kind = "pace"
+        except Exception:
+            pass
+    return {
+        "type": step_type,
+        "distance_km": dist_km,
+        "duration_min": duration_min,
+        "target": target_str,
+        "target_kind": target_kind,
+        "notes": notes,
+    }, dist_m
+
+
+def _flatten_workout_steps(steps):
+    """Rekurzívne rozbalí kroky vrátane 'repeat' skupín (vnorené intervaly).
+    Vráti (rows, total_distance_m)."""
+    rows, total_m = [], 0.0
+    for step in steps or []:
+        step_key = (step.get("stepType") or {}).get("stepTypeKey", "")
+        children = step.get("workoutSteps")
+        if step_key == "repeat" or children:
+            iters = int(step.get("numberOfIterations") or step.get("endConditionValue") or 1)
+            for _ in range(max(1, iters)):
+                child_rows, child_m = _flatten_workout_steps(children)
+                rows.extend(child_rows)
+                total_m += child_m
+        else:
+            row, dist_m = _parse_workout_step(step)
+            rows.append(row)
+            total_m += dist_m
+    return rows, total_m
 
 
 # ── Basic endpoints ───────────────────────────────────────────────────────────
@@ -138,6 +226,12 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
             update_data["target_time"] = req.target_time
         if req.training_start_date is not None:
             update_data["training_start_date"] = req.training_start_date
+        if req.race_date is not None:
+            update_data["race_date"] = req.race_date
+        if req.ai_context is not None:
+            update_data["ai_context"] = req.ai_context
+        if req.display_name is not None:
+            update_data["display_name"] = req.display_name
 
         updated = update_user_profile(user_id, update_data)
         return {"status": "success", "profile": updated}
@@ -174,22 +268,33 @@ def get_dashboard_today(
         today_workout = None
         try:
             now = datetime.datetime.now()
-            scheduled = client.get_scheduled_workouts(now.year, now.month)
-            items = (
-                scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", []))
-                if isinstance(scheduled, dict)
-                else scheduled or []
-            )
+            items = _scheduled_items(client.get_scheduled_workouts(now.year, now.month))
             today_str = datetime.date.today().strftime("%Y-%m-%d")
-            today_items = [i for i in items if (i.get("date") or "")[:10] == today_str]
+            today_items = [
+                i for i in items
+                if (i.get("date") or "")[:10] == today_str and _is_planned_workout(i)
+            ]
             if today_items:
                 today_workout = today_items[0]
         except Exception:
             pass
 
+        # Filtrovať posledné aktivity - iba bežecké typy
+        running_types = ("running", "track_running", "treadmill_running", "trail_running")
+        running_activities = [
+            a for a in (activities or [])
+            if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
+        ]
+        # Zaokrúhliť HR na celé číslo
+        for act in running_activities:
+            if act.get("averageHR"):
+                act["averageHR"] = round(act["averageHR"])
+
         return {
             "date": today,
             "training_week": training_week,
+            "display_name": profile.get("display_name"),
+            "garmin_email": profile.get("garmin_email"),
             "sleep": sleep,
             "hrv": hrv,
             "stats": {
@@ -201,7 +306,7 @@ def get_dashboard_today(
                 "readiness_status": readiness.get("level"),
                 "feedback": readiness.get("feedback", ""),
             },
-            "activities": activities[:5] if activities else [],
+            "activities": running_activities[:5],
             "today_workout": today_workout,
         }
     except Exception as e:
@@ -227,21 +332,16 @@ def get_dashboard_advice(
     try:
         next_workout_str = "Dnes/Zajtra ťa nečaká žiadny špecifický tréning."
         try:
-            now = datetime.datetime.now()
-            scheduled = client.get_scheduled_workouts(now.year, now.month)
-            items = (
-                scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", []))
-                if isinstance(scheduled, dict)
-                else scheduled or []
-            )
-            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            today = datetime.date.today()
+            today_str = today.strftime("%Y-%m-%d")
+            items = _get_scheduled_range(client, today, today + datetime.timedelta(days=45))
             upcoming = sorted(
-                [i for i in items if i.get("date") and i.get("date") >= today_str],
+                [i for i in items if _is_planned_workout(i) and (i.get("date") or "") >= today_str],
                 key=lambda x: x.get("date"),
             )
             if upcoming:
                 nw = upcoming[0]
-                next_workout_str = f"Najbližší tréning: {nw.get('date')} - {nw.get('title', 'Beh')}"
+                next_workout_str = f"Najbližší tréning: {nw.get('date')} - {nw.get('title') or 'Beh'}"
         except Exception:
             pass
 
@@ -272,16 +372,16 @@ Stav formy dnes: {form_score}/100
 @app.get("/api/plan/scheduled")
 def get_scheduled_plan(client=Depends(get_garmin_client)):
     """Vráti naplánované tréningy z Garmin kalendára, obohatené o activityId pre splnené behy."""
-    now = datetime.datetime.now()
+    today = datetime.date.today()
     try:
-        scheduled = client.get_scheduled_workouts(now.year, now.month)
-        items = (
-            scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", []))
-            if isinstance(scheduled, dict)
-            else scheduled or []
+        # Garmin API vracia 1 mesiac → načítame celé okno plánu (~5 mesiacov pre 18 týždňov)
+        items = _get_scheduled_range(
+            client, today - datetime.timedelta(days=40), today + datetime.timedelta(days=150)
         )
+        # Zobrazíme len reálne naplánované tréningy (nie aktivity, váhy, tenis, eventy)
+        items = [i for i in items if _is_planned_workout(i)]
 
-        today_str = datetime.date.today().strftime("%Y-%m-%d")
+        today_str = today.strftime("%Y-%m-%d")
         try:
             recent_activities = fetcher.get_recent_activities(client, days=35) or []
             act_by_date: Dict[str, list] = {}
@@ -315,7 +415,15 @@ def get_scheduled_plan(client=Depends(get_garmin_client)):
 def get_workout_details(workout_id: str, client=Depends(get_garmin_client)):
     """Detailné info o konkrétnom tréningu — kroky, HR targety, poznámky."""
     try:
-        details = client.get_workout(workout_id)
+        # Rôzne verzie garminconnect API majú rôzne názvy metódy
+        if hasattr(client, 'get_workout_by_id'):
+            details = client.get_workout_by_id(workout_id)
+        elif hasattr(client, 'get_workout'):
+            details = client.get_workout(workout_id)
+        else:
+            # Fallback: priamo cez interný session
+            url = f"https://connect.garmin.com/workout-service/workout/{workout_id}"
+            details = client.connectapi(url)
         if not isinstance(details, dict):
             return {"workout": details}
 
@@ -327,48 +435,11 @@ def get_workout_details(workout_id: str, client=Depends(get_garmin_client)):
         )
 
         steps_summary = []
-        total_dist_m = 0
+        total_dist_m = 0.0
         for seg in details.get("workoutSegments") or []:
-            for step in seg.get("workoutSteps") or []:
-                step_type = (step.get("stepType") or {}).get("stepTypeKey", "run")
-                dist_m = step.get("endConditionValue", 0) or 0
-                dist_km = round(dist_m / 1000, 1) if dist_m else None
-                total_dist_m += dist_m
-
-                step_notes = (
-                    step.get("description")
-                    or step.get("stepNotes")
-                    or step.get("notes")
-                    or ""
-                )
-
-                target_type = str((step.get("targetType") or {}).get("workoutTargetTypeKey") or "")
-                target_str = ""
-                t_low = step.get("targetValueOne")
-                t_high = step.get("targetValueTwo")
-
-                if "heart" in target_type.lower() and t_low and t_high:
-                    target_str = f"{int(t_low)}-{int(t_high)} bpm"
-                    target_kind = "hr"
-                elif t_low and t_high and float(t_low) > 0:
-                    try:
-                        p_fast = round(1000 / float(t_high))
-                        p_slow = round(1000 / float(t_low))
-                        target_str = f"{p_fast // 60}:{p_fast % 60:02d}-{p_slow // 60}:{p_slow % 60:02d}/km"
-                        target_kind = "pace"
-                    except Exception:
-                        target_str = ""
-                        target_kind = "none"
-                else:
-                    target_kind = "none"
-
-                steps_summary.append({
-                    "type": step_type,
-                    "distance_km": dist_km,
-                    "target": target_str,
-                    "target_kind": target_kind,
-                    "notes": step_notes,
-                })
+            seg_rows, seg_m = _flatten_workout_steps(seg.get("workoutSteps"))
+            steps_summary.extend(seg_rows)
+            total_dist_m += seg_m
 
         enriched = {
             **details,
@@ -401,12 +472,12 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
             "distance_km": round((summary.get("distance") or 0) / 1000, 2) or None,
             "duration_min": round((summary.get("duration") or 0) / 60, 1) or None,
             "avg_pace_sec_km": avg_pace_sec,
-            "avg_hr": summary.get("averageHR"),
-            "max_hr": summary.get("maxHR"),
-            "avg_cadence": (
+            "avg_hr": round(summary["averageHR"]) if summary.get("averageHR") else None,
+            "max_hr": round(summary["maxHR"]) if summary.get("maxHR") else None,
+            "avg_cadence": round(c) if (c := (
                 summary.get("averageRunningCadenceInStepsPerMinute")
                 or summary.get("averageCadence")
-            ),
+            )) else None,
             "total_ascent": summary.get("elevationGain"),
             "calories": summary.get("calories"),
             "training_effect": summary.get("trainingEffect"),
@@ -458,6 +529,17 @@ def generate_daily_update(client=Depends(get_garmin_client), user_id: str = Depe
     try:
         profile = get_user_profile(user_id) or {}
         proposal = workout_generator.update_next_workout(client, profile)
+        # Doplň kroky pôvodného tréningu pre porovnanie v UI
+        old_id = proposal.get("old_workout_id")
+        if old_id:
+            try:
+                old_details = client.get_workout_by_id(old_id)
+                rows, _ = _flatten_workout_steps(
+                    (old_details.get("workoutSegments") or [{}])[0].get("workoutSteps")
+                )
+                proposal["original_steps"] = rows
+            except Exception:
+                proposal["original_steps"] = []
         return proposal
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -543,9 +625,9 @@ def get_weekly_report(client=Depends(get_garmin_client)):
                     f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}"
                     if avg_pace_sec else None
                 ),
-                "avg_hr": act.get("averageHR"),
-                "avg_cadence": act.get("averageRunningCadenceInStepsPerMinute") or act.get("averageCadence"),
-                "calories": act.get("calories"),
+                "avg_hr": round(act["averageHR"]) if act.get("averageHR") else None,
+                "avg_cadence": round(cad) if (cad := (act.get("averageRunningCadenceInStepsPerMinute") or act.get("averageCadence"))) else None,
+                "calories": round(act["calories"]) if act.get("calories") else None,
             })
 
         total_km = round(sum(r["distance_km"] for r in runs), 1)
@@ -631,20 +713,16 @@ def chat_with_coach(
                 except:
                     pass
 
-            scheduled = client.get_scheduled_workouts(now.year, now.month)
-            items = (
-                scheduled.get("calendarItems", scheduled.get("workoutScheduledDTOList", []))
-                if isinstance(scheduled, dict)
-                else scheduled or []
-            )
+            today = now.date()
             today_str = now.strftime("%Y-%m-%d")
+            items = _get_scheduled_range(client, today, today + datetime.timedelta(days=45))
             upcoming = sorted(
-                [i for i in items if i.get("date") and i.get("date") >= today_str],
+                [i for i in items if _is_planned_workout(i) and (i.get("date") or "") >= today_str],
                 key=lambda x: x.get("date"),
             )
             if upcoming:
                 nw = upcoming[0]
-                next_w_str = f"{nw.get('date')} – {nw.get('title', 'Beh')}"
+                next_w_str = f"{nw.get('date')} – {nw.get('title') or 'Beh'}"
         except Exception:
             pass
 
@@ -687,7 +765,7 @@ Najbližší tréning: {next_w_str}
 
     # Definícia funkcie (nástroja) pre model
     def delete_garmin_workout(date: str):
-        """Vymaže tréning naplánovaný na daný dátum v Garmin kalendári. Parametr 'date' musí byť vo formáte YYYY-MM-DD."""
+        """Vymaže tréning naplánovaný na daný dátum v Garmin kalendári. Parameter 'date' musí byť vo formáte YYYY-MM-DD."""
         pass # Reálna exekúcia prebehne nižšie
 
     try:
@@ -707,16 +785,19 @@ Najbližší tréning: {next_w_str}
         
         # Spracovanie Function Call (ak model chce vymazať tréning)
         if response.candidates and response.candidates[0].content.parts:
-            part = response.candidates[0].content.parts[0]
-            if getattr(part, "function_call", None):
+            # Model môže vrátiť text aj function_call vo viacerých častiach — nájdeme tú správnu
+            part = next(
+                (p for p in response.candidates[0].content.parts if getattr(p, "function_call", None)),
+                None,
+            )
+            if part is not None:
                 fc = part.function_call
                 if fc.name == "delete_garmin_workout":
-                    date_str = type(fc).to_dict(fc).get("args", {}).get("date") or getattr(fc.args, "get", lambda x: getattr(fc.args, x, None))("date")
-                    if hasattr(fc.args, "items"):
-                        date_str = fc.args.get("date", getattr(fc.args, "date", None))
-                    else:
+                    try:
+                        date_str = fc.args.get("date")
+                    except Exception:
                         date_str = getattr(fc.args, "date", None)
-                    
+
                     if date_str:
                         # Logika zmazania
                         import logging

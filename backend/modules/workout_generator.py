@@ -59,9 +59,12 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
         step.targetValueTwo = float(hr_max)
         return step
 
-    # ── Pace target ──
-    ms_min = pace_to_ms(pace_max or "6:00")   # max pace = faster = higher m/s
-    ms_max = pace_to_ms(pace_min or "6:30")   # min pace = slower = lower m/s
+    # ── Pace target (len ak je tempo skutočne zadané) ──
+    if pace_min or pace_max:
+        ms_min = pace_to_ms(pace_max or pace_min)   # rýchlejšie tempo = vyššie m/s
+        ms_max = pace_to_ms(pace_min or pace_max)   # pomalšie tempo = nižšie m/s
+    else:
+        ms_min = ms_max = 0.0
 
     if ms_min > 0 and ms_max > 0:
         target_dict = {
@@ -203,17 +206,24 @@ def update_next_workout(client, profile: dict) -> dict:
         lthr_data = {"error": str(e)}
         
     now = datetime.datetime.now()
-    scheduled = client.get_scheduled_workouts(now.year, now.month)
-    if isinstance(scheduled, dict):
-        items = scheduled.get('calendarItems', scheduled.get('workoutScheduledDTOList', []))
-    else:
-        items = scheduled or []
-        
-    # Find all workouts from today onwards
+    # Garmin API vracia 1 mesiac → načítame aktuálny aj nasledujúci mesiac
+    items = []
+    for off in range(0, 2):
+        yy = now.year + (now.month - 1 + off) // 12
+        mm = (now.month - 1 + off) % 12 + 1
+        try:
+            sched = client.get_scheduled_workouts(yy, mm)
+            raw = sched.get('calendarItems', sched.get('workoutScheduledDTOList', [])) if isinstance(sched, dict) else (sched or [])
+            items.extend(raw)
+        except Exception:
+            pass
+
+    # Find all PLANNED workouts from today onwards (nie aktivity/váhy/eventy)
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     upcoming_workouts = [
-        item for item in items 
+        item for item in items
         if item.get("date") and item.get("date") >= today_str
+        and item.get("itemType") == "workout" and item.get("workoutId")
     ]
     
     # Sort by date
