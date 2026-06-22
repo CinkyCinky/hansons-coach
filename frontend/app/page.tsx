@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import {
   Moon, Heart, Battery, Activity, Flame, ChevronRight,
-  Loader2, Bot, RefreshCcw, Zap, TrendingUp, Info
+  Loader2, Bot, RefreshCcw, Zap, TrendingUp, Info,
+  CheckCircle2, Circle, ListChecks
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
+import { fetchProfile } from "@/lib/api";
 
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
   const values = [sleepScore, bodyBattery, readiness].filter((v) => v != null) as number[];
@@ -51,9 +53,11 @@ export default function Dashboard() {
   const [showLegend, setShowLegend] = useState(false);
   const [showFormInfo, setShowFormInfo] = useState(false);
   const [showLoadInfo, setShowLoadInfo] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
 
   useEffect(() => {
     store.loadDashboard();
+    fetchProfile().then(setProfile).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -157,6 +161,39 @@ export default function Dashboard() {
             Prejsť do Nastavení a prepojiť Garmin <ChevronRight size={14} />
           </Link>
         </div>
+      )}
+
+      {/* Dokonči nastavenie — vodiaci checklist pre nového používateľa */}
+      {profile && (!profile.target_time || !profile.race_date) && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-primary/10 border border-primary/20 rounded-2xl p-4"
+        >
+          <h3 className="text-sm font-bold text-primary uppercase tracking-wider mb-2 flex items-center gap-2">
+            <ListChecks size={16} /> Dokonči nastavenie
+          </h3>
+          <p className="text-xs text-gray-300 mb-3 leading-snug">
+            Aby ti tréner zostavil presný plán, doplň pár vecí:
+          </p>
+          <ul className="flex flex-col gap-1.5 mb-3 text-sm">
+            <li className="flex items-center gap-2">
+              {profile.target_time
+                ? <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                : <Circle size={16} className="text-gray-500 shrink-0" />}
+              <span className={profile.target_time ? "text-gray-400 line-through" : "text-gray-200"}>Cieľový čas polmaratónu</span>
+            </li>
+            <li className="flex items-center gap-2">
+              {profile.race_date
+                ? <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                : <Circle size={16} className="text-gray-500 shrink-0" />}
+              <span className={profile.race_date ? "text-gray-400 line-through" : "text-gray-200"}>Dátum pretekov</span>
+            </li>
+          </ul>
+          <Link href="/settings" className="inline-flex items-center gap-1 text-xs font-bold text-primary underline underline-offset-2">
+            Otvoriť nastavenia <ChevronRight size={14} />
+          </Link>
+        </motion.div>
       )}
 
       {/* Stav formy */}

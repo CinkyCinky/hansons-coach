@@ -66,6 +66,17 @@ export async function fetchDailyUpdateProposal() {
   return fetchWithAuth('/api/plan/daily_update');
 }
 
+export async function estimateGoal(raceDistanceKm?: number, raceTime?: string) {
+  return fetchWithAuth('/api/plan/goal_estimate', {
+    method: 'POST',
+    body: JSON.stringify({ race_distance_km: raceDistanceKm ?? null, race_time: raceTime ?? null }),
+  });
+}
+
+export async function fetchPlanOverview() {
+  return fetchWithAuth('/api/plan/overview');
+}
+
 export async function confirmDailyUpdate(
   workout: any,
   old_workout_id: string,

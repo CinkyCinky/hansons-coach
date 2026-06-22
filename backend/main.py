@@ -912,6 +912,76 @@ def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_u
         raise _server_error(e, "Nepodarilo sa nahrať plán do Garminu.")
 
 
+class GoalEstimateRequest(BaseModel):
+    race_distance_km: Optional[float] = None
+    race_time: Optional[str] = None   # "H:MM:SS" alebo "MM:SS" (preteky)
+
+
+def _parse_time_to_sec(t: str) -> Optional[int]:
+    """'1:45:00' → h:m:s; '48:00' → m:s (pretekový čas). Vráti sekundy."""
+    try:
+        parts = [int(x) for x in str(t).strip().split(":")]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        if len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+@app.post("/api/plan/goal_estimate")
+def api_goal_estimate(req: GoalEstimateRequest, user_id: str = Depends(get_current_user),
+                      client=Depends(get_garmin_client)):
+    """Odhad realistického polmaratónového cieľa z nedávnych pretekov (Riegel) alebo
+    z Garmin VO2max. Slúži ako návrh — používateľ ho môže prijať alebo prepísať."""
+    try:
+        # 1) Z ručne zadaného nedávneho výsledku pretekov (presnejšie)
+        if req.race_distance_km and req.race_time:
+            sec = _parse_time_to_sec(req.race_time)
+            if sec:
+                pred = hansons_knowledge.riegel_predict_sec(float(req.race_distance_km), float(sec))
+                if pred:
+                    return {"predicted": hansons_knowledge.fmt_hms(pred), "basis": "race",
+                            "source": f"z pretekov {req.race_distance_km:g} km ({req.race_time})"}
+        # 2) Z Garmin VO2max (vždy dostupné, ak je nameraný)
+        vo2 = (fetcher.get_athlete_profile(client) or {}).get("vo2max")
+        pred = hansons_knowledge.predict_half_from_vo2max(vo2)
+        if pred:
+            return {"predicted": hansons_knowledge.fmt_hms(pred), "basis": "vo2max",
+                    "vo2max": vo2, "source": f"z Garmin VO2max ({vo2})"}
+        return {"predicted": None,
+                "message": "Na odhad treba VO2max z Garminu alebo výsledok nedávnych pretekov."}
+    except Exception as e:
+        raise _server_error(e, "Nepodarilo sa odhadnúť cieľ.")
+
+
+@app.get("/api/plan/overview")
+def api_plan_overview(user_id: str = Depends(get_current_user)):
+    """Deterministický prehľad celého 18-týždňového plánu (fáza + predpísané SOS pre
+    každý týždeň) podľa variantu používateľa — vzdelávací pohľad na celý oblúk prípravy."""
+    try:
+        profile = get_user_profile(user_id) or {}
+        variant = profile.get("plan_variant", "advanced")
+        cur = hansons_knowledge.current_training_week(profile)
+        weeks = []
+        for wk in range(1, 19):
+            ph = hansons_knowledge.training_phase(wk)
+            sos = hansons_knowledge.sos_for_week(wk, variant)
+            weeks.append({
+                "week": wk,
+                "phase": ph["key"],
+                "is_current": wk == cur,
+                "tuesday": (sos.get("tuesday") or {}).get("label") if sos else None,
+                "thursday": (sos.get("thursday") or {}).get("label") if sos else None,
+                "sunday": (sos.get("sunday") or {}).get("label") if sos else None,
+            })
+        return {"weeks": weeks, "current_week": cur,
+                "variant": hansons_knowledge.variant_label(variant)}
+    except Exception as e:
+        raise _server_error(e, "Nepodarilo sa načítať prehľad plánu.")
+
+
 @app.get("/api/plan/daily_update")
 def generate_daily_update(client=Depends(get_garmin_client), user_id: str = Depends(get_current_user)):
     """Generuje AI návrh na úpravu najbližšieho tréningu podľa aktuálnej formy (pripravenosť,

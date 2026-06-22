@@ -213,6 +213,39 @@ def paces_block(goal_time: str, vo2max: Optional[float] = None) -> str:
     )
 
 
+# ── Predikcia pretekového času (na odhad realistického cieľa) ────────────────
+
+HALF_KM = 21.0975
+
+
+def riegel_predict_sec(known_dist_km: float, known_time_sec: float,
+                       target_dist_km: float = HALF_KM) -> Optional[int]:
+    """Riegelov vzorec T2 = T1 × (D2/D1)^1.06 — predpoveď času na inú vzdialenosť."""
+    try:
+        if known_dist_km <= 0 or known_time_sec <= 0 or target_dist_km <= 0:
+            return None
+        return round(known_time_sec * (target_dist_km / known_dist_km) ** 1.06)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def predict_half_from_vo2max(vo2max: Optional[float]) -> Optional[int]:
+    """Odhad polmaratónového času (s) z VO2max — cez 5K tempo (ACSM) + Riegel.
+    ACSM je mierne konzervatívny → odhad je radšej o čosi pomalší (bezpečnejší cieľ)."""
+    p5 = estimate_5k_pace_sec(vo2max)   # s/km na 5K
+    if not p5:
+        return None
+    return riegel_predict_sec(5.0, p5 * 5.0, HALF_KM)
+
+
+def fmt_hms(total_sec: Optional[int]) -> Optional[str]:
+    """Sekundy → 'H:MM:SS'."""
+    if not total_sec or total_sec <= 0:
+        return None
+    total_sec = int(total_sec)
+    return f"{total_sec // 3600}:{(total_sec % 3600) // 60:02d}:{total_sec % 60:02d}"
+
+
 # ── Profil športovca + HR zóny do promptu ────────────────────────────────────
 
 def athlete_block(athlete: Optional[dict]) -> str:
