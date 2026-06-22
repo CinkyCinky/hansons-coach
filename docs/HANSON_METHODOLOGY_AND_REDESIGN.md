@@ -209,11 +209,14 @@ recovery/cooldown), `endCondition` (distance/lapButton/time) a `targetType`
 - Pondelkové hranice týždňa; rada už neodseknutá; generátor len pre aktuálny týždeň +
   dnešok + dátumy; handoff do chatu; warmup/cooldown pravidlo v promptoch (textovo).
 
-**P1 — Deterministické tempá a fakty (backend, vysoká priorita)**
-- Opraviť `hansons_knowledge.py`: Strength = HMP−10 s/míľu; Easy = tempo (nie tep);
-  WU/CD rozsah 1–3 míle; Speed z aktuálnej formy.
-- Pridať `compute_paces_v2` (Speed z aktuálnej 5K/10K, zvyšok z cieľa) + jednotkové testy.
-- Sanity guardraily (poradie temp).
+**P1 — Deterministické tempá a fakty (backend) — ✅ HOTOVÉ**
+- `hansons_knowledge.py`: Strength = HMP−10 s/míľu (−6 s/km); Easy = tempo (nie tep);
+  WU/CD rozsah 1–3 míle; Speed z VO2max. Metodika, `paces_block`, `phase_block` aj
+  `hr_zones_block` preformulované na pace-first (HR = referencia/strop).
+- `compute_training_paces(goal, vo2max)` + `estimate_5k_pace_sec(vo2max)` (ACSM inverz,
+  mierne konzervatívne); sanity poradie speed<strength<tempo≤easy.
+- Generátorové prompty (weekly/single/update) + chat prompt: všetky behy TEMPOM,
+  HR len v popise; WU/CD 2–4 km; Easy/Dlhé bez WU/CD.
 
 **P2 — Deterministický builder tréningov + watch zápis (backend)**
 - `build_week(profile, fitness, available_days)` → štruktúra týždňa z 1.5 (kód, nie LLM).

@@ -1089,7 +1089,7 @@ Pripravenosť: {readiness.get('score', 'N/A')}/100 ({readiness.get('level', '')}
 Training Load: akútna {training_load.get('acute_load', 'N/A')} | chronická {training_load.get('chronic_load', 'N/A')} | ratio {training_load.get('ratio', 'N/A')} | status: {training_load.get('status', 'N/A')}
 Spánok (posl. 5 dní): {sleep_summary or 'N/A'}
 {zones_str}
-{hansons_knowledge.paces_block(target_time)}
+{hansons_knowledge.paces_block(target_time, athlete.get('vo2max'))}
 Posledné behy (14 dní):
 {chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
 

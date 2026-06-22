@@ -50,13 +50,20 @@ def _gather_athlete_context(client, profile: dict) -> str:
     a vráti hotový textový blok pre AI prompt. Toto robí trénera 'múdrym'."""
     blocks = [hansons_knowledge.HANSONS_METHODOLOGY]
 
-    goal = profile.get("target_time")
-    if goal:
-        blocks.append(hansons_knowledge.paces_block(goal))
-
+    # Atléta načítaj raz vopred — VO2max potrebujeme pre Speed tempá (aktuálna 5K forma)
+    athlete = None
     if client is not None:
         try:
             athlete = fetcher.get_athlete_profile(client)
+        except Exception:
+            athlete = None
+
+    goal = profile.get("target_time")
+    if goal:
+        blocks.append(hansons_knowledge.paces_block(goal, (athlete or {}).get("vo2max")))
+
+    if client is not None:
+        try:
             blocks.append(hansons_knowledge.athlete_block(athlete))
 
             lthr_data = fetcher.get_lactate_threshold(client) or {}
@@ -275,12 +282,13 @@ KĽÚČOVÉ PRAVIDLÁ PRE VÝSTUP:
 • Rešpektuj štruktúru SOS tréningov (Speed/Strength utorok, Tempo štvrtok, Long nedeľa)
   a aktuálnu fázu plánu (Speed T2–10 / Strength T11–17). Ak SOS deň v tomto týždni už
   prešiel, presuň ho na najbližší dostupný deň alebo ho v tomto týždni vynechaj.
-• EASY a DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy zóny), NIE tempom
-  a BEZ samostatného warmup/cooldown.
-• SOS tréningy (Speed/Strength/Tempo) VŽDY začínaj krokom 'warmup' (~2.5 km) a ukonči
-  krokom 'cooldown' (~2.5 km) — Easy tepom/voľným tempom. Hlavná časť medzi nimi.
-• TEMPO behy: hlavná časť na HMP tempo (pace_min/pace_max).
-• INTERVALY (Speed/Strength): úseky na tempo (5k resp. 10k), pauzy ako 'recover' pomaly (jog).
+• VŠETKY behy zadávaj TEMPOM (pace_min/pace_max) — Hanson je pace-first. HR NEpoužívaj ako
+  cieľ; orientačný tep daj nanajvýš do textu 'description' (napr. "Easy strop ~150 bpm").
+• EASY a DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
+• SOS tréningy (Speed/Strength/Tempo) VŽDY začínaj krokom 'warmup' a ukonči 'cooldown',
+  každý v rozsahu ~2–4 km (dlhšie sedenie → dlhší WU/CD), na Easy tempe. Hlavná časť medzi nimi.
+• TEMPO: hlavná časť na cieľové HMP tempo. STRENGTH: úseky na HMP − 10 s/míľu.
+  SPEED: úseky na aktuálne 5k tempo (z VO2max). Pauzy medzi úsekmi = 'recover' pomaly (jog).
 
 Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
 {{
@@ -289,18 +297,17 @@ Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
     {{
       "day_offset": 0,
       "workout_name": "Napr. Easy Run 8km alebo Tempo 6km @ HMP",
-      "description": "Popis vrátane účelu (regenerácia / rýchlosť / tempo)",
+      "description": "Popis vrátane účelu + orientačný tep ako referencia (napr. Easy strop ~150 bpm)",
       "steps": [
-        {{ "type": "warmup|run|recover|cooldown", "distance_km": 2.0,
-           "hr_min": 130, "hr_max": 142 }},
-        {{ "type": "run", "distance_km": 6.0,
-           "pace_min": "5:18", "pace_max": "5:10" }}
+        {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+        {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }},
+        {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
       ]
     }}
   ]
 }}
-Pre každý krok použi BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max) — nie oboje povinne.
-Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
+Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejší okraj v min:sek/km).
+HR ako cieľ nepoužívaj. Vraciaš LEN platný JSON."""
 
     plan = _generate_json(system_prompt)
     return _enrich_and_clip_to_week(plan, today)
@@ -323,24 +330,24 @@ Vygeneruj JEDEN bežecký tréning{when} podľa tejto požiadavky: "{description
 
 PRAVIDLÁ:
 • Drž sa Hanson metodiky a typu tréningu (Easy/Tempo/Speed/Strength/Long).
-• EASY a DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy pásma), NIE tempo,
-  a BEZ samostatného warmup/cooldown.
-• SOS (Speed/Strength/Tempo) VŽDY začni krokom 'warmup' (~2.5 km) a ukonči 'cooldown' (~2.5 km),
-  Easy tepom/voľným tempom.
-• TEMPO → hlavná časť na HMP tempo (pace_min/pace_max). INTERVALY → úseky na 5k/10k tempo (pace),
-  pauzy ako 'recover' pomaly (jog).
+• VŠETKY kroky zadávaj TEMPOM (pace) — Hanson je pace-first. HR ako cieľ nepoužívaj;
+  orientačný tep daj nanajvýš do 'description'.
+• EASY a DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
+• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' a ukonči 'cooldown', každý ~2–4 km na Easy tempe.
+• TEMPO → hlavná časť na cieľové HMP. STRENGTH → HMP − 10 s/míľu. SPEED → aktuálne 5k tempo.
+  Pauzy medzi úsekmi = 'recover' pomaly (jog).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
 {{
   "workout_name": "Napr. Easy Run 8km / Tempo 6km @ HMP",
-  "description": "Krátky popis vrátane účelu",
+  "description": "Krátky popis vrátane účelu (+ orientačný tep ako referencia)",
   "steps": [
-    {{ "type": "warmup|run|recover|cooldown", "distance_km": 2.0, "hr_min": 130, "hr_max": 150 }},
-    {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }}
+    {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+    {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }},
+    {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
   ]
 }}
-Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy/dlhé→HR, Tempo/intervaly→pace.
-Vraciaš LEN platný JSON."""
+Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejší okraj). Vraciaš LEN platný JSON."""
 
     return _generate_json(prompt)
 
@@ -450,26 +457,27 @@ OSOBNÉ POZNÁMKY: {ai_context}
 
 PRAVIDLÁ:
 • Zachovaj typ a účel pôvodného tréningu (ak to bol Easy, ostane Easy; Tempo ostane Tempo...).
-• EASY/DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy zóny), NIE tempo,
-  a BEZ samostatného warmup/cooldown.
-• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' (~2.5 km) a ukonči 'cooldown' (~2.5 km).
-• TEMPO → hlavná časť na HMP tempo (pace). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
-• Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči.
+• VŠETKY kroky zadávaj TEMPOM (pace) — Hanson je pace-first. HR ako cieľ nepoužívaj;
+  orientačný tep daj nanajvýš do 'description'.
+• EASY/DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
+• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' a ukonči 'cooldown', každý ~2–4 km.
+• TEMPO → cieľové HMP. STRENGTH → HMP − 10 s/míľu. SPEED → aktuálne 5k tempo. Pauzy 'recover' pomaly.
+• Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči (pomalší okraj, kratšie).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
 {{
   "coach_message": "Ahoj! Upravil som ti tréning podľa aktuálnej fyzičky — vysvetli prečo (po slovensky).",
   "workout": {{
     "workout_name": "{old_workout_name} (Updated)",
-    "description": "Prepočítaný tréning podľa LTHR / HR zón.",
+    "description": "Prepočítaný tréning podľa aktuálnej formy a tempa (+ orientačný tep).",
     "steps": [
-      {{ "type": "warmup", "distance_km": 2.0, "hr_min": 130, "hr_max": 142 }},
-      {{ "type": "run", "distance_km": 5.0, "hr_min": 138, "hr_max": 150 }},
-      {{ "type": "cooldown", "distance_km": 2.0, "hr_min": 125, "hr_max": 138 }}
+      {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+      {{ "type": "run", "distance_km": 5.0, "pace_min": "5:18", "pace_max": "5:10" }},
+      {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
     ]
   }}
 }}
-Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy→HR, Tempo/intervaly→pace."""
+Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejší okraj). Vraciaš LEN platný JSON."""
 
     ai_response = _generate_json(system_prompt)
     new_w_data = ai_response.get("workout")
