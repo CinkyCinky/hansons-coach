@@ -49,6 +49,8 @@ function timeAgo(ts: number | null): string {
 export default function Dashboard() {
   const store = useStore();
   const [showLegend, setShowLegend] = useState(false);
+  const [showFormInfo, setShowFormInfo] = useState(false);
+  const [showLoadInfo, setShowLoadInfo] = useState(false);
 
   useEffect(() => {
     store.loadDashboard();
@@ -162,13 +164,29 @@ export default function Dashboard() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`${formStatus.bg} border rounded-2xl px-4 py-3 flex items-center gap-3`}
+          className={`${formStatus.bg} border rounded-2xl px-4 py-3`}
         >
-          <span className="text-2xl">{formStatus.dot}</span>
-          <div>
-            <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Stav formy</p>
-            <p className={`font-bold ${formStatus.color}`}>{formStatus.label}</p>
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{formStatus.dot}</span>
+            <div>
+              <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Stav formy</p>
+              <p className={`font-bold ${formStatus.color}`}>{formStatus.label}</p>
+            </div>
+            <button
+              onClick={() => setShowFormInfo((v) => !v)}
+              className="ml-auto text-gray-400 hover:text-white p-1"
+              aria-label="Čo je stav formy?"
+            >
+              <Info size={16} />
+            </button>
           </div>
+          {showFormInfo && (
+            <p className="text-xs text-gray-300 leading-relaxed mt-2 pt-2 border-t border-white/10">
+              Súhrn z tvojho spánku, Body Battery a pripravenosti. 🟢 si oddýchnutý a môžeš
+              naplno; 🟡 v pohode, ale nepreháňaj; 🔴 zvoľ ľahší tréning alebo oddych. Mierna
+              únava počas prípravy je normálna (kumulovaná únava) — pozor len na prudký prepad.
+            </p>
+          )}
         </motion.div>
       )}
 
@@ -177,25 +195,43 @@ export default function Dashboard() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`${loadStatus.bg} border rounded-2xl px-4 py-3 flex items-center justify-between gap-3`}
-          title="Pomer akútnej a chronickej tréningovej záťaže (Garmin). Nad 1.4 = riziko preťaženia, pod 0.8 = priestor pridať objem."
+          className={`${loadStatus.bg} border rounded-2xl px-4 py-3`}
         >
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">{loadStatus.dot}</span>
-            <div>
-              <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Tréningová záťaž (A:C)</p>
-              <p className={`font-bold ${loadStatus.color}`}>{loadStatus.label}</p>
-            </div>
-          </div>
-          {acRatio != null && (
-            <div className="text-right shrink-0">
-              <p className={`text-2xl font-bold ${loadStatus.color}`}>{acRatio.toFixed(2)}</p>
-              {acuteLoad != null && chronicLoad != null && (
-                <p className="text-[10px] text-gray-500">
-                  akút {Math.round(acuteLoad)} / chron {Math.round(chronicLoad)}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">{loadStatus.dot}</span>
+              <div>
+                <p className="text-xs text-gray-400 uppercase font-bold tracking-wider flex items-center gap-1.5">
+                  Tréningová záťaž (A:C)
+                  <button
+                    onClick={() => setShowLoadInfo((v) => !v)}
+                    className="text-gray-400 hover:text-white"
+                    aria-label="Čo je A:C záťaž?"
+                  >
+                    <Info size={14} />
+                  </button>
                 </p>
-              )}
+                <p className={`font-bold ${loadStatus.color}`}>{loadStatus.label}</p>
+              </div>
             </div>
+            {acRatio != null && (
+              <div className="text-right shrink-0">
+                <p className={`text-2xl font-bold ${loadStatus.color}`}>{acRatio.toFixed(2)}</p>
+                {acuteLoad != null && chronicLoad != null && (
+                  <p className="text-[10px] text-gray-500">
+                    akút {Math.round(acuteLoad)} / chron {Math.round(chronicLoad)}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          {showLoadInfo && (
+            <p className="text-xs text-gray-300 leading-relaxed mt-2 pt-2 border-t border-white/10">
+              Pomer <b className="text-gray-100">akútnej</b> (~7 dní) a <b className="text-gray-100">chronickej</b>
+              {" "}(~28 dní) záťaže. <b className="text-gray-100">0,8–1,4</b> = bezpečné pásmo;
+              {" "}<b className="text-gray-100">nad 1,4</b> = priveľa priskoro, uber; <b className="text-gray-100">pod 0,8</b>
+              {" "}= priestor pridať. Pomáha rásť bez zranenia.
+            </p>
           )}
         </motion.div>
       )}

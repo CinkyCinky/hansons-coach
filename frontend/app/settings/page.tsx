@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X } from "lucide-react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact } from "@/lib/api";
@@ -292,14 +293,20 @@ export default function Settings() {
             {targetTime && !validateTargetTime(targetTime) && (
               <p className="text-xs text-rose-400 mt-1 ml-1">Formát musí byť HH:MM:SS (napr. 1:50:00)</p>
             )}
+            <p className="text-xs text-gray-500 mt-2 ml-1 leading-snug">
+              💡 Z tohto času sa počítajú <b className="text-gray-300">všetky</b> tréningové tempá —
+              zvoľ ho realisticky podľa nedávnej formy (napr. z posledných pretekov), nie ako zbožné
+              prianie. Prehnaný cieľ spraví každý tréning prirýchly (najčastejšia chyba). Neistý?{" "}
+              <Link href="/about" className="text-primary underline underline-offset-2">Pozri „O metóde"</Link>.
+            </p>
           </div>
           <div>
             <label className="text-xs text-gray-400 mb-2 block">Variant Hanson plánu</label>
             <div className="grid grid-cols-3 gap-2">
               {[
-                { key: "beginner", label: "Beginner", desc: "Nižší objem" },
-                { key: "advanced", label: "Advanced", desc: "Plný objem" },
-                { key: "just_finish", label: "Just Finish", desc: "Bez intervalov" },
+                { key: "beginner", label: "Beginner", desc: "~77 km/týž vrchol" },
+                { key: "advanced", label: "Advanced", desc: "~82 km/týž vrchol" },
+                { key: "just_finish", label: "Just Finish", desc: "bez intervalov" },
               ].map((v) => (
                 <button
                   key={v.key}
@@ -316,9 +323,12 @@ export default function Settings() {
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-600 mt-1 ml-1">
+            <p className="text-xs text-gray-600 mt-1 ml-1 leading-snug">
               Beginner/Advanced majú rovnaké kľúčové tréningy (SOS = „Something of Substance" — tvrdé
-              tréningy: intervaly, tempo, dlhý beh), líšia sa len objemom. Just Finish = bez tvrdých intervalov.
+              tréningy: intervaly, tempo, dlhý beh), líšia sa len objemom. <b className="text-gray-400">Beginner</b> ak
+              s polmaratónom začínaš, <b className="text-gray-400">Advanced</b> ak už máš odbehnutý a chceš zlepšiť čas.
+              <b className="text-gray-400"> Just Finish</b> = cieľ len dobehnúť, bez tvrdých intervalov. Všetky
+              predpokladajú, že už pravidelne behávaš (nie je to plán od nuly).
             </p>
           </div>
           <div>
