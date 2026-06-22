@@ -13,6 +13,12 @@ from modules import fetcher, hansons_knowledge
 
 logger = logging.getLogger("hansons")
 
+# POZOR: garminconnect.workout.ConditionType.DISTANCE = 1, čo je v Garmin workout-service
+# v skutočnosti LAP.BUTTON (manuálne stlačenie)! Reálne ID pre vzdialenosť je 3 — inak sa
+# krok uloží bez vzdialenosti a hodinky nevedia, kedy ho ukončiť. Iterations (repeat) = 7.
+_COND_DISTANCE_ID = 3
+_COND_ITERATIONS_ID = 7
+
 
 # Generovanie plánov a tréningov beží na najsilnejšom modeli (Gemini 3.1 Pro).
 PLAN_MODEL = "gemini-3.1-pro-preview"
@@ -175,7 +181,7 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
             stepOrder=step_order,
             stepType={"stepTypeId": st_id, "stepTypeKey": st_key, "displayOrder": st_order},
             endCondition={
-                "conditionTypeId": ConditionType.DISTANCE,
+                "conditionTypeId": _COND_DISTANCE_ID,
                 "conditionTypeKey": "distance",
                 "displayOrder": 1,
                 "displayable": True,
@@ -211,7 +217,7 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
         stepOrder=step_order,
         stepType={"stepTypeId": st_id, "stepTypeKey": st_key, "displayOrder": st_order},
         endCondition={
-            "conditionTypeId": ConditionType.DISTANCE,
+            "conditionTypeId": _COND_DISTANCE_ID,
             "conditionTypeKey": "distance",
             "displayOrder": 1,
             "displayable": True,
