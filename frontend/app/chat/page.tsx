@@ -69,6 +69,19 @@ export default function Chat() {
       .catch(() => {});
   }, []);
 
+  // Handoff z generátora plánu: nasaď konverzáciu zhrnutím plánu (ako správa zverenca)
+  // + pôvodnou správou trénera. Seed je jednorazový — po spotrebovaní ho vyčistíme.
+  useEffect(() => {
+    const seed = store.chatSeed;
+    if (!seed) return;
+    setMessages([
+      { id: "seed-user", role: "user", content: seed.userText },
+      { id: "seed-coach", role: "model", content: seed.coachMessage },
+    ]);
+    store.setChatSeed(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Dynamický pozdrav pri načítaní chatu
   useEffect(() => {
     const initChat = async () => {
