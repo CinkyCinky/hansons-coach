@@ -5,7 +5,8 @@ from typing import Dict, List, Any, Optional
 from google import genai
 from google.genai import types
 from garminconnect.workout import (
-    RunningWorkout, WorkoutSegment, ExecutableStep, StepType, ConditionType, TargetType
+    RunningWorkout, WorkoutSegment, ExecutableStep, RepeatGroup,
+    StepType, ConditionType, TargetType
 )
 from modules import fetcher, hansons_knowledge
 
@@ -50,13 +51,20 @@ def _gather_athlete_context(client, profile: dict) -> str:
     a vráti hotový textový blok pre AI prompt. Toto robí trénera 'múdrym'."""
     blocks = [hansons_knowledge.HANSONS_METHODOLOGY]
 
-    goal = profile.get("target_time")
-    if goal:
-        blocks.append(hansons_knowledge.paces_block(goal))
-
+    # Atléta načítaj raz vopred — VO2max potrebujeme pre Speed tempá (aktuálna 5K forma)
+    athlete = None
     if client is not None:
         try:
             athlete = fetcher.get_athlete_profile(client)
+        except Exception:
+            athlete = None
+
+    goal = profile.get("target_time")
+    if goal:
+        blocks.append(hansons_knowledge.paces_block(goal, (athlete or {}).get("vo2max")))
+
+    if client is not None:
+        try:
             blocks.append(hansons_knowledge.athlete_block(athlete))
 
             lthr_data = fetcher.get_lactate_threshold(client) or {}
@@ -239,7 +247,9 @@ def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
     """Vygeneruje plán pre ZVYŠOK aktuálneho týždňa (od dnes po nedeľu) podľa Hanson metódy."""
     target_time = profile.get("target_time", "neuvedený")
     ai_context = profile.get("ai_context", "")
+    variant = profile.get("plan_variant", "advanced")
     athlete_context = _gather_athlete_context(client, profile)
+    week_num = hansons_knowledge.current_training_week(profile)
 
     today = datetime.date.today()
     week_dates = _current_week_dates(today)
@@ -257,7 +267,9 @@ REÁLNYCH dát zverenca z Garminu (vek, váha, VO2max, LTHR, HR zóny, tempá).
 Cieľový čas na polmaratón: {target_time}.
 OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
 {training_timeline_note(profile)}
-{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
+{hansons_knowledge.variant_note(variant)}
+{hansons_knowledge.phase_block(week_num)}
+{hansons_knowledge.sos_block(week_num, variant)}
 {athlete_context}
 
 Úloha: Vytvor tréningový plán LEN pre ZVYŠOK TOHTO týždňa — od dnes ({today.isoformat()},
@@ -275,12 +287,13 @@ KĽÚČOVÉ PRAVIDLÁ PRE VÝSTUP:
 • Rešpektuj štruktúru SOS tréningov (Speed/Strength utorok, Tempo štvrtok, Long nedeľa)
   a aktuálnu fázu plánu (Speed T2–10 / Strength T11–17). Ak SOS deň v tomto týždni už
   prešiel, presuň ho na najbližší dostupný deň alebo ho v tomto týždni vynechaj.
-• EASY a DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy zóny), NIE tempom
-  a BEZ samostatného warmup/cooldown.
-• SOS tréningy (Speed/Strength/Tempo) VŽDY začínaj krokom 'warmup' (~2.5 km) a ukonči
-  krokom 'cooldown' (~2.5 km) — Easy tepom/voľným tempom. Hlavná časť medzi nimi.
-• TEMPO behy: hlavná časť na HMP tempo (pace_min/pace_max).
-• INTERVALY (Speed/Strength): úseky na tempo (5k resp. 10k), pauzy ako 'recover' pomaly (jog).
+• VŠETKY behy zadávaj TEMPOM (pace_min/pace_max) — Hanson je pace-first. HR NEpoužívaj ako
+  cieľ; orientačný tep daj nanajvýš do textu 'description' (napr. "Easy strop ~150 bpm").
+• EASY a DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
+• SOS tréningy (Speed/Strength/Tempo) VŽDY začínaj krokom 'warmup' a ukonči 'cooldown',
+  každý v rozsahu ~2–4 km (dlhšie sedenie → dlhší WU/CD), na Easy tempe. Hlavná časť medzi nimi.
+• TEMPO: hlavná časť na cieľové HMP tempo. STRENGTH: úseky na HMP − 10 s/míľu.
+  SPEED: úseky na aktuálne 5k tempo (z VO2max). Pauzy medzi úsekmi = 'recover' pomaly (jog).
 
 Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
 {{
@@ -289,18 +302,32 @@ Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
     {{
       "day_offset": 0,
       "workout_name": "Napr. Easy Run 8km alebo Tempo 6km @ HMP",
-      "description": "Popis vrátane účelu (regenerácia / rýchlosť / tempo)",
+      "description": "Popis vrátane účelu + orientačný tep ako referencia (napr. Easy strop ~150 bpm)",
       "steps": [
-        {{ "type": "warmup|run|recover|cooldown", "distance_km": 2.0,
-           "hr_min": 130, "hr_max": 142 }},
-        {{ "type": "run", "distance_km": 6.0,
-           "pace_min": "5:18", "pace_max": "5:10" }}
+        {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+        {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }},
+        {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
       ]
     }}
   ]
 }}
-Pre každý krok použi BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max) — nie oboje povinne.
-Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
+
+INTERVALOVÝ (Speed/Strength) tréning zapíš s 'repeat' krokom — NIE ako N samostatných krokov.
+Príklad „6×800m @ 5k, 400m jog pauza" s rozcvičkou/výklusom:
+{{
+  "day_offset": 1, "workout_name": "Speed 6×800m @ 5k",
+  "description": "VO2max/rýchlosť. Úseky na 5k tempo, pauza voľný jog.",
+  "steps": [
+    {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+    {{ "type": "repeat", "iterations": 6, "steps": [
+        {{ "type": "run",     "distance_km": 0.8, "pace_min": "4:25", "pace_max": "4:15" }},
+        {{ "type": "recover", "distance_km": 0.4, "pace_min": "6:40", "pace_max": "6:10" }}
+    ] }},
+    {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
+  ]
+}}
+Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejší okraj v min:sek/km).
+HR ako cieľ nepoužívaj. Vraciaš LEN platný JSON."""
 
     plan = _generate_json(system_prompt)
     return _enrich_and_clip_to_week(plan, today)
@@ -308,7 +335,7 @@ Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
 def generate_single_workout(profile: dict, description: str, client=None,
                             for_date: Optional[str] = None) -> dict:
     """Vygeneruje JEDEN tréning podľa požiadavky — s plnou Hanson metodikou + živými
-    Garmin dátami (zóny, LTHR, tempá). Easy/dlhé → HR cieľ, Tempo/intervaly → pace.
+    Garmin dátami (zóny, LTHR, tempá). Všetko TEMPOM (pace); intervaly ako repeat-blok.
     Vráti dict: {workout_name, description, steps:[...]}. Zdieľa create aj modify."""
     target_time = profile.get("target_time", "neuvedený")
     athlete_context = _gather_athlete_context(client, profile)
@@ -323,26 +350,84 @@ Vygeneruj JEDEN bežecký tréning{when} podľa tejto požiadavky: "{description
 
 PRAVIDLÁ:
 • Drž sa Hanson metodiky a typu tréningu (Easy/Tempo/Speed/Strength/Long).
-• EASY a DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy pásma), NIE tempo,
-  a BEZ samostatného warmup/cooldown.
-• SOS (Speed/Strength/Tempo) VŽDY začni krokom 'warmup' (~2.5 km) a ukonči 'cooldown' (~2.5 km),
-  Easy tepom/voľným tempom.
-• TEMPO → hlavná časť na HMP tempo (pace_min/pace_max). INTERVALY → úseky na 5k/10k tempo (pace),
-  pauzy ako 'recover' pomaly (jog).
+• VŠETKY kroky zadávaj TEMPOM (pace) — Hanson je pace-first. HR ako cieľ nepoužívaj;
+  orientačný tep daj nanajvýš do 'description'.
+• EASY a DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
+• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' a ukonči 'cooldown', každý ~2–4 km na Easy tempe.
+• TEMPO → hlavná časť na cieľové HMP. STRENGTH → HMP − 10 s/míľu. SPEED → aktuálne 5k tempo.
+  Pauzy medzi úsekmi = 'recover' pomaly (jog).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
 {{
   "workout_name": "Napr. Easy Run 8km / Tempo 6km @ HMP",
-  "description": "Krátky popis vrátane účelu",
+  "description": "Krátky popis vrátane účelu (+ orientačný tep ako referencia)",
   "steps": [
-    {{ "type": "warmup|run|recover|cooldown", "distance_km": 2.0, "hr_min": 130, "hr_max": 150 }},
-    {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }}
+    {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+    {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }},
+    {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
   ]
 }}
-Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy/dlhé→HR, Tempo/intervaly→pace.
-Vraciaš LEN platný JSON."""
+Intervaly (Speed/Strength) zapíš ako 'repeat' krok s "iterations" a vnorenými "steps"
+[run úsek, recover pauza] — NIE ako N samostatných krokov.
+Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejší okraj). Vraciaš LEN platný JSON."""
 
     return _generate_json(prompt)
+
+
+def _estimate_steps(steps_json: list) -> tuple[float, float]:
+    """Rekurzívne spočíta (vzdialenosť_m, trvanie_s) vrátane repeat-blokov (×iterations)."""
+    dist_m, dur_s = 0.0, 0.0
+    for s in steps_json or []:
+        if s.get("type") == "repeat" and s.get("steps"):
+            it = max(1, int(s.get("iterations", 1) or 1))
+            d, t = _estimate_steps(s["steps"])
+            dist_m += it * d
+            dur_s += it * t
+        else:
+            km = float(s.get("distance_km", 0) or 0)
+            dist_m += km * 1000
+            ms = pace_to_ms(s.get("pace_max") or s.get("pace_min") or "6:00")
+            if ms > 0:
+                dur_s += (km * 1000) / ms
+    return dist_m, dur_s
+
+
+def build_garmin_steps(steps_json: list) -> list:
+    """Z AI JSON krokov postaví Garmin kroky vrátane repeat-blokov (RepeatGroupDTO).
+    Garmin vyžaduje GLOBÁLNE sekvenčné stepOrder naprieč vnorením; kroky v jednom
+    repeat-bloku zdieľajú childStepId (id skupiny)."""
+    order = [0]   # mutable: globálny stepOrder counter
+    group = [0]   # mutable: childStepId counter pre repeat skupiny
+
+    def _walk(items: list, child_id: Optional[int]) -> list:
+        result = []
+        for s in items or []:
+            if s.get("type") == "repeat" and s.get("steps"):
+                group[0] += 1
+                gid = group[0]
+                order[0] += 1
+                rg_order = order[0]
+                inner = _walk(s["steps"], child_id=gid)
+                rg = RepeatGroup(
+                    stepOrder=rg_order,
+                    stepType={"stepTypeId": StepType.REPEAT, "stepTypeKey": "repeat", "displayOrder": 6},
+                    numberOfIterations=max(1, int(s.get("iterations", 1) or 1)),
+                    workoutSteps=inner,
+                    endCondition={"conditionTypeId": ConditionType.ITERATIONS, "conditionTypeKey": "iterations",
+                                  "displayOrder": 7, "displayable": False},
+                    endConditionValue=float(max(1, int(s.get("iterations", 1) or 1))),
+                )
+                rg.childStepId = gid
+                result.append(rg)
+            else:
+                order[0] += 1
+                step = create_garmin_step(s, order[0])
+                if child_id is not None:
+                    step.childStepId = child_id
+                result.append(step)
+        return result
+
+    return _walk(steps_json, child_id=None)
 
 
 def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, RunningWorkout]]:
@@ -362,22 +447,10 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
         if target_date is None:
             target_date = base_date + datetime.timedelta(days=int(w.get("day_offset", 0)))
 
-        garmin_steps = []
-        step_order = 1
-        
-        for s in w.get("steps", []):
-            g_step = create_garmin_step(s, step_order)
-            garmin_steps.append(g_step)
-            step_order += 1
-            
-        # Odhadovany cas trvania (vynasobime distance a priemerne tempo)
-        total_duration = 0
-        for s in w.get("steps", []):
-            dist_km = float(s.get("distance_km", 0))
-            ms_avg = pace_to_ms(s.get("pace_max", "6:00"))
-            if ms_avg > 0:
-                total_duration += (dist_km * 1000) / ms_avg
-                
+        steps_json = w.get("steps", [])
+        garmin_steps = build_garmin_steps(steps_json)   # podporuje repeat-bloky
+        _, total_duration = _estimate_steps(steps_json)
+
         segment = WorkoutSegment(
             segmentOrder=1,
             sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
@@ -390,6 +463,7 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
             estimatedDurationInSecs=int(total_duration),
             workoutSegments=[segment]
         )
+
         
         garmin_workouts.append((target_date, garmin_workout))
         
@@ -450,26 +524,27 @@ OSOBNÉ POZNÁMKY: {ai_context}
 
 PRAVIDLÁ:
 • Zachovaj typ a účel pôvodného tréningu (ak to bol Easy, ostane Easy; Tempo ostane Tempo...).
-• EASY/DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy zóny), NIE tempo,
-  a BEZ samostatného warmup/cooldown.
-• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' (~2.5 km) a ukonči 'cooldown' (~2.5 km).
-• TEMPO → hlavná časť na HMP tempo (pace). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
-• Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči.
+• VŠETKY kroky zadávaj TEMPOM (pace) — Hanson je pace-first. HR ako cieľ nepoužívaj;
+  orientačný tep daj nanajvýš do 'description'.
+• EASY/DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
+• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' a ukonči 'cooldown', každý ~2–4 km.
+• TEMPO → cieľové HMP. STRENGTH → HMP − 10 s/míľu. SPEED → aktuálne 5k tempo. Pauzy 'recover' pomaly.
+• Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči (pomalší okraj, kratšie).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
 {{
   "coach_message": "Ahoj! Upravil som ti tréning podľa aktuálnej fyzičky — vysvetli prečo (po slovensky).",
   "workout": {{
     "workout_name": "{old_workout_name} (Updated)",
-    "description": "Prepočítaný tréning podľa LTHR / HR zón.",
+    "description": "Prepočítaný tréning podľa aktuálnej formy a tempa (+ orientačný tep).",
     "steps": [
-      {{ "type": "warmup", "distance_km": 2.0, "hr_min": 130, "hr_max": 142 }},
-      {{ "type": "run", "distance_km": 5.0, "hr_min": 138, "hr_max": 150 }},
-      {{ "type": "cooldown", "distance_km": 2.0, "hr_min": 125, "hr_max": 138 }}
+      {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
+      {{ "type": "run", "distance_km": 5.0, "pace_min": "5:18", "pace_max": "5:10" }},
+      {{ "type": "cooldown", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }}
     ]
   }}
 }}
-Pre každý krok BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max). Easy→HR, Tempo/intervaly→pace."""
+Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejší okraj). Vraciaš LEN platný JSON."""
 
     ai_response = _generate_json(system_prompt)
     new_w_data = ai_response.get("workout")

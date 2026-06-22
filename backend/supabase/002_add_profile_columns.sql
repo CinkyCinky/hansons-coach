@@ -18,6 +18,8 @@ alter table public.profiles add column if not exists target_time text;
 alter table public.profiles add column if not exists training_start_date text;
 alter table public.profiles add column if not exists race_date text;
 alter table public.profiles add column if not exists ai_context text;
+-- Variant Hanson plánu: 'advanced' (default) | 'beginner' | 'just_finish'
+alter table public.profiles add column if not exists plan_variant text default 'advanced';
 -- Garmin session tokeny (bez tohto stĺpca by tiché ukladanie tokenov zlyhalo
 -- a appka by sa stále prihlasovala nanovo):
 alter table public.profiles add column if not exists garmin_tokens jsonb;
