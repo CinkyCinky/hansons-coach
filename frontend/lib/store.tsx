@@ -27,6 +27,11 @@ const TTL = {
   report: 60 * 60 * 1000,
 };
 
+export interface ChatSeed {
+  userText: string;      // úvodná „správa od zverenca" (zhrnutie plánu) — viditeľná v chate
+  coachMessage: string;  // pôvodná správa trénera z generátora (zobrazí sa ako odpoveď trénera)
+}
+
 interface StoreState {
   // Dashboard
   dashboard: any | null;
@@ -34,6 +39,9 @@ interface StoreState {
   dashboardLoading: boolean;
   dashboardError: string | null;
   advice: string | null;
+
+  // Handoff z generátora plánu do chatu (jednorazový seed konverzácie)
+  chatSeed: ChatSeed | null;
 
   // Plan
   plan: any[] | null;
@@ -54,6 +62,7 @@ interface StoreActions {
   loadReport: (force?: boolean) => Promise<void>;
   invalidateAll: () => void;
   setPlanWorkouts: (workouts: any[]) => void;
+  setChatSeed: (seed: ChatSeed | null) => void;
 }
 
 type StoreContextType = StoreState & StoreActions;
@@ -66,6 +75,8 @@ const initialState: StoreState = {
   dashboardLoading: false,
   dashboardError: null,
   advice: null,
+
+  chatSeed: null,
 
   plan: null,
   planLoadedAt: null,
@@ -206,6 +217,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, plan: workouts }));
   }, []);
 
+  const setChatSeed = useCallback((seed: ChatSeed | null) => {
+    setState((s) => ({ ...s, chatSeed: seed }));
+  }, []);
+
   return (
     <StoreContext.Provider
       value={{
@@ -215,6 +230,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         loadReport,
         invalidateAll,
         setPlanWorkouts,
+        setChatSeed,
       }}
     >
       {children}

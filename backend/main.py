@@ -582,14 +582,15 @@ Stav formy dnes: {form_score}/100
 - Pripravenosť: {metrics.readiness}/100
 {load_note}{context_block}"""
 
-        # thinking_level="low" — krátka rada nepotrebuje hlboké uvažovanie; bez neho
-        # Gemini 3 "rozmýšľa" na high a interný (anglický) reasoning sa pri nízkom
-        # limite tokenov prelial do odpovede namiesto finálnej slovenskej rady.
+        # thinking_level="low" — krátka rada nepotrebuje hlboké uvažovanie. POZOR: pri
+        # Gemini 3 sa thinking tokeny počítajú do max_output_tokens, preto musí byť limit
+        # dosť vysoký, aby po (skrátenom) uvažovaní zostal priestor na celú slovenskú radu —
+        # inak sa odpoveď odsekne. 2048 dáva pohodlnú rezervu pre 2–4 vety + thinking.
         response = gemini_client.models.generate_content(
             model=GEMINI_MODELS["flash"],
             contents=prompt,
             config=types.GenerateContentConfig(
-                max_output_tokens=600,
+                max_output_tokens=2048,
                 temperature=0.7,
                 thinking_config=types.ThinkingConfig(thinking_level="low"),
             ),

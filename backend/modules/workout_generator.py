@@ -203,11 +203,52 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
     return step
 
 
+_DAYS_SK = ["Pondelok", "Utorok", "Streda", "Štvrtok", "Piatok", "Sobota", "Nedeľa"]
+
+
+def _current_week_dates(today: Optional[datetime.date] = None) -> List[datetime.date]:
+    """Zostávajúce dni AKTUÁLNEHO týždňa od dnes po nedeľu (vrátane dneška)."""
+    today = today or datetime.date.today()
+    days_left = 7 - today.weekday()  # Po=0 → 7 dní (Po–Ne), Ne=6 → 1 (len nedeľa)
+    return [today + datetime.timedelta(days=i) for i in range(days_left)]
+
+
+def _enrich_and_clip_to_week(plan: dict, today: Optional[datetime.date] = None) -> dict:
+    """Doplní každému tréningu absolútny dátum + slovenský deň a ZAHODÍ tréningy mimo
+    aktuálneho týždňa (day_offset musí byť 0..počet zostávajúcich dní−1)."""
+    today = today or datetime.date.today()
+    max_offset = len(_current_week_dates(today)) - 1
+    kept = []
+    for w in plan.get("workouts", []):
+        try:
+            off = int(w.get("day_offset", 0))
+        except (TypeError, ValueError):
+            off = 0
+        if off < 0 or off > max_offset:
+            continue  # mimo aktuálneho týždňa → nezahŕňame
+        d = today + datetime.timedelta(days=off)
+        w["day_offset"] = off
+        w["date"] = d.isoformat()
+        w["day_label"] = f"{_DAYS_SK[d.weekday()]} {d.strftime('%d.%m.')}" + (" (dnes)" if off == 0 else "")
+        kept.append(w)
+    plan["workouts"] = sorted(kept, key=lambda x: x.get("day_offset", 0))
+    return plan
+
+
 def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
-    """Vygeneruje 7-dňový plán podľa Hanson metódy s plnou metodikou + živými Garmin dátami."""
+    """Vygeneruje plán pre ZVYŠOK aktuálneho týždňa (od dnes po nedeľu) podľa Hanson metódy."""
     target_time = profile.get("target_time", "neuvedený")
     ai_context = profile.get("ai_context", "")
     athlete_context = _gather_athlete_context(client, profile)
+
+    today = datetime.date.today()
+    week_dates = _current_week_dates(today)
+    max_offset = len(week_dates) - 1
+    # Zoznam dostupných dní tohto týždňa s offsetmi (kotva pre AI, aby nezašiel inam)
+    days_list = "\n".join(
+        f"  • day_offset {i} = {_DAYS_SK[d.weekday()]} {d.isoformat()}" + (" (DNES)" if i == 0 else "")
+        for i, d in enumerate(week_dates)
+    )
 
     system_prompt = f"""Si profesionálny bežecký tréner, špičkový expert na Hanson Half-Marathon Method.
 Tvoja úloha je vytvoriť tréningový plán PRESNE podľa Hansonovej metodiky (nižšie) a podľa
@@ -219,26 +260,34 @@ OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
 {hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
 {athlete_context}
 
-Úloha: Vytvor tréningový plán na najbližších 7 dní (od zajtra).
+Úloha: Vytvor tréningový plán LEN pre ZVYŠOK TOHTO týždňa — od dnes ({today.isoformat()},
+{_DAYS_SK[today.weekday()]}) po nedeľu. DNEŠNÝ DEŇ zahrň, ak je medzi dostupnými dňami.
+NIKDY nezachádzaj do ďalšieho týždňa (žiadny tréning po najbližšej nedeli).
+Dostupné dni (použi PRESNE tieto day_offset, 0 = dnes, max {max_offset} = nedeľa):
+{days_list}
+
 AK SI VO FÁZE TAPER (T18): vygeneruj LEN zostupový týždeň — žiadne tvrdé intervaly,
 objem dole ~50–60 %, dlhý beh max 8–10 km Easy, max jeden krátky beh s pár HMP úsekmi.
 Dodatočná požiadavka zverenca: "{constraints}"
-PRÍSNE rešpektuj osobné poznámky (deň odpočinku, čas behu, zranenia).
+PRÍSNE rešpektuj osobné poznámky (deň odpočinku, čas behu, zranenia) a dostupné dni vyššie.
 
 KĽÚČOVÉ PRAVIDLÁ PRE VÝSTUP:
 • Rešpektuj štruktúru SOS tréningov (Speed/Strength utorok, Tempo štvrtok, Long nedeľa)
-  a aktuálnu fázu plánu (Speed T2–10 / Strength T11–17).
-• EASY a DLHÉ behy zadávaj s HR cieľom (hr_min/hr_max z Easy zóny) — NIE tempom!
-• TEMPO behy zadávaj na HMP tempo (pace_min/pace_max), prípadne aj s kontrolou tepom.
-• INTERVALY (Speed/Strength) zadávaj na tempo (5k resp. 10k), pauzy ako 'recover' pomaly.
-• Pre warmup/cooldown použi Easy HR alebo voľné tempo.
+  a aktuálnu fázu plánu (Speed T2–10 / Strength T11–17). Ak SOS deň v tomto týždni už
+  prešiel, presuň ho na najbližší dostupný deň alebo ho v tomto týždni vynechaj.
+• EASY a DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy zóny), NIE tempom
+  a BEZ samostatného warmup/cooldown.
+• SOS tréningy (Speed/Strength/Tempo) VŽDY začínaj krokom 'warmup' (~2.5 km) a ukonči
+  krokom 'cooldown' (~2.5 km) — Easy tepom/voľným tempom. Hlavná časť medzi nimi.
+• TEMPO behy: hlavná časť na HMP tempo (pace_min/pace_max).
+• INTERVALY (Speed/Strength): úseky na tempo (5k resp. 10k), pauzy ako 'recover' pomaly (jog).
 
 Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
 {{
   "coach_message": "Komentár a zdôvodnenie pre zverenca po slovensky — spomeň prečo si zvolil dané tepy/tempá.",
   "workouts": [
     {{
-      "day_offset": 1,
+      "day_offset": 0,
       "workout_name": "Napr. Easy Run 8km alebo Tempo 6km @ HMP",
       "description": "Popis vrátane účelu (regenerácia / rýchlosť / tempo)",
       "steps": [
@@ -253,7 +302,8 @@ Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
 Pre každý krok použi BUĎ (hr_min+hr_max) ALEBO (pace_min+pace_max) — nie oboje povinne.
 Easy/dlhé → HR. Tempo/intervaly → pace. Vraciaš LEN platný JSON."""
 
-    return _generate_json(system_prompt)
+    plan = _generate_json(system_prompt)
+    return _enrich_and_clip_to_week(plan, today)
 
 def generate_single_workout(profile: dict, description: str, client=None,
                             for_date: Optional[str] = None) -> dict:
@@ -273,9 +323,12 @@ Vygeneruj JEDEN bežecký tréning{when} podľa tejto požiadavky: "{description
 
 PRAVIDLÁ:
 • Drž sa Hanson metodiky a typu tréningu (Easy/Tempo/Speed/Strength/Long).
-• EASY a DLHÉ kroky → HR cieľ (hr_min/hr_max z Easy pásma), NIE tempo.
-• TEMPO → HMP tempo (pace_min/pace_max). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
-• Warmup/cooldown → Easy HR alebo voľné tempo.
+• EASY a DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy pásma), NIE tempo,
+  a BEZ samostatného warmup/cooldown.
+• SOS (Speed/Strength/Tempo) VŽDY začni krokom 'warmup' (~2.5 km) a ukonči 'cooldown' (~2.5 km),
+  Easy tepom/voľným tempom.
+• TEMPO → hlavná časť na HMP tempo (pace_min/pace_max). INTERVALY → úseky na 5k/10k tempo (pace),
+  pauzy ako 'recover' pomaly (jog).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
 {{
@@ -296,11 +349,19 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
     """Konvertuje AI JSON plán na Garmin objekty"""
     garmin_workouts = []
     base_date = datetime.date.today()
-    
+
     for w in ai_plan.get("workouts", []):
-        day_offset = int(w.get("day_offset", 1))
-        target_date = base_date + datetime.timedelta(days=day_offset)
-        
+        # Preferuj absolútny dátum (odolné, ak sa generuje a nahráva v iný deň);
+        # fallback na day_offset relatívny k dnešku.
+        target_date = None
+        if w.get("date"):
+            try:
+                target_date = datetime.date.fromisoformat(str(w["date"])[:10])
+            except ValueError:
+                target_date = None
+        if target_date is None:
+            target_date = base_date + datetime.timedelta(days=int(w.get("day_offset", 0)))
+
         garmin_steps = []
         step_order = 1
         
@@ -389,8 +450,10 @@ OSOBNÉ POZNÁMKY: {ai_context}
 
 PRAVIDLÁ:
 • Zachovaj typ a účel pôvodného tréningu (ak to bol Easy, ostane Easy; Tempo ostane Tempo...).
-• EASY/DLHÉ kroky → HR cieľ (hr_min/hr_max z Easy zóny), NIE tempo.
-• TEMPO → HMP tempo (pace). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
+• EASY/DLHÉ behy = JEDEN súvislý beh s HR cieľom (hr_min/hr_max z Easy zóny), NIE tempo,
+  a BEZ samostatného warmup/cooldown.
+• SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' (~2.5 km) a ukonči 'cooldown' (~2.5 km).
+• TEMPO → hlavná časť na HMP tempo (pace). INTERVALY → 5k/10k tempo (pace), pauzy 'recover' pomaly.
 • Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči.
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:

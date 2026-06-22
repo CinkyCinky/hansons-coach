@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2, MessageCircle } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { generatePlan, uploadPlan, fetchProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 export default function Generator() {
   const store = useStore();
+  const router = useRouter();
   const [days, setDays] = useState({
     Po: true, Ut: true, St: true, Št: true, Pi: true, So: true, Ne: true
   });
@@ -66,6 +68,19 @@ export default function Generator() {
     } finally {
       setUploading(false);
     }
+  };
+
+  // Handoff do chatu: prenesie plán + správu trénera do tabu Tréner, kde môžeš pokračovať
+  const handleAskCoach = () => {
+    if (!generatedPlan) return;
+    const planSummary = (generatedPlan.workouts || [])
+      .map((w: any) => `• ${w.day_label ? w.day_label + ": " : ""}${w.workout_name}`)
+      .join("\n");
+    const userText =
+      `Vygeneroval si mi tento plán na tento týždeň:\n\n${planSummary}\n\n` +
+      `Mám k nemu otázku — prípadne ho uprav podľa môjho aktuálneho stavu.`;
+    store.setChatSeed({ userText, coachMessage: generatedPlan.coach_message || "" });
+    router.push("/chat");
   };
 
   // Úprava vygenerovaného plánu pred zápisom do Garminu
@@ -165,16 +180,30 @@ export default function Generator() {
           <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl">
             <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-2">Správa od trénera</h3>
             <p className="text-sm text-gray-200">{generatedPlan.coach_message}</p>
+            <button
+              onClick={handleAskCoach}
+              className="mt-3 inline-flex items-center gap-2 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-xs font-bold px-3 py-2 rounded-xl transition-colors"
+            >
+              <MessageCircle size={15} /> Spýtať sa trénera na tento plán
+            </button>
           </div>
 
           <div>
-            <h3 className="font-bold mb-1 text-lg">Návrh plánu (7 dní)</h3>
+            <h3 className="font-bold mb-1 text-lg">
+              Návrh plánu ({generatedPlan.workouts?.length ?? 0}{" "}
+              {generatedPlan.workouts?.length === 1 ? "tréning" : "tréningy/-ov"} • tento týždeň)
+            </h3>
             <p className="text-xs text-gray-400 mb-3">
               Pred zápisom do Garminu môžeš upraviť názvy, vzdialenosti, tempá aj tepy.
             </p>
             <div className="flex flex-col gap-3">
               {generatedPlan.workouts.map((w: any, idx: number) => (
                 <div key={idx} className="glass-card p-4 rounded-xl border border-white/5">
+                  {w.day_label && (
+                    <p className="text-xs font-bold text-accent uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                      <CalIcon size={13} /> {w.day_label}
+                    </p>
+                  )}
                   <input
                     value={w.workout_name ?? ""}
                     onChange={(e) => updateWorkout(idx, "workout_name", e.target.value)}
