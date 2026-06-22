@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import datetime
 from typing import Dict, List, Any, Optional
 from google import genai
@@ -9,6 +10,8 @@ from garminconnect.workout import (
     StepType, ConditionType, TargetType
 )
 from modules import fetcher, hansons_knowledge
+
+logger = logging.getLogger("hansons")
 
 
 # Generovanie plánov a tréningov beží na najsilnejšom modeli (Gemini 3.1 Pro).
@@ -131,6 +134,17 @@ def pace_to_ms(pace_str: str) -> float:
     except:
         return 0.0
 
+def _safe_float(value, default: float = 0.0) -> float:
+    """Tolerantný prevod na float — None/''/neplatné → default. Chráni pred pádom uploadu,
+    keď AI (alebo úprava v UI) pošle krok s distance_km=null / prázdnym poľom."""
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
     """Vytvorí Garmin ExecutableStep zo slovníka od Gemini — podporuje Pace aj HR targety."""
     step_type_map = {
@@ -141,8 +155,8 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
     }
     st_id, st_key, st_order = step_type_map.get(step_data.get("type", "run"), step_type_map["run"])
 
-    # Vzdialenosť v metroch
-    distance_m = float(step_data.get("distance_km", 0)) * 1000.0
+    # Vzdialenosť v metroch (tolerantne — null/''/neplatné → 0, nezhodí celý upload)
+    distance_m = _safe_float(step_data.get("distance_km")) * 1000.0
 
     # ── HR target (preferované ak je dostupné) ──
     hr_min = step_data.get("hr_min")
@@ -169,8 +183,8 @@ def create_garmin_step(step_data: dict, step_order: int) -> ExecutableStep:
             endConditionValue=distance_m,
             targetType=target_dict,
         )
-        step.targetValueOne = float(hr_min)
-        step.targetValueTwo = float(hr_max)
+        step.targetValueOne = _safe_float(hr_min)
+        step.targetValueTwo = _safe_float(hr_max)
         return step
 
     # ── Pace target (len ak je tempo skutočne zadané) ──
@@ -436,41 +450,45 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
     base_date = datetime.date.today()
 
     for w in ai_plan.get("workouts", []):
-        # Preferuj absolútny dátum (odolné, ak sa generuje a nahráva v iný deň);
-        # fallback na day_offset relatívny k dnešku.
-        target_date = None
-        if w.get("date"):
-            try:
-                target_date = datetime.date.fromisoformat(str(w["date"])[:10])
-            except ValueError:
-                target_date = None
-        if target_date is None:
-            target_date = base_date + datetime.timedelta(days=int(w.get("day_offset", 0)))
+        try:
+            # Preferuj absolútny dátum (odolné, ak sa generuje a nahráva v iný deň);
+            # fallback na day_offset relatívny k dnešku.
+            target_date = None
+            if w.get("date"):
+                try:
+                    target_date = datetime.date.fromisoformat(str(w["date"])[:10])
+                except ValueError:
+                    target_date = None
+            if target_date is None:
+                target_date = base_date + datetime.timedelta(days=int(w.get("day_offset", 0) or 0))
 
-        steps_json = w.get("steps", [])
-        garmin_steps = build_garmin_steps(steps_json)   # podporuje repeat-bloky
-        _, total_duration = _estimate_steps(steps_json)
+            steps_json = w.get("steps", [])
+            garmin_steps = build_garmin_steps(steps_json)   # podporuje repeat-bloky
+            _, total_duration = _estimate_steps(steps_json)
 
-        segment = WorkoutSegment(
-            segmentOrder=1,
-            sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
-            workoutSteps=garmin_steps
-        )
-        
-        garmin_workout = RunningWorkout(
-            workoutName=w.get("workout_name", "Beh"),
-            description=w.get("description", ""),
-            estimatedDurationInSecs=int(total_duration),
-            workoutSegments=[segment]
-        )
+            segment = WorkoutSegment(
+                segmentOrder=1,
+                sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+                workoutSteps=garmin_steps
+            )
 
-        
-        garmin_workouts.append((target_date, garmin_workout))
-        
+            garmin_workout = RunningWorkout(
+                workoutName=w.get("workout_name", "Beh"),
+                description=w.get("description", ""),
+                estimatedDurationInSecs=int(total_duration),
+                workoutSegments=[segment]
+            )
+            garmin_workouts.append((target_date, garmin_workout))
+        except Exception:
+            # Jeden chybný tréning nesmie zhodiť celý plán — preskoč a zaloguj.
+            logger.exception("Preskakujem chybný tréning '%s' pri konverzii", w.get("workout_name"))
+
     return garmin_workouts
 
-def update_next_workout(client, profile: dict) -> dict:
-    """Updates the nearest upcoming workout dynamically based on LTHR."""
+def update_next_workout(client, profile: dict, form_context: str = "") -> dict:
+    """Prepočíta najbližší tréning podľa aktuálnej formy. form_context = stav dňa
+    (pripravenosť/HRV/Body Battery/A:C záťaž) z dashboardu — aby zmäkčenie bolo riadené
+    reálnymi dátami, nie len všeobecnou inštrukciou."""
     try:
         lthr_data = client.get_lactate_threshold()
     except Exception as e:
@@ -521,9 +539,13 @@ OSOBNÉ POZNÁMKY: {ai_context}
 {training_timeline_note(profile)}
 {hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
 {athlete_context}
+{form_context}
 
 PRAVIDLÁ:
 • Zachovaj typ a účel pôvodného tréningu (ak to bol Easy, ostane Easy; Tempo ostane Tempo...).
+• ZOHĽADNI STAV DŇA vyššie: ak je pripravenosť/HRV/Body Battery nízke alebo A:C záťaž > 1.4,
+  tréning ZMÄKČI (pomalší okraj tempa, menej opakovaní/kratšie úseky, kratší objem). Ak je
+  forma výborná, môžeš ostať na predpísanom. Zmenu zdôvodni v coach_message konkrétnymi číslami.
 • VŠETKY kroky zadávaj TEMPOM (pace) — Hanson je pace-first. HR ako cieľ nepoužívaj;
   orientačný tep daj nanajvýš do 'description'.
 • EASY/DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.

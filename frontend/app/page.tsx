@@ -105,6 +105,10 @@ export default function Dashboard() {
   }
   const loadStatus = getLoadStatus(acRatio);
 
+  // Adaptivita: navrhni úpravu tréningu pri slabej forme alebo vysokej A:C záťaži
+  const needsAdjustment =
+    formStatus?.label === "Potrebuješ odpočinok" || (acRatio != null && acRatio > 1.4);
+
   return (
     <div className="flex flex-col gap-5 pt-4 pb-32">
       {/* Header */}
@@ -192,6 +196,39 @@ export default function Dashboard() {
               )}
             </div>
           )}
+        </motion.div>
+      )}
+
+      {/* Adaptívna korekcia — pri slabej forme alebo vysokej záťaži */}
+      {data && needsAdjustment && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4"
+        >
+          <div className="flex gap-3">
+            <div className="mt-0.5 bg-amber-500/20 p-2 rounded-xl text-amber-300 flex-shrink-0 h-min">
+              <Activity size={20} />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-amber-300 uppercase tracking-wider mb-1">
+                Odporúčam upraviť tréning
+              </h3>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                {acRatio != null && acRatio > 1.4
+                  ? "Tvoja tréningová záťaž je vysoká"
+                  : "Dnešná forma je nižšia"}
+                {" "}— najbližší tréning by bolo dobré zmäkčiť. Tréner ti ho prepočíta podľa
+                pripravenosti, HRV a záťaže.
+              </p>
+              <Link
+                href="/plan"
+                className="inline-flex items-center gap-1 mt-2 text-xs font-bold text-amber-300 underline underline-offset-2"
+              >
+                Prepočítať najbližší tréning <ChevronRight size={14} />
+              </Link>
+            </div>
+          </div>
         </motion.div>
       )}
 

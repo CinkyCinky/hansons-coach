@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
-  Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles
+  Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles, AlertTriangle
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -78,6 +78,25 @@ export default function Plan() {
       return d >= weekRange.start && d <= weekRange.end;
     });
   }, [workouts, weekRange]);
+
+  const SOS_TYPES = ["speed", "strength", "tempo", "long"];
+  const isMissedSos = (w: any): boolean => {
+    if (w.activityId) return false; // splnené
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const d = new Date(w.date + "T00:00:00");
+    return d < today && SOS_TYPES.includes(classifyWorkout(w.title).type);
+  };
+
+  // Vynechané kľúčové (SOS) tréningy — najnovšie prvé (posledných ~14 dní)
+  const missedSos = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 14);
+    return (workouts as any[])
+      .filter((w) => isMissedSos(w) && new Date(w.date + "T00:00:00") >= cutoff)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workouts]);
 
   useEffect(() => {
     store.loadPlan();
@@ -188,6 +207,30 @@ export default function Plan() {
           }`}
         >
           {updateMessage.text}
+        </div>
+      )}
+
+      {/* Vynechané kľúčové (SOS) tréningy */}
+      {!proposal && missedSos.length > 0 && (
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4">
+          <h3 className="text-sm font-bold text-rose-300 flex items-center gap-2 mb-1">
+            <AlertTriangle size={16} /> Vynechané kľúčové tréningy ({missedSos.length})
+          </h3>
+          <p className="text-xs text-gray-300 leading-relaxed mb-3">
+            Posledný:{" "}
+            <b>{classifyWorkout(missedSos[0].title).label}</b> — {missedSos[0].title}{" "}
+            ({new Date(missedSos[0].date + "T00:00:00").toLocaleDateString("sk-SK", { day: "numeric", month: "long" })}).
+            Podľa Hansona kľúčové tréningy nehromaď — buď ho čo najskôr dobehni, alebo ho vynechaj a
+            pokračuj podľa plánu (nikdy nie 2 tvrdé dni za sebou).
+          </p>
+          <button
+            onClick={handleDailyUpdate}
+            disabled={isUpdating}
+            className="inline-flex items-center gap-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-200 text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-60"
+          >
+            {isUpdating ? <Loader2 className="animate-spin" size={14} /> : <Activity size={14} />}
+            Prepočítať najbližší tréning
+          </button>
         </div>
       )}
 
@@ -415,6 +458,11 @@ export default function Plan() {
                           </span>
                         );
                       })()}
+                      {isMissedSos(workout) && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-rose-500/20 text-rose-300 border-rose-500/40 flex items-center gap-1">
+                          <AlertTriangle size={10} /> Vynechané
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400">{workout.sportType?.typeKey || "Beh"}</p>
                   </div>
