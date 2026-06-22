@@ -848,10 +848,25 @@ def api_upload_plan(req: PlanUploadRequest, client=Depends(get_garmin_client)):
 
 @app.get("/api/plan/daily_update")
 def generate_daily_update(client=Depends(get_garmin_client), user_id: str = Depends(get_current_user)):
-    """Generuje AI návrh na úpravu najbližšieho tréningu podľa LTHR."""
+    """Generuje AI návrh na úpravu najbližšieho tréningu podľa aktuálnej formy (pripravenosť,
+    HRV, Body Battery, A:C záťaž) a Hanson metodiky."""
     try:
         profile = get_user_profile(user_id) or {}
-        proposal = workout_generator.update_next_workout(client, profile)
+        # Stav dňa → dátovo-riadené zmäkčenie (nie len všeobecná inštrukcia)
+        form_context = ""
+        try:
+            snap = _wellness_snapshot(client, user_id)
+            r, hrv, bb, tl = snap["readiness"], snap["hrv"], snap["body_battery"], snap["training_load"]
+            form_context = (
+                "STAV DŇA (pre rozhodnutie o zmäkčení):\n"
+                f"- Pripravenosť: {r.get('score', 'N/A')}/100 ({r.get('level', '')})\n"
+                f"- HRV: {hrv.get('status', 'N/A')} (last night {hrv.get('last_night', 'N/A')} ms)\n"
+                f"- Body Battery: {bb.get('today_charged', 'N/A')}/100\n"
+                + hansons_knowledge.training_load_block(tl)
+            )
+        except Exception:
+            pass
+        proposal = workout_generator.update_next_workout(client, profile, form_context)
         # Doplň kroky pôvodného tréningu pre porovnanie v UI
         old_id = proposal.get("old_workout_id")
         if old_id:
@@ -881,9 +896,9 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
         old_workout_id = req.old_workout_id
         target_date_str = req.target_date_str
 
-        garmin_steps = []
-        for i, s in enumerate(new_w_data.get("steps", [])):
-            garmin_steps.append(workout_generator.create_garmin_step(s, i + 1))
+        steps_json = new_w_data.get("steps", [])
+        garmin_steps = workout_generator.build_garmin_steps(steps_json)   # podporuje repeat-bloky
+        _, est_dur = workout_generator._estimate_steps(steps_json)
 
         segment = workout_generator.WorkoutSegment(
             segmentOrder=1,
@@ -893,7 +908,7 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
         gw = workout_generator.RunningWorkout(
             workoutName=new_w_data.get("workout_name", "Updated Workout"),
             description=new_w_data.get("description", ""),
-            estimatedDurationInSecs=0,
+            estimatedDurationInSecs=int(est_dur),
             workoutSegments=[segment],
         )
 

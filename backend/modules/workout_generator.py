@@ -485,8 +485,10 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
 
     return garmin_workouts
 
-def update_next_workout(client, profile: dict) -> dict:
-    """Updates the nearest upcoming workout dynamically based on LTHR."""
+def update_next_workout(client, profile: dict, form_context: str = "") -> dict:
+    """Prepočíta najbližší tréning podľa aktuálnej formy. form_context = stav dňa
+    (pripravenosť/HRV/Body Battery/A:C záťaž) z dashboardu — aby zmäkčenie bolo riadené
+    reálnymi dátami, nie len všeobecnou inštrukciou."""
     try:
         lthr_data = client.get_lactate_threshold()
     except Exception as e:
@@ -537,9 +539,13 @@ OSOBNÉ POZNÁMKY: {ai_context}
 {training_timeline_note(profile)}
 {hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
 {athlete_context}
+{form_context}
 
 PRAVIDLÁ:
 • Zachovaj typ a účel pôvodného tréningu (ak to bol Easy, ostane Easy; Tempo ostane Tempo...).
+• ZOHĽADNI STAV DŇA vyššie: ak je pripravenosť/HRV/Body Battery nízke alebo A:C záťaž > 1.4,
+  tréning ZMÄKČI (pomalší okraj tempa, menej opakovaní/kratšie úseky, kratší objem). Ak je
+  forma výborná, môžeš ostať na predpísanom. Zmenu zdôvodni v coach_message konkrétnymi číslami.
 • VŠETKY kroky zadávaj TEMPOM (pace) — Hanson je pace-first. HR ako cieľ nepoužívaj;
   orientačný tep daj nanajvýš do 'description'.
 • EASY/DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.

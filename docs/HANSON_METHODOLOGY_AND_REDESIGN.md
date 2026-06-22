@@ -242,9 +242,17 @@ recovery/cooldown), `endCondition` (distance/lapButton/time) a `targetType`
 - ⏳ **Odložené:** compliance zvýraznenie zmeškaných SOS + denná korekcia priamo na
   Prehľade (zatiaľ je „Upraviť najbližší tréning" v Pláne) → P4.
 
-**P4 — Adaptivita (neskôr)**
-- Auto-presun zmeškaných SOS; automatické zmäkčenie podľa A:C/HRV; spätné doladenie
-  cieľa, ak realita nesedí (VO2max/odbehnuté tempá).
+**P4 — Adaptivita — ✅ z väčšej časti HOTOVÉ**
+- ✅ **Dátovo-riadené zmäkčenie:** `/api/plan/daily_update` posiela do `update_next_workout`
+  „stav dňa" (pripravenosť, HRV, Body Battery, A:C záťaž) → AjT zmäkčí tréning podľa reálnych
+  čísel, nie len všeobecnej inštrukcie. `confirm_daily_update` používa repeat-safe builder.
+- ✅ **Denná korekcia na Prehľade:** karta „Odporúčam upraviť tréning" sa zobrazí pri slabej
+  forme alebo A:C > 1.4, vedie na prepočet v Pláne.
+- ✅ **Zvýraznenie zmeškaných SOS:** Plán deteguje vynechané kľúčové tréningy (minulé,
+  nesplnené, typ Speed/Strength/Tempo/Long) → súhrnná karta s Hanson radou + badge
+  „Vynechané" v kalendári + 1-klik prepočet.
+- ⏳ **Odložené (budúce):** plne automatický presun zmeškaných SOS (zatiaľ návrh + 1-klik);
+  spätné doladenie cieľového času podľa reálne odbehnutých temp/VO2max.
 
 ### 4.3 Rozhodnutia (potvrdené 2026-06)
 - **Tep (HR):** **tempo primárne pre všetky behy, HR len referencia** (v popise + poistka).
