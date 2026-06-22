@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X } from "lucide-react";
+import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact } from "@/lib/api";
+import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact, estimateGoal } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 function validateTargetTime(val: string): boolean {
@@ -39,6 +39,28 @@ export default function Settings() {
 
   // Informácia o časovej osi prípravy
   const [raceDateWarning, setRaceDateWarning] = useState<string | null>(null);
+
+  // Odhad cieľa (z VO2max alebo nedávnych pretekov)
+  const [estimating, setEstimating] = useState(false);
+  const [estimate, setEstimate] = useState<{ predicted: string | null; source?: string; message?: string } | null>(null);
+  const [showRaceInput, setShowRaceInput] = useState(false);
+  const [raceDist, setRaceDist] = useState("10");
+  const [raceTime, setRaceTime] = useState("");
+
+  const handleEstimate = async (useRace: boolean) => {
+    setEstimating(true);
+    setEstimate(null);
+    try {
+      const r = useRace
+        ? await estimateGoal(parseFloat(raceDist) || undefined, raceTime || undefined)
+        : await estimateGoal();
+      setEstimate(r);
+    } catch (e: any) {
+      setEstimate({ predicted: null, message: e?.message || "Odhad zlyhal." });
+    } finally {
+      setEstimating(false);
+    }
+  };
 
   const DAY = 1000 * 60 * 60 * 24;
   const midnight = (d: Date) => {
@@ -299,6 +321,77 @@ export default function Settings() {
               prianie. Prehnaný cieľ spraví každý tréning prirýchly (najčastejšia chyba). Neistý?{" "}
               <Link href="/about" className="text-primary underline underline-offset-2">Pozri „O metóde"</Link>.
             </p>
+
+            {/* Odhad realistického cieľa */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => handleEstimate(false)}
+                disabled={estimating}
+                className="inline-flex items-center gap-1.5 bg-primary/15 hover:bg-primary/25 border border-primary/30 text-primary text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {estimating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                Odhadnúť z mojej formy
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRaceInput((v) => !v)}
+                className="text-xs text-gray-400 hover:text-white underline underline-offset-2 px-1"
+              >
+                alebo z nedávnych pretekov
+              </button>
+            </div>
+
+            {showRaceInput && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <input
+                  type="number" step="0.1" inputMode="decimal" value={raceDist}
+                  onChange={(e) => setRaceDist(e.target.value)}
+                  className="w-16 bg-[#1a1a24] border border-white/10 rounded px-2 py-1.5 text-white text-center focus:outline-none focus:border-primary/50"
+                />
+                <span className="text-gray-500">km za</span>
+                <input
+                  type="text" inputMode="numeric" value={raceTime} placeholder="48:00"
+                  onChange={(e) => setRaceTime(e.target.value)}
+                  className="w-20 bg-[#1a1a24] border border-white/10 rounded px-2 py-1.5 text-white text-center focus:outline-none focus:border-primary/50"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleEstimate(true)}
+                  disabled={estimating || !raceTime}
+                  className="bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-1.5 rounded transition-colors disabled:opacity-50"
+                >
+                  Odhadnúť
+                </button>
+              </div>
+            )}
+
+            {estimate && (
+              <div className="mt-2 bg-black/20 border border-white/10 rounded-xl p-3 text-xs">
+                {estimate.predicted ? (
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-gray-300">
+                        Odhadovaný polmaratón: <b className="text-primary text-sm">{estimate.predicted}</b>
+                      </p>
+                      {estimate.source && <p className="text-[11px] text-gray-500 mt-0.5">{estimate.source}</p>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setTargetTime(estimate.predicted!); setEstimate(null); }}
+                      className="bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary font-bold px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                    >
+                      Použiť tento čas
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-amber-400">{estimate.message || "Nepodarilo sa odhadnúť."}</p>
+                )}
+                <p className="text-[10px] text-gray-600 mt-2">
+                  Odhad je orientačný — uprav podľa skúseností a trate. Radšej mierne konzervatívny cieľ.
+                </p>
+              </div>
+            )}
           </div>
           <div>
             <label className="text-xs text-gray-400 mb-2 block">Variant Hanson plánu</label>

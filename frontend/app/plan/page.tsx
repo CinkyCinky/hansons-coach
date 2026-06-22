@@ -4,12 +4,13 @@ import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
-  Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles, AlertTriangle
+  Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles, AlertTriangle,
+  ChevronDown, CalendarRange
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   fetchDailyUpdateProposal, confirmDailyUpdate,
-  fetchWorkoutDetails, fetchActivityStats
+  fetchWorkoutDetails, fetchActivityStats, fetchPlanOverview
 } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
@@ -89,6 +90,90 @@ function PhaseTimeline({ week }: { week: number | null }) {
         <p className="text-xs text-gray-400 mt-3 leading-snug">
           <b className="text-gray-200">Teraz: {cur.label}.</b> {cur.desc}
         </p>
+      )}
+    </div>
+  );
+}
+
+// Celý 18-týždňový plán (lazy-load z backendu pri prvom rozbalení)
+function FullPlanOverview() {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const toggle = async () => {
+    const willOpen = !open;
+    setOpen(willOpen);
+    if (willOpen && !data && !loading) {
+      setLoading(true);
+      try { setData(await fetchPlanOverview()); } catch { /* ignore */ } finally { setLoading(false); }
+    }
+  };
+
+  const weeks: any[] = data?.weeks ?? [];
+
+  return (
+    <div className="glass-card p-4">
+      <button onClick={toggle} className="w-full flex items-center justify-between font-bold text-sm">
+        <span className="flex items-center gap-2">
+          <CalendarRange size={16} className="text-primary" /> Celý plán (18 týždňov)
+        </span>
+        <ChevronDown size={18} className={`text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          {loading && (
+            <div className="flex items-center gap-2 text-gray-400 text-sm">
+              <Loader2 className="animate-spin" size={16} /> Načítavam…
+            </div>
+          )}
+          {!loading && weeks.length > 0 && (
+            <div className="flex flex-col gap-4">
+              <p className="text-[11px] text-gray-500">
+                Variant: {data.variant}. Nedeľa = dlhý beh každý týždeň, štvrtok = tempo.
+              </p>
+              {PHASES.map((ph) => {
+                const wk = weeks.filter((w) => w.phase === ph.key);
+                if (!wk.length) return null;
+                return (
+                  <div key={ph.key}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`w-2 h-2 rounded-full ${ph.color}`} />
+                      <span className="text-xs font-bold text-gray-200">
+                        {ph.label} · T{ph.start}{ph.end !== ph.start ? `–${ph.end}` : ""}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 mb-2 leading-snug">{ph.desc}</p>
+                    <div className="flex flex-col gap-1.5">
+                      {wk.map((w) => (
+                        <div
+                          key={w.week}
+                          className={`text-xs rounded-lg px-2 py-1.5 leading-snug ${
+                            w.is_current ? "bg-primary/15 border border-primary/30" : "bg-black/20"
+                          }`}
+                        >
+                          <span className={`font-bold ${w.is_current ? "text-primary" : "text-gray-300"}`}>
+                            T{w.week}{w.is_current ? " · tu si" : ""}
+                          </span>
+                          {w.tuesday ? (
+                            <span className="text-gray-400"> — {w.tuesday}</span>
+                          ) : (
+                            <span className="text-gray-500"> — {w.week === 1 ? "len Easy behy (adaptácia)" : "taper — zostup objemu"}</span>
+                          )}
+                          {w.thursday && <span className="text-gray-500"> · {w.thursday}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!loading && data && weeks.length === 0 && (
+            <p className="text-xs text-gray-500">Prehľad sa nepodarilo načítať.</p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -414,6 +499,9 @@ export default function Plan() {
 
       {/* Prehľad 18-týždňového oblúka prípravy (vzdelávací) */}
       <PhaseTimeline week={trainingWeek} />
+
+      {/* Celý 18-týždňový plán (rozbaľovací) */}
+      <FullPlanOverview />
 
       {/* Taper / pretekový týždeň */}
       {trainingWeek != null && trainingWeek >= 18 && (
