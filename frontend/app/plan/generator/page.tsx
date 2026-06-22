@@ -102,13 +102,18 @@ export default function Generator() {
       const res = await uploadPlan(generatedPlan);
       // Zneplatni cache, aby sa nové tréningy hneď zobrazili v Pláne a na Prehľade
       store.invalidateAll();
-      const failed = res?.failed?.length ?? 0;
+      const failedList: any[] = res?.failed ?? [];
+      const firstReason: string | undefined = failedList[0]?.reason;
       if (res?.status === "error") {
-        setError("Nepodarilo sa zapísať žiadny tréning. Skús to znova.");
+        setError(
+          firstReason
+            ? `Nepodarilo sa zapísať tréningy. Dôvod: ${firstReason}`
+            : (res?.message || "Nepodarilo sa zapísať žiadny tréning. Skús to znova.")
+        );
       } else {
-        if (failed > 0) {
-          const dni = res.failed.map((f: any) => f.date).join(", ");
-          setError(`Časť tréningov sa nezapísala (${dni}). Ostatné sú v Garmine.`);
+        if (failedList.length > 0) {
+          const dni = failedList.map((f) => f.date).join(", ");
+          setError(`Časť tréningov sa nezapísala (${dni})${firstReason ? `. Dôvod: ${firstReason}` : ""}. Ostatné sú v Garmine.`);
         }
         setUploadSuccess(true);
       }

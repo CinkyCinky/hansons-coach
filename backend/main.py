@@ -798,48 +798,89 @@ def api_generate_plan(
 class PlanUploadRequest(BaseModel):
     plan_data: dict
 
-def _clear_planned_on_date(client, date_str: str) -> int:
-    """Zmaže existujúce naplánované tréningy na daný dátum (idempotencia — žiadne duplikáty
-    pri opätovnom zápise plánu). Vráti počet zmazaných."""
-    try:
-        d = datetime.date.fromisoformat(date_str)
-        items = _scheduled_items(client.get_scheduled_workouts(d.year, d.month))
-    except Exception:
-        return 0
-    deleted = 0
-    for it in items:
-        if (it.get("date") or "")[:10] == date_str and _is_planned_workout(it):
-            try:
-                client.delete_workout(it.get("workoutId"))
-                deleted += 1
-            except Exception:
-                pass
-    return deleted
+def _is_rate_limited(e: Exception) -> bool:
+    return "429" in str(e) or "rate" in str(e).lower() or "too many" in str(e).lower()
+
+
+def _garmin_write(fn, *args, attempts: int = 4):
+    """Zápisové Garmin volanie s exponenciálnym backoffom pri 429 (Garmin agresívne
+    rate-limituje). Pri inej chybe vyhodí hneď."""
+    import time
+    last = None
+    for i in range(attempts):
+        try:
+            return fn(*args)
+        except Exception as e:
+            last = e
+            if _is_rate_limited(e) and i < attempts - 1:
+                time.sleep(1.0 + 1.5 * i)  # 1.0s, 2.5s, 4.0s
+                continue
+            raise
+    if last:
+        raise last
+
+
+def _clear_planned_on_dates(client, dates: set) -> None:
+    """Zmaže existujúce naplánované tréningy na cieľových dátumoch. Scheduled workouts
+    načíta RAZ za každý dotknutý mesiac (nie za každý dátum) — šetrí Garmin volania a
+    znižuje riziko rate-limitu."""
+    months = set()
+    for d in dates:
+        try:
+            dd = datetime.date.fromisoformat(d)
+            months.add((dd.year, dd.month))
+        except Exception:
+            pass
+    for (y, m) in months:
+        try:
+            items = _scheduled_items(client.get_scheduled_workouts(y, m))
+        except Exception:
+            continue
+        for it in items:
+            if (it.get("date") or "")[:10] in dates and _is_planned_workout(it):
+                try:
+                    _garmin_write(client.delete_workout, it.get("workoutId"))
+                except Exception:
+                    logger.exception("Nepodarilo sa zmazať starý tréning %s", it.get("workoutId"))
 
 
 @app.post("/api/plan/upload")
 def api_upload_plan(req: PlanUploadRequest, client=Depends(get_garmin_client)):
+    import time
     try:
         garmin_workouts = workout_generator.convert_to_garmin_workouts(req.plan_data)
+        if not garmin_workouts:
+            return {"status": "error", "uploaded": [], "failed": [],
+                    "message": "Plán neobsahuje žiadne platné tréningy."}
+
+        # Idempotencia: najprv hromadne zmaž staré tréningy na cieľových dátumoch (1 dotaz/mesiac)
+        target_dates = {d.strftime("%Y-%m-%d") for d, _ in garmin_workouts}
+        try:
+            _clear_planned_on_dates(client, target_dates)
+        except Exception:
+            logger.exception("Čistenie starých tréningov zlyhalo — pokračujem v zápise")
+
         uploaded, failed = [], []
-        cleared_dates = set()
-        for target_date, workout in garmin_workouts:
+        for idx, (target_date, workout) in enumerate(garmin_workouts):
             date_str = target_date.strftime("%Y-%m-%d")
             try:
-                # Idempotencia: pred zápisom zmaž starý tréning na ten istý deň (raz na dátum)
-                if date_str not in cleared_dates:
-                    _clear_planned_on_date(client, date_str)
-                    cleared_dates.add(date_str)
-                resp = client.upload_running_workout(workout)
-                workout_id = resp.get("workoutId")
-                if workout_id:
-                    client.schedule_workout(workout_id, date_str)
-                    uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
-                else:
-                    failed.append({"date": date_str, "name": workout.workoutName})
-            except Exception:
+                resp = _garmin_write(client.upload_running_workout, workout)
+                workout_id = (resp or {}).get("workoutId")
+                if not workout_id:
+                    failed.append({"date": date_str, "name": workout.workoutName,
+                                   "reason": "Garmin nevrátil ID tréningu"})
+                    continue
+                _garmin_write(client.schedule_workout, workout_id, date_str)
+                uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
+            except Exception as e:
                 logger.exception("Zápis tréningu %s na %s zlyhal", workout.workoutName, date_str)
-                failed.append({"date": date_str, "name": workout.workoutName})
+                reason = "Garmin dočasne limituje požiadavky (429) — skús o chvíľu znova." \
+                    if _is_rate_limited(e) else str(e)[:200]
+                failed.append({"date": date_str, "name": workout.workoutName, "reason": reason})
+            # Jemné rozloženie volaní medzi tréningmi (anti-burst voči Garmin rate-limitu)
+            if idx < len(garmin_workouts) - 1:
+                time.sleep(0.4)
+
         status = "success" if uploaded and not failed else ("partial" if uploaded else "error")
         return {"status": status, "uploaded": uploaded, "failed": failed}
     except Exception as e:
