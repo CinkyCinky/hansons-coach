@@ -114,15 +114,9 @@ def get_garmin_client(user_id: str = Depends(get_current_user)):
 # ── Utility ──────────────────────────────────────────────────────────────────
 
 def _calculate_training_week(profile: dict) -> int:
-    """Vypočíta aktuálny týždeň prípravy (1-18) z dátumu začiatku."""
-    start_str = profile.get("training_start_date", "2026-06-01")
-    try:
-        start_date = datetime.date.fromisoformat(start_str)
-        delta = (datetime.date.today() - start_date).days
-        week = max(1, min(18, delta // 7 + 1))
-        return week
-    except Exception:
-        return 1
+    """Aktuálny týždeň prípravy (1-18). Jediný zdroj pravdy = hansons_knowledge
+    (týždeň sa mení v pondelok, nie v deň štartu prípravy)."""
+    return hansons_knowledge.current_training_week(profile)
 
 
 def _scheduled_items(scheduled) -> list:
@@ -447,6 +441,93 @@ def get_dashboard_today(
         raise _server_error(e, "Nepodarilo sa načítať dáta z Garminu.")
 
 
+def _run_summary(act: dict) -> str:
+    """Krátky popis behu: vzdialenosť + priemerný tep (ak sú k dispozícii)."""
+    km = (act.get("distance") or 0) / 1000
+    parts = [f"{km:.1f} km"] if km else []
+    if act.get("averageHR"):
+        parts.append(f"{round(act['averageHR'])} bpm")
+    return ", ".join(parts) or "beh"
+
+
+def _training_context_block(client) -> str:
+    """Zostaví slovenský kontext pre AI radu: dnešný plán, čo bolo včera (splnené/
+    vynechané/voľno), objem za posledných 7 dní + vynechané kľúčové (SOS) tréningy,
+    a najbližší tréning ak dnes nič nie je naplánované."""
+    today = datetime.date.today()
+    yest = today - datetime.timedelta(days=1)
+    week_ago = today - datetime.timedelta(days=7)
+    today_str, yest_str, week_ago_str = (d.strftime("%Y-%m-%d") for d in (today, yest, week_ago))
+    running_types = ("running", "track_running", "treadmill_running", "trail_running")
+
+    try:
+        items = _get_scheduled_range(client, week_ago, today + datetime.timedelta(days=14))
+        planned = [i for i in items if _is_planned_workout(i)]
+    except Exception:
+        planned = []
+
+    # Absolvované behy (date -> aktivita) za posledných 8 dní
+    runs_by_date: dict = {}
+    try:
+        for a in (fetcher.get_recent_activities(client, days=8) or []):
+            if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types:
+                runs_by_date.setdefault((a.get("startTimeLocal") or "")[:10], a)
+    except Exception:
+        pass
+
+    def _planned_on(day_str: str):
+        hits = [i for i in planned if (i.get("date") or "")[:10] == day_str]
+        return hits[0] if hits else None
+
+    lines = []
+
+    # DNES
+    today_plan = _planned_on(today_str)
+    if today_plan:
+        lines.append(f"Dnešný plán: {today_plan.get('title') or 'Beh'}.")
+    else:
+        nxt = sorted(
+            [i for i in planned if (i.get("date") or "")[:10] > today_str],
+            key=lambda x: x.get("date") or "",
+        )
+        if nxt:
+            lines.append(f"Dnes je voľno. Najbližší tréning: {nxt[0].get('date')} — {nxt[0].get('title') or 'Beh'}.")
+        else:
+            lines.append("Dnes je voľno, žiadny tréning naplánovaný.")
+
+    # VČERA
+    y_plan = _planned_on(yest_str)
+    y_run = runs_by_date.get(yest_str)
+    if y_plan:
+        title = y_plan.get("title") or "Beh"
+        if y_run or y_plan.get("activityId"):
+            extra = _run_summary(y_run) if y_run else "zaznamenané"
+            lines.append(f"Včera ({title}) — SPLNENÉ ({extra}).")
+        else:
+            sos = " — KĽÚČOVÝ (SOS)!" if _is_sos_title(title) else ""
+            lines.append(f"Včera VYNECHANÝ tréning: {title}{sos}.")
+    elif y_run:
+        lines.append(f"Včera neplánovaný beh ({_run_summary(y_run)}).")
+    else:
+        lines.append("Včera bez behu (voľno/oddych).")
+
+    # POSLEDNÝCH 7 DNÍ — objem + vynechané SOS
+    past_runs = [a for d, a in runs_by_date.items() if week_ago_str <= d < today_str]
+    total_km = sum((a.get("distance") or 0) for a in past_runs) / 1000
+    missed_sos = sum(
+        1 for i in planned
+        if week_ago_str <= (i.get("date") or "")[:10] < today_str
+        and not ((i.get("date") or "")[:10] in runs_by_date or i.get("activityId"))
+        and _is_sos_title(i.get("title") or "")
+    )
+    summary = f"Posledných 7 dní: {len(past_runs)} behov, ~{total_km:.0f} km."
+    if missed_sos:
+        summary += f" Vynechané kľúčové (SOS): {missed_sos}."
+    lines.append(summary)
+
+    return "Tréningový kontext:\n- " + "\n- ".join(lines)
+
+
 class AdviceRequest(BaseModel):
     sleep_score: Optional[int] = None
     hrv_status: Optional[str] = None
@@ -464,18 +545,10 @@ def get_dashboard_advice(
         return {"advice": "Pre plnohodnotné rady si nastav Gemini API kľúč."}
 
     try:
-        next_workout_str = "Dnes/Zajtra ťa nečaká žiadny špecifický tréning."
+        # Tréningový kontext (dnešný plán, včerajšok, posledných 7 dní)
+        context_block = ""
         try:
-            today = datetime.date.today()
-            today_str = today.strftime("%Y-%m-%d")
-            items = _get_scheduled_range(client, today, today + datetime.timedelta(days=45))
-            upcoming = sorted(
-                [i for i in items if _is_planned_workout(i) and (i.get("date") or "") >= today_str],
-                key=lambda x: x.get("date"),
-            )
-            if upcoming:
-                nw = upcoming[0]
-                next_workout_str = f"Najbližší tréning: {nw.get('date')} - {nw.get('title') or 'Beh'}"
+            context_block = _training_context_block(client)
         except Exception:
             pass
 
@@ -490,24 +563,41 @@ def get_dashboard_advice(
         except Exception:
             pass
 
-        prompt = f"""Si bežecký tréner (Hansonova metóda). Zhodnoť dnešný stav zverenca a daj mu 2-3 krátke úderné vety.
+        prompt = f"""Si bežecký tréner (Hansonova metóda). Prihováraj sa zverencovi priamo (tykaj mu).
+Daj mu osobnú radu na dnešný deň: 2-4 krátke úderné vety. Zohľadni v nej:
+- jeho dnešnú formu a ranné metriky,
+- čo robil včera (či splnil/vynechal tréning, alebo mal voľno) — nadviaž na to,
+- jeho objem a priebeh za posledných 7 dní (najmä vynechané kľúčové SOS tréningy),
+- čo má (ne)naplánované dnes — buď ho naladí na dnešný tréning, alebo pri voľne odporuč regeneráciu.
 Ak sú hodnoty slabé (Body Battery alebo Pripravenosť pod 50), odporúč mu nech si v sekcii Plán prepočíta tréning.
-Ak sú hodnoty super, povzbuď ho. Používaj slovenčinu, buď povzbudivý, občas emoji.
+Ak sú hodnoty super, povzbuď ho. Pokojne pridaj 1 emoji.
+
+DÔLEŽITÉ: Odpovedz VÝHRADNE po slovensky. Vráť len samotnú radu pre bežca —
+žiadne uvažovanie, úvod, nadpis, číslovanie ani angličtinu.
 
 Stav formy dnes: {form_score}/100
 - Spánok skóre: {metrics.sleep_score}/100
 - HRV: {metrics.hrv_status}
 - Body Battery: {metrics.body_battery}/100
 - Pripravenosť: {metrics.readiness}/100
-{load_note}{next_workout_str}"""
+{load_note}{context_block}"""
 
+        # thinking_level="low" — krátka rada nepotrebuje hlboké uvažovanie; bez neho
+        # Gemini 3 "rozmýšľa" na high a interný (anglický) reasoning sa pri nízkom
+        # limite tokenov prelial do odpovede namiesto finálnej slovenskej rady.
         response = gemini_client.models.generate_content(
             model=GEMINI_MODELS["flash"],
             contents=prompt,
-            config=types.GenerateContentConfig(max_output_tokens=400),
+            config=types.GenerateContentConfig(
+                max_output_tokens=600,
+                temperature=0.7,
+                thinking_config=types.ThinkingConfig(thinking_level="low"),
+            ),
         )
-        return {"advice": (response.text or "").strip()}
+        advice_text = (response.text or "").strip()
+        return {"advice": advice_text or "Dnes ťa neviem zhodnotiť, bež podľa pocitu! 🏃‍♂️"}
     except Exception:
+        logger.exception("Generovanie AI rady zlyhalo")
         return {"advice": "Dnes ťa neviem zhodnotiť, bež podľa pocitu! 🏃‍♂️"}
 
 
