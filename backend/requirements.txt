@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-garminconnect>=0.3.5
+garminconnect==0.3.5
 pydantic
 google-genai>=1.0.0
 python-multipart
