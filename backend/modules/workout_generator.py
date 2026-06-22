@@ -444,43 +444,46 @@ def build_garmin_steps(steps_json: list) -> list:
     return _walk(steps_json, child_id=None)
 
 
-def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, RunningWorkout]]:
-    """Konvertuje AI JSON plán na Garmin objekty"""
-    garmin_workouts = []
+def build_one_garmin_workout(w: dict) -> "tuple[datetime.date, RunningWorkout]":
+    """Postaví JEDEN Garmin tréning z AI workout dict. Pri chybe VYHODÍ výnimku
+    (volajúci ju zachytí a zobrazí dôvod používateľovi — nepotláčame ju)."""
     base_date = datetime.date.today()
+    # Preferuj absolútny dátum (odolné, ak sa generuje a nahráva v iný deň);
+    # fallback na day_offset relatívny k dnešku.
+    target_date = None
+    if w.get("date"):
+        try:
+            target_date = datetime.date.fromisoformat(str(w["date"])[:10])
+        except ValueError:
+            target_date = None
+    if target_date is None:
+        target_date = base_date + datetime.timedelta(days=int(w.get("day_offset", 0) or 0))
 
+    steps_json = w.get("steps", []) or []
+    garmin_steps = build_garmin_steps(steps_json)   # podporuje repeat-bloky
+    _, total_duration = _estimate_steps(steps_json)
+
+    segment = WorkoutSegment(
+        segmentOrder=1,
+        sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+        workoutSteps=garmin_steps,
+    )
+    garmin_workout = RunningWorkout(
+        workoutName=w.get("workout_name", "Beh"),
+        description=w.get("description", ""),
+        estimatedDurationInSecs=int(total_duration),
+        workoutSegments=[segment],
+    )
+    return target_date, garmin_workout
+
+
+def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, RunningWorkout]]:
+    """Konvertuje AI JSON plán na Garmin objekty (odolne — chybný tréning preskočí)."""
+    garmin_workouts = []
     for w in ai_plan.get("workouts", []):
         try:
-            # Preferuj absolútny dátum (odolné, ak sa generuje a nahráva v iný deň);
-            # fallback na day_offset relatívny k dnešku.
-            target_date = None
-            if w.get("date"):
-                try:
-                    target_date = datetime.date.fromisoformat(str(w["date"])[:10])
-                except ValueError:
-                    target_date = None
-            if target_date is None:
-                target_date = base_date + datetime.timedelta(days=int(w.get("day_offset", 0) or 0))
-
-            steps_json = w.get("steps", [])
-            garmin_steps = build_garmin_steps(steps_json)   # podporuje repeat-bloky
-            _, total_duration = _estimate_steps(steps_json)
-
-            segment = WorkoutSegment(
-                segmentOrder=1,
-                sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
-                workoutSteps=garmin_steps
-            )
-
-            garmin_workout = RunningWorkout(
-                workoutName=w.get("workout_name", "Beh"),
-                description=w.get("description", ""),
-                estimatedDurationInSecs=int(total_duration),
-                workoutSegments=[segment]
-            )
-            garmin_workouts.append((target_date, garmin_workout))
+            garmin_workouts.append(build_one_garmin_workout(w))
         except Exception:
-            # Jeden chybný tréning nesmie zhodiť celý plán — preskoč a zaloguj.
             logger.exception("Preskakujem chybný tréning '%s' pri konverzii", w.get("workout_name"))
 
     return garmin_workouts
