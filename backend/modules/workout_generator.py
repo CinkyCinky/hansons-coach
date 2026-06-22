@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import datetime
@@ -263,6 +264,109 @@ def _enrich_and_clip_to_week(plan: dict, today: Optional[datetime.date] = None) 
     return plan
 
 
+# ── Deterministické Hanson guardraily (vynucované v kóde, nie len v prompte) ──────
+_HARD_KINDS = {"speed", "strength", "tempo", "long"}      # SOS = tvrdé dni
+_KIND_PRIORITY = {"long": 3, "tempo": 2, "strength": 1, "speed": 1}
+_HALF_LONG_CAP_KM = 19.5    # ~12 míľ — polmaratónsky strop dlhého behu (NIE 16 mí = maratón)
+_LONG_FRAC = 0.30           # dlhý beh ≤ 30 % týždenného objemu
+
+
+def classify_workout_kind(name: str) -> str:
+    """Python klasifikátor typu behu z názvu — zrkadlí frontend lib/workoutType.ts.
+    (TS klasifikátor sa nedá importovať, preto paralelná Py verzia. Poradie je dôležité.)"""
+    t = (name or "").lower()
+    if re.search(r"strength|sila|silov", t):
+        return "strength"
+    if re.search(r"speed|rýchl|šprint|interval", t):
+        return "speed"
+    if re.search(r"tempo", t):
+        return "tempo"
+    if re.search(r"long|dlh", t):
+        return "long"
+    if re.search(r"easy|regenerač|rozbeh|klus", t):
+        return "easy"
+    if re.search(r"rest|voľno|odpočinok", t):
+        return "rest"
+    return "other"
+
+
+def _workout_km(w: dict) -> float:
+    dist_m, _ = _estimate_steps(w.get("steps", []) or [])
+    return dist_m / 1000.0
+
+
+def _enforce_long_run_cap(workouts: list, notes: list) -> None:
+    """Dlhý beh ≤ ~12 míľ (vždy) a ≤ 30 % týždenného objemu (len pri ~plnom týždni —
+    aby sa pri oklieštenom zvyšku týždňa neorezal legitímny dlhý beh)."""
+    runs = [w for w in workouts if w.get("steps")]
+    weekly_km = sum(_workout_km(w) for w in runs)
+    near_full_week = len(runs) >= 4
+    for w in workouts:
+        if classify_workout_kind(w.get("workout_name", "")) != "long":
+            continue
+        km = _workout_km(w)
+        cap = _HALF_LONG_CAP_KM
+        if near_full_week and weekly_km > 0:
+            cap = min(cap, _LONG_FRAC * weekly_km)
+        if km > cap + 0.1:
+            main = max(w.get("steps", []) or [], key=lambda s: s.get("distance_km", 0) or 0,
+                       default={})
+            new_step = {"type": "run", "distance_km": round(cap, 1)}
+            if main.get("pace_min"):
+                new_step["pace_min"] = main["pace_min"]
+            if main.get("pace_max"):
+                new_step["pace_max"] = main["pace_max"]
+            w["steps"] = [new_step]
+            notes.append(
+                f"Dlhý beh som skrátil na ~{round(cap, 1)} km — podľa Hansona dlhý beh nejde nad "
+                f"~30 % týždenného objemu a na polmaratón nad ~12 míľ."
+            )
+
+
+def _enforce_hard_spacing(workouts: list, easy_fast, easy_slow, notes: list) -> None:
+    """Nikdy 2 SOS (tvrdé) dni za sebou — nižšiu prioritu demótuj na Easy beh.
+    Priorita: Long > Tempo > Speed/Strength (vyššiu zachovaj)."""
+    ws = sorted([w for w in workouts if w.get("day_offset") is not None],
+                key=lambda x: int(x.get("day_offset", 0)))
+    for i in range(len(ws) - 1):
+        a, b = ws[i], ws[i + 1]
+        try:
+            adjacent = int(b["day_offset"]) - int(a["day_offset"]) == 1
+        except (TypeError, ValueError, KeyError):
+            adjacent = False
+        ka = classify_workout_kind(a.get("workout_name", ""))
+        kb = classify_workout_kind(b.get("workout_name", ""))
+        if adjacent and ka in _HARD_KINDS and kb in _HARD_KINDS:
+            lower = a if _KIND_PRIORITY.get(ka, 0) <= _KIND_PRIORITY.get(kb, 0) else b
+            km = max(6.0, min(_workout_km(lower) or 8.0, 12.0))
+            old_name = lower.get("workout_name", "Tréning")
+            step = {"type": "run", "distance_km": round(km, 1)}
+            if easy_fast and easy_slow:
+                step["pace_min"] = easy_slow   # pomalší okraj
+                step["pace_max"] = easy_fast   # rýchlejší okraj
+            lower["steps"] = [step]
+            lower["workout_name"] = f"Easy beh {round(km, 1)} km"
+            lower["description"] = ("Presunuté na Easy — dva kľúčové tréningy vyšli za sebou. "
+                                    "Hanson: medzi tvrdými dňami musí byť regenerácia.")
+            notes.append(
+                f"„{old_name}“ som zmenil na Easy beh — dva tvrdé tréningy nesmú byť 2 dni za "
+                f"sebou (kumulovaná únava potrebuje medzi nimi regeneráciu)."
+            )
+
+
+def apply_plan_guardrails(plan: dict, easy_fast: Optional[str] = None,
+                          easy_slow: Optional[str] = None) -> dict:
+    """Deterministické Hanson guardraily na vygenerovaný/upravený plán (mutuje a vráti plan).
+    Vynucuje: žiadne 2 tvrdé dni za sebou + strop dlhého behu. Zmeny zhrnie do coach_message."""
+    workouts = plan.get("workouts", []) or []
+    notes: list = []
+    _enforce_hard_spacing(workouts, easy_fast, easy_slow, notes)
+    _enforce_long_run_cap(workouts, notes)
+    if notes:
+        plan["coach_message"] = ((plan.get("coach_message", "") or "") + "\n\n" + " ".join(notes)).strip()
+    return plan
+
+
 def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
     """Vygeneruje plán pre ZVYŠOK aktuálneho týždňa (od dnes po nedeľu) podľa Hanson metódy."""
     target_time = profile.get("target_time", "neuvedený")
@@ -350,7 +454,11 @@ Každý krok zadávaj TEMPOM (pace_min = pomalší okraj, pace_max = rýchlejš�
 HR ako cieľ nepoužívaj. Vraciaš LEN platný JSON."""
 
     plan = _generate_json(system_prompt)
-    return _enrich_and_clip_to_week(plan, today)
+    plan = _enrich_and_clip_to_week(plan, today)
+    # Deterministické guardraily: žiadne 2 tvrdé dni za sebou + strop dlhého behu.
+    # Easy tempá z cieľa (nezávisí od VO2max) na prípadné demótovanie SOS → Easy.
+    _p = hansons_knowledge.compute_training_paces(target_time) or {}
+    return apply_plan_guardrails(plan, _p.get("easy_min"), _p.get("easy_max"))
 
 def generate_single_workout(profile: dict, description: str, client=None,
                             for_date: Optional[str] = None) -> dict:

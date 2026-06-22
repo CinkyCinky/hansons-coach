@@ -8,6 +8,7 @@ import {
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
+import { classifyWorkout } from "@/lib/workoutType";
 
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
   const values = [sleepScore, bodyBattery, readiness].filter((v) => v != null) as number[];
@@ -247,9 +248,15 @@ export default function Dashboard() {
         {todayWorkout ? (
           <>
             <h2 className="text-2xl font-bold mb-1">{todayWorkout.title || "Tréning"}</h2>
-            <p className="text-gray-400 text-sm mb-4 max-w-[80%]">
+            <p className="text-gray-400 text-sm mb-2 max-w-[80%]">
               {todayWorkout.description || "Pozri detail v sekcii Plán."}
             </p>
+            {(() => {
+              const c = classifyWorkout(todayWorkout.title || "");
+              return c.why ? (
+                <p className="text-xs text-gray-500 italic mb-4 max-w-[85%] leading-snug">💡 {c.why}</p>
+              ) : null;
+            })()}
             <Link href="/plan">
               <span className="inline-flex items-center gap-1 text-primary text-sm font-bold">
                 Zobraziť detail <ChevronRight size={16} />
@@ -258,8 +265,11 @@ export default function Dashboard() {
           </>
         ) : (
           <>
-            <h2 className="text-xl font-bold mb-1 text-gray-300">Žiadny tréning naplánovaný</h2>
-            <p className="text-gray-500 text-sm mb-4">Dnes je voľný deň alebo nebol nájdený tréning v Garmine.</p>
+            <h2 className="text-xl font-bold mb-1 text-gray-300">Dnes oddychový deň</h2>
+            <p className="text-gray-500 text-sm mb-4 max-w-[85%] leading-snug">
+              Voľno a ľahká regenerácia sú súčasťou Hansonovej metódy — telo silnie počas oddychu.
+              (Ak si dnes čakal tréning, over prepojenie Garminu alebo ho nájdeš v sekcii Plán.)
+            </p>
             <Link href="/plan">
               <span className="inline-flex items-center gap-1 text-primary text-sm font-bold">
                 Pozrieť plán <ChevronRight size={16} />

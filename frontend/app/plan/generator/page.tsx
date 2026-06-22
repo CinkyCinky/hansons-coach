@@ -11,12 +11,18 @@ import { classifyWorkout } from "@/lib/workoutType";
 
 const STEP_INPUT = "bg-[#1a1a24] border border-white/10 rounded px-1.5 py-1 text-white text-center focus:outline-none focus:border-primary/50";
 
+// Slovenské názvy typov krokov (zrkadlí STEP_COLORS v app/plan/page.tsx)
+const STEP_LABELS: Record<string, string> = {
+  warmup: "Rozcvička", interval: "Interval", run: "Beh", recover: "Zotavenie",
+  recovery: "Zotavenie", cooldown: "Vychladenie", repeat: "Opakovanie",
+};
+
 // Jeden editovateľný krok tréningu (vzdialenosť + tempo alebo HR). Použité aj vnútri repeat-blokov.
 function StepRow({ s, onField }: { s: any; onField: (field: string, value: any) => void }) {
   const isHr = s.hr_min != null || s.hr_max != null;
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs bg-white/5 p-2 rounded-lg">
-      <span className="uppercase font-bold text-gray-300 w-16 shrink-0">{s.type}</span>
+      <span className="font-bold text-gray-300 w-20 shrink-0">{STEP_LABELS[s.type] ?? s.type}</span>
       <span className="flex items-center gap-1">
         <input
           type="number" step="0.1" inputMode="decimal" value={s.distance_km ?? ""}
@@ -41,7 +47,7 @@ function StepRow({ s, onField }: { s: any; onField: (field: string, value: any) 
           <span>–</span>
           <input value={s.pace_max ?? ""} placeholder="5:10"
             onChange={(e) => onField("pace_max", e.target.value)} className={`w-14 ${STEP_INPUT}`} />
-          <span className="text-gray-500">/km</span>
+          <span className="text-gray-500" title="tempo v min:sek na kilometer (pomalší–rýchlejší okraj)">min/km</span>
         </span>
       )}
     </div>
@@ -259,7 +265,7 @@ export default function Generator() {
                 <Info size={14} className="text-primary" /> Z čoho sú tempá počítané
               </p>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-300">
-                <span>Tempo / HMP</span><span className="text-right font-mono text-amber-300">{generatedPlan.paces.tempo}/km</span>
+                <span>Tempo / HMP (pretekové)</span><span className="text-right font-mono text-amber-300">{generatedPlan.paces.tempo}/km</span>
                 <span>Easy / Dlhé</span><span className="text-right font-mono text-emerald-300">{generatedPlan.paces.easy_min}–{generatedPlan.paces.easy_max}/km</span>
                 <span>Strength</span><span className="text-right font-mono text-orange-300">{generatedPlan.paces.strength}/km</span>
                 <span>Speed</span><span className="text-right font-mono text-rose-300">{generatedPlan.paces.speed}/km</span>

@@ -845,13 +845,24 @@ def _clear_planned_on_dates(client, dates: set) -> None:
 
 
 @app.post("/api/plan/upload")
-def api_upload_plan(req: PlanUploadRequest, client=Depends(get_garmin_client)):
+def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_user),
+                    client=Depends(get_garmin_client)):
     import time
     try:
         workouts_json = (req.plan_data or {}).get("workouts", []) or []
         if not workouts_json:
             return {"status": "error", "uploaded": [], "failed": [],
                     "message": "Plán neobsahuje žiadne tréningy."}
+
+        # Deterministické Hanson guardraily aj na (ručne upravený) plán pred zápisom:
+        # žiadne 2 tvrdé dni za sebou + strop dlhého behu. Fail-open.
+        try:
+            prof = get_user_profile(user_id) or {}
+            _p = hansons_knowledge.compute_training_paces(prof.get("target_time", "")) or {}
+            workout_generator.apply_plan_guardrails(req.plan_data, _p.get("easy_min"), _p.get("easy_max"))
+            workouts_json = (req.plan_data or {}).get("workouts", []) or []
+        except Exception:
+            logger.exception("Guardraily na upload zlyhali — pokračujem bez nich")
 
         # 1) Postav každý tréning zvlášť — chybu STAVBY zachytíme a ukážeme (nepotláčame).
         built, failed = [], []

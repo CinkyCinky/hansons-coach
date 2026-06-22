@@ -317,7 +317,8 @@ export default function Settings() {
               ))}
             </div>
             <p className="text-xs text-gray-600 mt-1 ml-1">
-              Beginner/Advanced majú rovnaké SOS, líšia sa objemom. Just Finish = bez tvrdých intervalov.
+              Beginner/Advanced majú rovnaké kľúčové tréningy (SOS = „Something of Substance" — tvrdé
+              tréningy: intervaly, tempo, dlhý beh), líšia sa len objemom. Just Finish = bez tvrdých intervalov.
             </p>
           </div>
           <div>
