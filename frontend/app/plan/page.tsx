@@ -370,7 +370,9 @@ export default function Plan() {
             <b>{classifyWorkout(missedSos[0].title).label}</b> — {missedSos[0].title}{" "}
             ({new Date(missedSos[0].date + "T00:00:00").toLocaleDateString("sk-SK", { day: "numeric", month: "long" })}).
             Podľa Hansona kľúčové tréningy nehromaď — buď ho čo najskôr dobehni, alebo ho vynechaj a
-            pokračuj podľa plánu (nikdy nie 2 tvrdé dni za sebou).
+            pokračuj podľa plánu (nikdy nie 2 tvrdé dni za sebou). Jeden vynechaný tréning takmer
+            neublíži — problém je až séria. Po dlhšej pauze (1–2+ týždne) nabiehaj postupne: najprv
+            Easy, potom tempo, až potom plné úseky.
           </p>
           <button
             onClick={handleDailyUpdate}

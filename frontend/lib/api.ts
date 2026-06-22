@@ -62,8 +62,26 @@ export async function uploadPlan(planData: any) {
   });
 }
 
+// Kľúč pre dnešný self-report (pocit/bolesť) — zdieľaný s Dashboardom
+export const FEELING_KEY = 'hansons_feeling';
+
 export async function fetchDailyUpdateProposal() {
-  return fetchWithAuth('/api/plan/daily_update');
+  // Ak má zverenec dnešný self-report (pocit/bolesť), pošli ho do prepočtu
+  let qs = '';
+  try {
+    const raw = localStorage.getItem(FEELING_KEY);
+    if (raw) {
+      const f = JSON.parse(raw);
+      const today = new Date().toISOString().slice(0, 10);
+      if (f?.date === today && f?.feeling) {
+        const p = new URLSearchParams({ feeling: f.feeling });
+        if (f.pain) p.set('pain', f.pain);
+        if (f.pain_area) p.set('pain_area', f.pain_area);
+        qs = '?' + p.toString();
+      }
+    }
+  } catch { /* localStorage nedostupné — pošli bez self-reportu */ }
+  return fetchWithAuth('/api/plan/daily_update' + qs);
 }
 
 export async function estimateGoal(raceDistanceKm?: number, raceTime?: string) {

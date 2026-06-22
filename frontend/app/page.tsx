@@ -10,7 +10,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
-import { fetchProfile } from "@/lib/api";
+import { fetchProfile, FEELING_KEY } from "@/lib/api";
 
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
   const values = [sleepScore, bodyBattery, readiness].filter((v) => v != null) as number[];
@@ -74,11 +74,26 @@ export default function Dashboard() {
   const [showFormInfo, setShowFormInfo] = useState(false);
   const [showLoadInfo, setShowLoadInfo] = useState(false);
   const [profile, setProfile] = useState<any>(null);
+  const [feeling, setFeeling] = useState<{ feeling?: string; pain?: string } | null>(null);
+
+  const todayIso = () => new Date().toISOString().slice(0, 10);
+  const saveFeeling = (next: { feeling: string; pain?: string }) => {
+    const val = { date: todayIso(), ...next };
+    try { localStorage.setItem(FEELING_KEY, JSON.stringify(val)); } catch { /* ignore */ }
+    setFeeling(val);
+  };
 
   useEffect(() => {
     store.loadDashboard();
     store.loadPlan();
     fetchProfile().then(setProfile).catch(() => {});
+    try {
+      const raw = localStorage.getItem(FEELING_KEY);
+      if (raw) {
+        const f = JSON.parse(raw);
+        if (f?.date === todayIso()) setFeeling(f);
+      }
+    } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -390,6 +405,82 @@ export default function Dashboard() {
         </motion.div>
       )}
 
+      {/* Self-report: ako sa cítiš — kŕmi dennú adaptáciu tréningu */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass-card p-4"
+      >
+        <h3 className="text-sm font-bold mb-2 flex items-center gap-2">
+          <Heart size={16} className="text-rose-400" /> Ako sa dnes cítiš?
+        </h3>
+        <div className="flex gap-2">
+          {[
+            { k: "ok", label: "💪 Dobre" },
+            { k: "tired", label: "😓 Unavený" },
+            { k: "pain", label: "🤕 Bolesť" },
+          ].map((o) => (
+            <button
+              key={o.k}
+              onClick={() => saveFeeling({ feeling: o.k, pain: o.k === "pain" ? feeling?.pain : undefined })}
+              className={`flex-1 text-xs font-bold py-2 rounded-xl border transition-colors ${
+                feeling?.feeling === o.k
+                  ? "bg-primary/20 border-primary text-white"
+                  : "bg-white/5 border-white/10 text-gray-300 hover:text-white"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        {feeling?.feeling === "pain" && (
+          <div className="flex gap-2 mt-2">
+            {[{ k: "dull", label: "Tupá / svalová" }, { k: "sharp", label: "Ostrá / pretrváva" }].map((o) => (
+              <button
+                key={o.k}
+                onClick={() => saveFeeling({ feeling: "pain", pain: o.k })}
+                className={`flex-1 text-xs py-1.5 rounded-lg border transition-colors ${
+                  feeling?.pain === o.k
+                    ? o.k === "sharp"
+                      ? "bg-rose-500/20 border-rose-500/40 text-rose-200"
+                      : "bg-amber-500/15 border-amber-500/30 text-amber-200"
+                    : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {feeling?.feeling && (
+          <div className="mt-3 text-xs leading-snug">
+            {feeling.feeling === "ok" && <p className="text-gray-400">Super — drž sa plánu. 💪</p>}
+            {feeling.feeling === "tired" && (
+              <p className="text-gray-300">
+                Cítiš sa unavený — zváž mierne zmäkčenie.{" "}
+                <Link href="/plan" className="text-primary underline underline-offset-2">Prepočítať najbližší tréning</Link>.
+              </p>
+            )}
+            {feeling.feeling === "pain" && !feeling.pain && (
+              <p className="text-gray-400">Je tá bolesť ostrá alebo tupá?</p>
+            )}
+            {feeling.feeling === "pain" && feeling.pain === "dull" && (
+              <p className="text-amber-300">
+                Tupá svalová bolesť je pri kumulovanej únave bežná. Pokračuj opatrne; ak sa zhorší, spomaľ.
+              </p>
+            )}
+            {feeling.feeling === "pain" && feeling.pain === "sharp" && (
+              <p className="text-rose-300">
+                Ostrá bolesť — dnes nebehaj tvrdo, daj si Easy alebo voľno.{" "}
+                <Link href="/plan" className="text-rose-200 underline underline-offset-2 font-bold">
+                  Zmeniť najbližší tréning na Easy
+                </Link>.
+              </p>
+            )}
+          </div>
+        )}
+      </motion.div>
+
       {/* Dnešný tréning */}
       <motion.section
         initial={{ opacity: 0, y: 20 }}
@@ -423,10 +514,20 @@ export default function Dashboard() {
         ) : (
           <>
             <h2 className="text-xl font-bold mb-1 text-gray-300">Dnes oddychový deň</h2>
-            <p className="text-gray-500 text-sm mb-4 max-w-[85%] leading-snug">
+            <p className="text-gray-500 text-sm mb-3 max-w-[85%] leading-snug">
               Voľno a ľahká regenerácia sú súčasťou Hansonovej metódy — telo silnie počas oddychu.
               (Ak si dnes čakal tréning, over prepojenie Garminu alebo ho nájdeš v sekcii Plán.)
             </p>
+            <details className="mb-4 text-sm">
+              <summary className="cursor-pointer list-none text-primary font-bold text-xs">
+                Voliteľne: silový / mobilitný blok 💪
+              </summary>
+              <div className="mt-2 text-xs text-gray-400 leading-relaxed flex flex-col gap-1.5">
+                <p>Krátke posilnenie pre bežca (10–15 min, 2× týždenne, na voľný/easy deň — nie pred tvrdým tréningom):</p>
+                <p className="text-gray-300">Drepy 2×12 · výpady 2×10/nohu · glute bridge 2×15 · plank 3×30–45 s · výpony na lýtka 2×15.</p>
+                <p>Cross-training (bicykel, plávanie, eliptical) je OK ako doplnok na voľný/easy deň — nenahrádza kľúčové behy a nerob ho tvrdo.</p>
+              </div>
+            </details>
             <Link href="/plan">
               <span className="inline-flex items-center gap-1 text-primary text-sm font-bold">
                 Pozrieť plán <ChevronRight size={16} />
