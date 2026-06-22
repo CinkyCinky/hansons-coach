@@ -26,6 +26,7 @@ export default function Settings() {
   const [targetTime, setTargetTime] = useState("1:50:00");
   const [trainingStart, setTrainingStart] = useState("2026-06-01");
   const [raceDate, setRaceDate] = useState("");
+  const [planVariant, setPlanVariant] = useState("advanced");
   const [aiContext, setAiContext] = useState("");
   // Vlastný začiatok prípravy (override automatického výpočtu race - 18 týždňov)
   const [customStart, setCustomStart] = useState(false);
@@ -100,6 +101,7 @@ export default function Settings() {
         if (profile.display_name) setDisplayName(profile.display_name);
         if (profile.garmin_email) setEmail(profile.garmin_email);
         if (profile.target_time) setTargetTime(profile.target_time);
+        if (profile.plan_variant) setPlanVariant(profile.plan_variant);
         if (profile.training_start_date) setTrainingStart(profile.training_start_date);
         if (profile.race_date) setRaceDate(profile.race_date);
         if (profile.ai_context) setAiContext(profile.ai_context);
@@ -172,6 +174,7 @@ export default function Settings() {
         training_start_date: trainingStart,
         race_date: raceDate || undefined,
         ai_context: aiContext || undefined,
+        plan_variant: planVariant,
       });
       // Invalidate store — nové profil dáta ovplyvnia výpočty
       store.invalidateAll();
@@ -289,6 +292,33 @@ export default function Settings() {
             {targetTime && !validateTargetTime(targetTime) && (
               <p className="text-xs text-rose-400 mt-1 ml-1">Formát musí byť HH:MM:SS (napr. 1:50:00)</p>
             )}
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-2 block">Variant Hanson plánu</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { key: "beginner", label: "Beginner", desc: "Nižší objem" },
+                { key: "advanced", label: "Advanced", desc: "Plný objem" },
+                { key: "just_finish", label: "Just Finish", desc: "Bez intervalov" },
+              ].map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => setPlanVariant(v.key)}
+                  className={`rounded-xl px-2 py-2.5 text-center border transition-colors ${
+                    planVariant === v.key
+                      ? "bg-primary/20 border-primary text-white"
+                      : "bg-[#1a1a24] border-white/10 text-gray-400 hover:text-white"
+                  }`}
+                >
+                  <span className="block text-xs font-bold">{v.label}</span>
+                  <span className="block text-[10px] text-gray-500 mt-0.5">{v.desc}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-600 mt-1 ml-1">
+              Beginner/Advanced majú rovnaké SOS, líšia sa objemom. Just Finish = bez tvrdých intervalov.
+            </p>
           </div>
           <div>
             <label className="text-xs text-gray-400 mb-1 block flex items-center gap-1">

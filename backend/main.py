@@ -87,6 +87,7 @@ class ProfileUpdate(BaseModel):
     race_date: Optional[str] = None  # YYYY-MM-DD
     ai_context: Optional[str] = None
     display_name: Optional[str] = None
+    plan_variant: Optional[str] = None  # "advanced" | "beginner" | "just_finish"
 
 
 class MemoryFactRequest(BaseModel):
@@ -332,6 +333,8 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
             update_data["ai_context"] = req.ai_context
         if req.display_name is not None:
             update_data["display_name"] = req.display_name
+        if req.plan_variant is not None:
+            update_data["plan_variant"] = req.plan_variant
 
         updated = update_user_profile(user_id, update_data)
         return {"status": "success", "profile": updated}
@@ -420,6 +423,7 @@ def get_dashboard_today(
         return {
             "date": today,
             "training_week": training_week,
+            "plan_variant": profile.get("plan_variant", "advanced"),
             "display_name": profile.get("display_name"),
             "garmin_email": profile.get("garmin_email"),
             "sleep": sleep,
@@ -772,6 +776,20 @@ def api_generate_plan(
     try:
         # client → AI dostane živé dáta (vek/váha/VO2max/LTHR/HR zóny) + plnú metodiku
         plan_json = workout_generator.generate_weekly_plan(profile, req.constraints, client)
+        # Meta pre "i" panel v UI: z čoho sú tempá počítané (transparentnosť/dôvera)
+        try:
+            vo2 = (fetcher.get_athlete_profile(client) or {}).get("vo2max")
+            paces = hansons_knowledge.compute_training_paces(profile.get("target_time", ""), vo2)
+            if paces:
+                plan_json["paces"] = {
+                    **paces,
+                    "vo2max": vo2,
+                    "target_time": profile.get("target_time"),
+                    "variant": hansons_knowledge.variant_label(profile.get("plan_variant")),
+                    "training_week": _calculate_training_week(profile),
+                }
+        except Exception:
+            pass
         return plan_json
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa vygenerovať plán. Skús to znova.")

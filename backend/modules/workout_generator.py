@@ -247,7 +247,9 @@ def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
     """Vygeneruje plán pre ZVYŠOK aktuálneho týždňa (od dnes po nedeľu) podľa Hanson metódy."""
     target_time = profile.get("target_time", "neuvedený")
     ai_context = profile.get("ai_context", "")
+    variant = profile.get("plan_variant", "advanced")
     athlete_context = _gather_athlete_context(client, profile)
+    week_num = hansons_knowledge.current_training_week(profile)
 
     today = datetime.date.today()
     week_dates = _current_week_dates(today)
@@ -265,8 +267,9 @@ REÁLNYCH dát zverenca z Garminu (vek, váha, VO2max, LTHR, HR zóny, tempá).
 Cieľový čas na polmaratón: {target_time}.
 OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
 {training_timeline_note(profile)}
-{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
-{hansons_knowledge.sos_block(hansons_knowledge.current_training_week(profile))}
+{hansons_knowledge.variant_note(variant)}
+{hansons_knowledge.phase_block(week_num)}
+{hansons_knowledge.sos_block(week_num, variant)}
 {athlete_context}
 
 Úloha: Vytvor tréningový plán LEN pre ZVYŠOK TOHTO týždňa — od dnes ({today.isoformat()},

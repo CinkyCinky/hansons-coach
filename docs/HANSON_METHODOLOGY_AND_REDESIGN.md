@@ -230,9 +230,17 @@ recovery/cooldown), `endCondition` (distance/lapButton/time) a `targetType`
 - ⏳ **Odložené:** plne deterministický `build_week()` bez LLM pre všetky 3 varianty
   (potrebné overené týždenné objemy Beginner/Just Finish) — viď 4.4.
 
-**P3 — UI/UX (frontend)**
-- Týždenný kalendár plánu s typmi a dňami; karta s tempo+HR-ref+„Prečo".
-- „i" panel o zdroji temp; compliance zvýraznenie; denná korekcia na Prehľade.
+**P3 — UI/UX (frontend) — ✅ z väčšej časti HOTOVÉ**
+- ✅ **Výber variantu plánu** (Beginner/Advanced/Just Finish) v Nastaveniach → profil
+  `plan_variant` (+ SQL migrácia `002`), použitý v generátore (`variant_note`, `sos_block`
+  vynechá intervaly pri Just Finish) aj v hlavičke Plánu.
+- ✅ **Klasifikácia typu behu** (`lib/workoutType.ts`): farebný badge + 1-vetné „Prečo" —
+  v Generátore (karta + „Prečo") aj v Pláne (badge pri názve).
+- ✅ **„i" panel o zdroji temp** v Generátore: backend vracia `paces` meta (Tempo/Easy/
+  Strength/Speed, variant, týždeň, z čoho — cieľ vs VO2max).
+- ✅ Týždenný kalendár plánu (Po–Ne navigácia) už existoval; ponechaný.
+- ⏳ **Odložené:** compliance zvýraznenie zmeškaných SOS + denná korekcia priamo na
+  Prehľade (zatiaľ je „Upraviť najbližší tréning" v Pláne) → P4.
 
 **P4 — Adaptivita (neskôr)**
 - Auto-presun zmeškaných SOS; automatické zmäkčenie podľa A:C/HRV; spätné doladenie

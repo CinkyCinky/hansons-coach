@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2, MessageCircle, Repeat } from "lucide-react";
+import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2, MessageCircle, Repeat, Info } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { generatePlan, uploadPlan, fetchProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
+import { classifyWorkout } from "@/lib/workoutType";
 
 const STEP_INPUT = "bg-[#1a1a24] border border-white/10 rounded px-1.5 py-1 text-white text-center focus:outline-none focus:border-primary/50";
 
@@ -246,6 +247,27 @@ export default function Generator() {
             </button>
           </div>
 
+          {/* "i" panel: z čoho sú tempá počítané (transparentnosť/dôvera) */}
+          {generatedPlan.paces && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-xs">
+              <p className="flex items-center gap-1.5 font-bold text-gray-300 mb-2">
+                <Info size={14} className="text-primary" /> Z čoho sú tempá počítané
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-300">
+                <span>Tempo / HMP</span><span className="text-right font-mono text-amber-300">{generatedPlan.paces.tempo}/km</span>
+                <span>Easy / Dlhé</span><span className="text-right font-mono text-emerald-300">{generatedPlan.paces.easy_min}–{generatedPlan.paces.easy_max}/km</span>
+                <span>Strength</span><span className="text-right font-mono text-orange-300">{generatedPlan.paces.strength}/km</span>
+                <span>Speed</span><span className="text-right font-mono text-rose-300">{generatedPlan.paces.speed}/km</span>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                Variant <b className="text-gray-300">{generatedPlan.paces.variant}</b> · týždeň {generatedPlan.paces.training_week}/18.
+                Tempo/Strength/Easy z cieľa <b className="text-gray-300">{generatedPlan.paces.target_time}</b>;
+                Speed z {generatedPlan.paces.vo2max ? <>VO2max <b className="text-gray-300">{generatedPlan.paces.vo2max}</b></> : "cieľa (VO2max nedostupné)"}.
+                Tep je len referencia — behy riadime tempom.
+              </p>
+            </div>
+          )}
+
           <div>
             <h3 className="font-bold mb-1 text-lg">
               Návrh plánu ({generatedPlan.workouts?.length ?? 0}{" "}
@@ -257,17 +279,32 @@ export default function Generator() {
             <div className="flex flex-col gap-3">
               {generatedPlan.workouts.map((w: any, idx: number) => (
                 <div key={idx} className="glass-card p-4 rounded-xl border border-white/5">
-                  {w.day_label && (
-                    <p className="text-xs font-bold text-accent uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                      <CalIcon size={13} /> {w.day_label}
-                    </p>
-                  )}
+                  {(() => {
+                    const c = classifyWorkout(w.workout_name);
+                    return (
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        {w.day_label && (
+                          <p className="text-xs font-bold text-accent uppercase tracking-wider flex items-center gap-1.5">
+                            <CalIcon size={13} /> {w.day_label}
+                          </p>
+                        )}
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${c.badge}`}>
+                          {c.label}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <input
                     value={w.workout_name ?? ""}
                     onChange={(e) => updateWorkout(idx, "workout_name", e.target.value)}
                     className="font-bold text-primary w-full bg-transparent border-b border-white/10 focus:outline-none focus:border-primary/50 pb-1"
                   />
-                  {w.description && <p className="text-xs text-gray-400 mb-3 mt-1">{w.description}</p>}
+                  {w.description && <p className="text-xs text-gray-400 mb-1 mt-1">{w.description}</p>}
+                  {classifyWorkout(w.workout_name).why && (
+                    <p className="text-[11px] text-gray-500 italic mb-2 leading-snug">
+                      💡 {classifyWorkout(w.workout_name).why}
+                    </p>
+                  )}
                   <div className="flex flex-col gap-2 mt-2">
                     {w.steps.map((s: any, s_idx: number) =>
                       s.type === "repeat" && Array.isArray(s.steps) ? (

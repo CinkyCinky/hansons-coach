@@ -302,31 +302,55 @@ def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
     return f"{reps}×{_d(dist_m)} (pauza {_d(rec_m)} jog)"
 
 
-def sos_for_week(week: int) -> Optional[dict]:
-    """Predpísané SOS tréningy pre daný týždeň (Advanced). Vráti štruktúru pre prompt aj
-    pre prípadný deterministický builder. None v T1 (len Easy) a T18 (taper)."""
+VARIANTS = {
+    "advanced": "Advanced — plný objem (~51 mi/týž vo vrchole), 6 dní behu.",
+    "beginner": "Beginner — nižší objem (~48 mi/týž vo vrchole), kratšie Easy behy; rovnaké SOS ako Advanced.",
+    "just_finish": "Just Finish — cieľ je dobehnúť: ŽIADNE tvrdé intervaly, dôraz na objem a dlhý beh.",
+}
+
+
+def variant_label(variant: Optional[str]) -> str:
+    return {"advanced": "Advanced", "beginner": "Beginner", "just_finish": "Just Finish"}.get(
+        (variant or "advanced").lower(), "Advanced")
+
+
+def variant_note(variant: Optional[str]) -> str:
+    v = (variant or "advanced").lower()
+    return f"\nVARIANT PLÁNU: {VARIANTS.get(v, VARIANTS['advanced'])}\n"
+
+
+def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dict]:
+    """Predpísané SOS tréningy pre daný týždeň. Vráti štruktúru pre prompt aj pre prípadný
+    deterministický builder. None v T1 (len Easy) a T18 (taper).
+    Pri variante 'just_finish' sa intervaly (utorok) vynechávajú."""
     if week <= 1 or week >= 18:
         return None
+    v = (variant or "advanced").lower()
     out: Dict[str, dict] = {}
-    if week in SPEED_LADDER:
-        reps, dist_m, rec_m = SPEED_LADDER[week]
-        out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                          "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
-    elif week in STRENGTH_LADDER:
-        reps, dist_m, rec_m = STRENGTH_LADDER[week]
-        out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                          "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
+    if v != "just_finish":
+        if week in SPEED_LADDER:
+            reps, dist_m, rec_m = SPEED_LADDER[week]
+            out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
+                              "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
+        elif week in STRENGTH_LADDER:
+            reps, dist_m, rec_m = STRENGTH_LADDER[week]
+            out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
+                              "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
     tempo_km = round(TEMPO_MILES.get(week, 4) * _MI, 1)
-    out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
-                       "label": f"Tempo {tempo_km} km @ cieľové HMP"}
+    if v == "just_finish":
+        out["thursday"] = {"kind": "easy", "dist_km": tempo_km, "pace": "easy",
+                           "label": f"Súvislý beh {tempo_km} km @ Easy (Just Finish — bez tvrdého tempa)"}
+    else:
+        out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
+                           "label": f"Tempo {tempo_km} km @ cieľové HMP"}
     out["sunday"] = {"kind": "long", "pace": "easy",
                      "label": "Dlhý beh @ Easy (≈10–14 míľ podľa fázy; max 25–30 % týždenného objemu, strop 16 míľ)"}
     return out
 
 
-def sos_block(week: int) -> str:
+def sos_block(week: int, variant: Optional[str] = "advanced") -> str:
     """Per-week predpísané SOS do promptu — aby AI tréning NEvymýšľala, len rozmiestnila."""
-    sos = sos_for_week(week)
+    sos = sos_for_week(week, variant)
     if not sos:
         if week <= 1:
             return "\nPREDPÍSANÉ SOS (T1): žiadne — len Easy behy (adaptácia).\n"
@@ -334,10 +358,11 @@ def sos_block(week: int) -> str:
     lines = ["\nPREDPÍSANÉ SOS PRE TENTO TÝŽDEŇ (drž sa ich, len ich rozmiestni na dostupné dni):"]
     if "tuesday" in sos:
         lines.append(f"  • Kľúčový intervalový (typicky utorok): {sos['tuesday']['label']}")
-    lines.append(f"  • Tempo (typicky štvrtok): {sos['thursday']['label']}")
+    lines.append(f"  • {'Tempo' if sos['thursday']['kind'] == 'tempo' else 'Stredný beh'} (typicky štvrtok): {sos['thursday']['label']}")
     lines.append(f"  • Dlhý (typicky nedeľa): {sos['sunday']['label']}")
-    lines.append("  Intervaly zapíš ako JEDEN 'repeat' krok (iterations = počet) s vnorenými krokmi "
-                 "[run úsek na danom tempe, recover pauza pomaly]. WU + CD 2–4 km na Easy tempe.")
+    if "tuesday" in sos:
+        lines.append("  Intervaly zapíš ako JEDEN 'repeat' krok (iterations = počet) s vnorenými krokmi "
+                     "[run úsek na danom tempe, recover pauza pomaly]. WU + CD 2–4 km na Easy tempe.")
     return "\n".join(lines) + "\n"
 
 

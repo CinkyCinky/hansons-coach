@@ -12,6 +12,11 @@ import {
   fetchWorkoutDetails, fetchActivityStats
 } from "@/lib/api";
 import { useStore } from "@/lib/store";
+import { classifyWorkout } from "@/lib/workoutType";
+
+const VARIANT_LABELS: Record<string, string> = {
+  advanced: "Advanced", beginner: "Beginner", just_finish: "Just Finish",
+};
 
 // HR zóna farby pre tréningové kroky
 
@@ -163,7 +168,9 @@ export default function Plan() {
     <div className="flex flex-col gap-6 pt-4 pb-32">
       <header>
         <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
-        <p className="text-gray-400 text-sm">Hanson Advanced Half-Marathon</p>
+        <p className="text-gray-400 text-sm">
+          Hanson {VARIANT_LABELS[store.dashboard?.plan_variant ?? "advanced"] ?? "Advanced"} Half-Marathon
+        </p>
       </header>
 
       {error && (
@@ -395,10 +402,20 @@ export default function Plan() {
                     </span>
                   </div>
 
-                  <div className="flex-1">
-                    <h3 className={`font-bold ${isToday ? "text-white" : "text-gray-200"}`}>
-                      {workout.title}
-                    </h3>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className={`font-bold ${isToday ? "text-white" : "text-gray-200"}`}>
+                        {workout.title}
+                      </h3>
+                      {!workout.activityId && (() => {
+                        const c = classifyWorkout(workout.title);
+                        return (
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${c.badge}`}>
+                            {c.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     <p className="text-xs text-gray-400">{workout.sportType?.typeKey || "Beh"}</p>
                   </div>
 
