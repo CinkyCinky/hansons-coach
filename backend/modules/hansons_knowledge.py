@@ -211,11 +211,20 @@ TAPER_GUIDANCE = (
 
 
 def current_training_week(profile: dict) -> int:
-    """Aktuálny týždeň prípravy (1–18) z training_start_date (zhodné s main._calculate_training_week)."""
+    """Aktuálny týždeň prípravy (1–18) z training_start_date.
+
+    Týždeň sa mení vždy v PONDELOK (ISO), nezávisle od toho, na ktorý deň padne
+    training_start_date. Automatický štart = dátum_pretekov − 126 dní, čo pri
+    nedeľných pretekoch padne na nedeľu — bez tohto zarovnania by sa týždeň menil
+    v nedeľu. Kotvou T1 je preto pondelok v dni štartu alebo prvý nasledujúci.
+    """
     try:
         start = datetime.date.fromisoformat(str(profile.get("training_start_date", "2026-06-01"))[:10])
-        delta = (datetime.date.today() - start).days
-        return max(1, min(18, delta // 7 + 1))
+        today = datetime.date.today()
+        anchor_monday = start + datetime.timedelta(days=(7 - start.weekday()) % 7)  # pondelok ≥ štart
+        today_monday = today - datetime.timedelta(days=today.weekday())             # pondelok tohto týždňa
+        week = (today_monday - anchor_monday).days // 7 + 1
+        return max(1, min(18, week))
     except Exception:
         return 1
 
