@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   Moon, Heart, Battery, Activity, Flame, ChevronRight,
   Loader2, Bot, RefreshCcw, Zap, TrendingUp, Info,
-  CheckCircle2, Circle, ListChecks
+  CheckCircle2, Circle, ListChecks, Trophy, Apple
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -48,6 +48,26 @@ function timeAgo(ts: number | null): string {
   return "dávnejšie";
 }
 
+// Pretekové tempo + medzičasy z cieľového času (na pretekový týždeň)
+function goalSplits(t?: string | null) {
+  if (!t) return null;
+  const parts = String(t).split(":").map(Number);
+  let sec = 0;
+  if (parts.length === 3) sec = parts[0] * 3600 + parts[1] * 60 + parts[2];
+  else if (parts.length === 2) sec = parts[0] * 60 + parts[1];
+  if (!sec || parts.some(isNaN)) return null;
+  const paceSec = sec / 21.0975;
+  const fmtPace = (p: number) => `${Math.floor(p / 60)}:${String(Math.round(p % 60)).padStart(2, "0")}`;
+  const fmtT = (x: number) => {
+    const h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), ss = Math.round(x % 60);
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${m}:${String(ss).padStart(2, "0")}`;
+  };
+  return {
+    pace: fmtPace(paceSec),
+    splits: [5, 10, 15, 21.0975].map((d) => ({ label: d === 21.0975 ? "Cieľ" : `${d} km`, t: fmtT(paceSec * d) })),
+  };
+}
+
 export default function Dashboard() {
   const store = useStore();
   const [showLegend, setShowLegend] = useState(false);
@@ -57,9 +77,28 @@ export default function Dashboard() {
 
   useEffect(() => {
     store.loadDashboard();
+    store.loadPlan();
     fetchProfile().then(setProfile).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Konzistencia za posledných 28 dní (z naplánovaného plánu + splnených aktivít)
+  const consistency = useMemo(() => {
+    const plan = store.plan ?? [];
+    if (!plan.length) return null;
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 28);
+    const SOS = ["speed", "strength", "tempo", "long"];
+    let done = 0, missedSos = 0;
+    for (const w of plan as any[]) {
+      const dt = new Date(w.date + "T00:00:00");
+      if (dt < cutoff || dt >= now) continue; // len minulých 28 dní
+      if (w.activityId) { done++; continue; }
+      if (SOS.includes(classifyWorkout(w.title).type)) missedSos++;
+    }
+    if (done === 0 && missedSos === 0) return null;
+    return { done, missedSos };
+  }, [store.plan]);
 
   const handleRefresh = async () => {
     store.invalidateAll();
@@ -99,6 +138,13 @@ export default function Dashboard() {
   const readiness = d.readiness || {};
   const lastActivity = d.activities?.[0] ?? null;
   const todayWorkout = d.today_workout ?? null;
+
+  // Pretekový týždeň + výživa (kontextové karty)
+  const weekNum = typeof d.training_week === "number" ? d.training_week : null;
+  const isRaceWeek = weekNum != null && weekNum >= 18;
+  const splits = isRaceWeek ? goalSplits(profile?.target_time) : null;
+  const todayKind = todayWorkout ? classifyWorkout(todayWorkout.title || "").type : null;
+  const showFueling = todayKind === "long" || isRaceWeek;
 
   const formStatus = getFormStatus(sleep.score, stats.body_battery, readiness.readiness_score);
 
@@ -161,6 +207,44 @@ export default function Dashboard() {
             Prejsť do Nastavení a prepojiť Garmin <ChevronRight size={14} />
           </Link>
         </div>
+      )}
+
+      {/* Pretekový týždeň — taper + pretekový plán tempa */}
+      {isRaceWeek && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4"
+        >
+          <h3 className="text-sm font-bold text-emerald-300 uppercase tracking-wider mb-2 flex items-center gap-2">
+            <Trophy size={16} /> Pretekový týždeň
+          </h3>
+          <p className="text-xs text-gray-300 leading-relaxed mb-3">
+            Si v taperi — menej behu, viac sviežosti. Žiadne tvrdé tréningy ani nové vzdialenosti.
+            „Ťažké nohy" sú normálne, dôveruj príprave.
+          </p>
+          {splits && (
+            <div className="bg-black/20 rounded-xl p-3 mb-3">
+              <p className="text-xs text-gray-400 mb-2">
+                Pretekový rozpis tempa — cieľ <b className="text-emerald-300">{splits.pace}/km</b>:
+              </p>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {splits.splits.map((s) => (
+                  <div key={s.label}>
+                    <p className="text-[10px] text-gray-500">{s.label}</p>
+                    <p className="text-sm font-bold font-mono text-gray-200">{s.t}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <ul className="text-xs text-gray-300 flex flex-col gap-1">
+            <li>✅ Spánok navyše (najmä 2 noci pred pretekmi)</li>
+            <li>✅ Sacharidy 2–3 dni pred + raňajky 2–3 h vopred</li>
+            <li>✅ Hydratácia; neskúšaj nič nové (jedlo, topánky)</li>
+            <li>✅ Deň pred: krátke rozklusanie 15–20 min</li>
+          </ul>
+        </motion.div>
       )}
 
       {/* Dokonči nastavenie — vodiaci checklist pre nového používateľa */}
@@ -352,6 +436,27 @@ export default function Dashboard() {
         )}
       </motion.section>
 
+      {/* Výživa — kontextovo pri dlhom behu alebo v pretekovom týždni */}
+      {showFueling && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4"
+        >
+          <h3 className="text-sm font-bold text-amber-300 uppercase tracking-wider mb-1 flex items-center gap-2">
+            <Apple size={16} /> Výživa {isRaceWeek ? "pred pretekmi" : "na dlhý beh"}
+          </h3>
+          <p className="text-xs text-gray-300 leading-relaxed">
+            Pri behu nad ~75–90 min dopĺňaj sacharidy priebežne — orientačne ~30–60 g/h
+            (gél, banán, ionťák). Ľahké sacharidy aj 1–2 h pred behom.{" "}
+            {isRaceWeek
+              ? "Použi presne to, čo máš vyskúšané z tréningu — nič nové."
+              : "Dlhý beh je ideálny na nácvik pretekovej výživy."}{" "}
+            <Link href="/about" className="text-amber-300 underline underline-offset-2">Viac</Link>.
+          </p>
+        </motion.div>
+      )}
+
       {/* AI Advice */}
       {data && (
         <motion.section
@@ -512,6 +617,36 @@ export default function Dashboard() {
           )}
         </motion.div>
       </section>
+
+      {/* Konzistencia (28 dní) — kľúčový pilier Hansonovej metódy */}
+      {consistency && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-4"
+        >
+          <h3 className="text-sm font-bold flex items-center gap-2 mb-3">
+            <Flame className="text-accent" size={18} /> Konzistencia (28 dní)
+          </h3>
+          <div className="flex gap-6">
+            <div>
+              <p className="text-2xl font-bold text-emerald-400">{consistency.done}</p>
+              <p className="text-xs text-gray-500">dokončených behov</p>
+            </div>
+            <div>
+              <p className={`text-2xl font-bold ${consistency.missedSos > 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                {consistency.missedSos}
+              </p>
+              <p className="text-xs text-gray-500">vynechaných kľúčových</p>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-3 leading-snug">
+            {consistency.missedSos === 0
+              ? "Žiadny vynechaný kľúčový tréning — konzistencia je pilier Hansonovej metódy. 💪"
+              : "Kľúčové (SOS) tréningy nehromaď — radšej pokračuj podľa plánu, nikdy nie 2 tvrdé dni za sebou."}
+          </p>
+        </motion.div>
+      )}
 
       {/* Posledná aktivita */}
       <section className="mb-8">

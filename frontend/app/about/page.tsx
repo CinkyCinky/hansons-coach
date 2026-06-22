@@ -118,6 +118,23 @@ export default function About() {
           </p>
         </Item>
 
+        <Item q="Výživa a pitný režim">
+          <p>
+            Pri behoch <b className="text-gray-100">nad ~75–90 minút</b> telu dochádzajú zásoby
+            glykogénu — dopĺňaj sacharidy priebežne, orientačne <b className="text-gray-100">30–60 g/h</b>
+            {" "}(gél, banán, ionťák). Kratšie behy fueling počas behu nepotrebujú.
+          </p>
+          <p>
+            <b className="text-gray-100">Pred behom:</b> ľahké sacharidy 1–2 h vopred (banán, toast,
+            ovsené vločky). <b className="text-gray-100">Po behu:</b> sacharidy + bielkoviny do
+            ~30–60 min na regeneráciu (kumulovaná únava si žiada poctivé dopĺňanie).
+          </p>
+          <p>
+            <b className="text-gray-100">Dlhý beh = tréning žalúdka.</b> Vyskúšaj presne tú výživu a
+            tekutiny, ktoré chceš použiť na pretekoch — v deň D nič nové.
+          </p>
+        </Item>
+
         <Item q="Tvoje Garmin metriky — čo znamenajú">
           <Term name="A:C záťaž (akútna : chronická)">pomer záťaže za ~7 dní k ~28-dňovému priemeru. 0,8–1,4 = bezpečné pásmo; nad 1,4 = priveľa priskoro (uber); pod 0,8 = priestor pridať.</Term>
           <Term name="VO2max">odhad aeróbnej kapacity. Appka z neho odhaduje tvoje aktuálne 5K tempo pre Speed intervaly.</Term>
