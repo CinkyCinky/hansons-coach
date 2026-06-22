@@ -67,7 +67,9 @@ Tempo behy (štvrtok) prebiehajú PARALELNE celý plán a postupne sa predlžuj�
   → 7 míľ (T14–T16) → 5 míľ (T17) → taper. Tempo VŽDY presne cieľové HMP.
 
 ▌OFICIÁLNY PLÁN — NEDEĽNÉ DLHÉ BEHY
-  Budujú sa 10 → 12 → 14 míľ. Dlhý beh NIKDY nepresiahne ~⅓ týždenného objemu.
+  Budujú sa ~8 → 10 → 12 míľ (vrchol ~12 míľ / ~19 km; ku koncu striedanie 10/12).
+  Dlhý beh NIKDY nepresiahne ~30 % týždenného objemu. POZOR: 16 míľ je MARATÓNsky
+  strop, NIE polmaratónsky — pri polmaratóne dlhý beh nejde nad ~12 míľ (~19 km).
   Beží sa Easy tempom (NIE pretekovým) — opäť princíp kumulovanej únavy.
 
 ▌TRÉNINGOVÉ TEMPÁ (Hanson je PACE-FIRST — riadime TEMPOM, nie tepom)
@@ -95,9 +97,9 @@ PRETO: Easy, Dlhé, Tempo aj intervaly zadávaj s TEMPOVÝM cieľom (pace). HR s
 nanajvýš ako informáciu v popise kroku, nie ako Garmin target.
 
 ▌DLHÝ BEH — PRAVIDLO OBJEMU (dôležitý guardrail)
-• Dlhý beh NIKDY nepresiahne ~25–30 % týždenného objemu. Radšej kratší a častejší
-  beh než jeden „hrdinský". (Pri maratóne Hanson capuje dlhý beh na 16 míľ — princíp:
-  simulovať POSLEDNÝCH 16 míľ na unavených nohách, nie nabehať 32 km naraz.)
+• Dlhý beh NIKDY nepresiahne ~30 % týždenného objemu. Radšej kratší a častejší
+  beh než jeden „hrdinský". Polmaratónsky dlhý beh vrcholí na ~12 míľ (~19 km).
+  (Strop 16 míľ je MARATÓNske pravidlo — na polmaratón sa NEvzťahuje.)
 • Dlhý beh sa beží EASY tempom/tepom (nie pretekovým) — opäť kumulovaná únava.
 
 ▌ROZLOŽENIE INTENZITY A OBJEMU
@@ -344,7 +346,7 @@ def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dic
         out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
                            "label": f"Tempo {tempo_km} km @ cieľové HMP"}
     out["sunday"] = {"kind": "long", "pace": "easy",
-                     "label": "Dlhý beh @ Easy (≈10–14 míľ podľa fázy; max 25–30 % týždenného objemu, strop 16 míľ)"}
+                     "label": "Dlhý beh @ Easy (≈8–12 míľ podľa fázy, vrchol ~12 míľ / ~19 km; max ~30 % týždenného objemu)"}
     return out
 
 

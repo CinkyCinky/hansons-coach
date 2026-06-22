@@ -465,6 +465,12 @@ export default function Plan() {
                       )}
                     </div>
                     <p className="text-xs text-gray-400">{workout.sportType?.typeKey || "Beh"}</p>
+                    {!workout.activityId && (() => {
+                      const c = classifyWorkout(workout.title);
+                      return c.why ? (
+                        <p className="text-[11px] text-gray-500 italic mt-1 leading-snug">💡 {c.why}</p>
+                      ) : null;
+                    })()}
                   </div>
 
                   <div className="shrink-0">
