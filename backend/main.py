@@ -983,9 +983,11 @@ def api_plan_overview(user_id: str = Depends(get_current_user)):
 
 
 @app.get("/api/plan/daily_update")
-def generate_daily_update(client=Depends(get_garmin_client), user_id: str = Depends(get_current_user)):
+def generate_daily_update(feeling: str = "", pain: str = "", pain_area: str = "",
+                          client=Depends(get_garmin_client), user_id: str = Depends(get_current_user)):
     """Generuje AI návrh na úpravu najbližšieho tréningu podľa aktuálnej formy (pripravenosť,
-    HRV, Body Battery, A:C záťaž) a Hanson metodiky."""
+    HRV, Body Battery, A:C záťaž), prípadného self-reportu (pocit/bolesť) a Hanson metodiky.
+    feeling = ok|tired|pain; pain = sharp|dull; pain_area = voľný text."""
     try:
         profile = get_user_profile(user_id) or {}
         # Stav dňa → dátovo-riadené zmäkčenie (nie len všeobecná inštrukcia)
@@ -1002,7 +1004,46 @@ def generate_daily_update(client=Depends(get_garmin_client), user_id: str = Depe
             )
         except Exception:
             pass
+
+        # Self-report zverenca (pocit / bolesť) → silnejší vstup pre rozhodnutie
+        sharp_pain = (feeling == "pain" and pain == "sharp")
+        if feeling == "pain" or pain:
+            area = f" (oblasť: {pain_area})" if pain_area else ""
+            if sharp_pain:
+                form_context += (
+                    f"\nSELF-REPORT: zverenec hlási OSTRÚ / pretrvávajúcu bolesť{area}. "
+                    "TVRDÝ tréning je dnes ZAKÁZANÝ — predpíš VÝLUČNE ľahký regeneračný beh alebo voľno, "
+                    "žiadne intervaly/tempo. Odporuč sledovať bolesť a v prípade zhoršenia oddych/lekára."
+                )
+            else:
+                form_context += (
+                    f"\nSELF-REPORT: zverenec hlási tupú/svalovú bolesť{area} — pri kumulovanej únave "
+                    "býva bežná; tréning môže pokračovať, prípadne mierne zmäkči (pomalší okraj, kratšie)."
+                )
+        elif feeling == "tired":
+            form_context += ("\nSELF-REPORT: zverenec sa cíti unavený — zváž mierne zmäkčenie "
+                             "(pomalší okraj tempa, menej opakovaní/kratší objem).")
+
         proposal = workout_generator.update_next_workout(client, profile, form_context)
+
+        # Deterministická poistka: pri OSTREJ bolesti vždy ľahký beh (nezávisle od LLM)
+        if sharp_pain and proposal.get("status") == "success" and proposal.get("proposed_workout"):
+            paces = hansons_knowledge.compute_training_paces(profile.get("target_time", "")) or {}
+            easy_step = {"type": "run", "distance_km": 6.0}
+            if paces.get("easy_min") and paces.get("easy_max"):
+                easy_step["pace_min"] = paces["easy_max"]   # pomalší okraj
+                easy_step["pace_max"] = paces["easy_min"]   # rýchlejší okraj
+            proposal["proposed_workout"] = {
+                "workout_name": "Easy regeneračný beh 6 km (kvôli bolesti)",
+                "description": ("Hlásil si ostrú bolesť — namiesto tvrdého tréningu len ľahký beh. "
+                                "Ak bolesť pretrváva alebo sa zhoršuje, vynechaj beh a oddýchni si."),
+                "steps": [easy_step],
+            }
+            proposal["coach_message"] = (
+                "Hlásiš ostrú bolesť, preto som najbližší tréning zmenil na ľahký regeneračný beh "
+                "(pokojne si daj radšej úplné voľno) — zdravie je prednosť. "
+                + (proposal.get("coach_message") or "")
+            ).strip()
         # Doplň kroky pôvodného tréningu pre porovnanie v UI
         old_id = proposal.get("old_workout_id")
         if old_id:

@@ -12,6 +12,14 @@ function validateTargetTime(val: string): boolean {
   return /^\d{1,2}:\d{2}:\d{2}$/.test(val.trim());
 }
 
+function parseTimeSec(t: string): number | null {
+  const p = String(t).split(":").map(Number);
+  if (p.some(isNaN)) return null;
+  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return null;
+}
+
 export default function Settings() {
   const supabase = createClient();
   const router = useRouter();
@@ -46,6 +54,8 @@ export default function Settings() {
   const [showRaceInput, setShowRaceInput] = useState(false);
   const [raceDist, setRaceDist] = useState("10");
   const [raceTime, setRaceTime] = useState("");
+  // Proaktívna re-kalibrácia cieľa: odhad z VO2max porovnaný s aktuálnym cieľom
+  const [autoEst, setAutoEst] = useState<string | null>(null);
 
   const handleEstimate = async (useRace: boolean) => {
     setEstimating(true);
@@ -142,6 +152,13 @@ export default function Settings() {
   useEffect(() => {
     fetchMemory()
       .then((d) => setFacts(d.facts || []))
+      .catch(() => {});
+  }, []);
+
+  // Proaktívna re-kalibrácia: odhad z Garmin VO2max (na porovnanie s cieľom)
+  useEffect(() => {
+    estimateGoal()
+      .then((r) => { if (r?.predicted) setAutoEst(r.predicted); })
       .catch(() => {});
   }, []);
 
@@ -321,6 +338,32 @@ export default function Settings() {
               prianie. Prehnaný cieľ spraví každý tréning prirýchly (najčastejšia chyba). Neistý?{" "}
               <Link href="/about" className="text-primary underline underline-offset-2">Pozri „O metóde"</Link>.
             </p>
+
+            {/* Re-kalibrácia: forma (VO2max) vs aktuálny cieľ */}
+            {(() => {
+              const goalSec = parseTimeSec(targetTime);
+              const estSec = autoEst ? parseTimeSec(autoEst) : null;
+              const diff = goalSec && estSec ? Math.round((goalSec - estSec) / 60) : null;
+              if (diff == null || Math.abs(diff) < 4) return null;
+              return (
+                <div className="mt-3 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs">
+                  <p className="text-amber-300 font-bold mb-1">Forma vs cieľ</p>
+                  <p className="text-gray-300 leading-snug">
+                    Tvoja aktuálna forma napovedá ~<b className="text-gray-100">{autoEst}</b>{" "}
+                    {diff < 0
+                      ? `— tvoj cieľ je o ${Math.abs(diff)} min rýchlejší. Zváž miernejší cieľ, nech tempá nie sú prirýchle.`
+                      : `— tvoj cieľ je o ${diff} min pomalší. Ak sa cítiš dobre, zváž ambicióznejší cieľ.`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setTargetTime(autoEst!)}
+                    className="mt-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 font-bold px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Použiť ~{autoEst}
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Odhad realistického cieľa */}
             <div className="mt-3 flex flex-wrap gap-2">
