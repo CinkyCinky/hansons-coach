@@ -780,19 +780,50 @@ def api_generate_plan(
 class PlanUploadRequest(BaseModel):
     plan_data: dict
 
+def _clear_planned_on_date(client, date_str: str) -> int:
+    """Zmaže existujúce naplánované tréningy na daný dátum (idempotencia — žiadne duplikáty
+    pri opätovnom zápise plánu). Vráti počet zmazaných."""
+    try:
+        d = datetime.date.fromisoformat(date_str)
+        items = _scheduled_items(client.get_scheduled_workouts(d.year, d.month))
+    except Exception:
+        return 0
+    deleted = 0
+    for it in items:
+        if (it.get("date") or "")[:10] == date_str and _is_planned_workout(it):
+            try:
+                client.delete_workout(it.get("workoutId"))
+                deleted += 1
+            except Exception:
+                pass
+    return deleted
+
+
 @app.post("/api/plan/upload")
 def api_upload_plan(req: PlanUploadRequest, client=Depends(get_garmin_client)):
     try:
         garmin_workouts = workout_generator.convert_to_garmin_workouts(req.plan_data)
-        uploaded = []
+        uploaded, failed = [], []
+        cleared_dates = set()
         for target_date, workout in garmin_workouts:
-            resp = client.upload_running_workout(workout)
-            workout_id = resp.get("workoutId")
-            if workout_id:
-                date_str = target_date.strftime("%Y-%m-%d")
-                client.schedule_workout(workout_id, date_str)
-                uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
-        return {"status": "success", "uploaded": uploaded}
+            date_str = target_date.strftime("%Y-%m-%d")
+            try:
+                # Idempotencia: pred zápisom zmaž starý tréning na ten istý deň (raz na dátum)
+                if date_str not in cleared_dates:
+                    _clear_planned_on_date(client, date_str)
+                    cleared_dates.add(date_str)
+                resp = client.upload_running_workout(workout)
+                workout_id = resp.get("workoutId")
+                if workout_id:
+                    client.schedule_workout(workout_id, date_str)
+                    uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
+                else:
+                    failed.append({"date": date_str, "name": workout.workoutName})
+            except Exception:
+                logger.exception("Zápis tréningu %s na %s zlyhal", workout.workoutName, date_str)
+                failed.append({"date": date_str, "name": workout.workoutName})
+        status = "success" if uploaded and not failed else ("partial" if uploaded else "error")
+        return {"status": status, "uploaded": uploaded, "failed": failed}
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa nahrať plán do Garminu.")
 
@@ -1318,10 +1349,9 @@ Najbližší tréning: {next_w_str}
 
     def _build_and_schedule(workout_data: dict, date: str) -> Optional[str]:
         """Z AI JSON postaví Garmin tréning, nahrá ho a naplánuje na dátum. Vráti workoutId."""
-        garmin_steps = [
-            workout_generator.create_garmin_step(step, i)
-            for i, step in enumerate(workout_data.get("steps", []), 1)
-        ]
+        steps_json = workout_data.get("steps", [])
+        garmin_steps = workout_generator.build_garmin_steps(steps_json)   # podporuje repeat-bloky
+        _, est_dur = workout_generator._estimate_steps(steps_json)
         segment = workout_generator.WorkoutSegment(
             segmentOrder=1,
             sportType={"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
@@ -1330,7 +1360,7 @@ Najbližší tréning: {next_w_str}
         garmin_workout = workout_generator.RunningWorkout(
             workoutName=workout_data.get("workout_name", "Beh"),
             description=workout_data.get("description", ""),
-            estimatedDurationInSecs=0,
+            estimatedDurationInSecs=int(est_dur),
             workoutSegments=[segment],
         )
         resp = client.upload_running_workout(garmin_workout)
@@ -1359,7 +1389,7 @@ Najbližší tréning: {next_w_str}
 
     def create_and_schedule_workout(date: str, description: str) -> str:
         """Vygeneruje NOVÝ tréning podľa požiadavky (Hanson metodika + tvoje Garmin dáta/zóny)
-        a naplánuje ho na daný dátum (YYYY-MM-DD). Easy/dlhé dostanú HR cieľ, tempo/intervaly tempo."""
+        a naplánuje ho na daný dátum (YYYY-MM-DD). Všetko TEMPOM; intervaly ako repeat-blok."""
         try:
             datetime.datetime.strptime(date, "%Y-%m-%d")  # validácia
             profile = get_user_profile(user_id) or {}

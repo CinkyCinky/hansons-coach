@@ -218,11 +218,17 @@ recovery/cooldown), `endCondition` (distance/lapButton/time) a `targetType`
 - Generátorové prompty (weekly/single/update) + chat prompt: všetky behy TEMPOM,
   HR len v popise; WU/CD 2–4 km; Easy/Dlhé bez WU/CD.
 
-**P2 — Deterministický builder tréningov + watch zápis (backend)**
-- `build_week(profile, fitness, available_days)` → štruktúra týždňa z 1.5 (kód, nie LLM).
-- LLM dostane hotovú štruktúru a robí len denné korekcie + komentár.
-- Builder hodiniek: **repeat-bloky** pre intervaly, pace target primárne, recovery kroky,
-  WU/CD, idempotentné názvy + dedupe pri uploade.
+**P2 — Watch zápis + štruktúra (backend) — ✅ z väčšej časti HOTOVÉ**
+- ✅ **Repeat-bloky** pre intervaly: `build_garmin_steps()` stavia RepeatGroupDTO s globálnym
+  `stepOrder` a `childStepId`; `6×800m` sa v hodinkách zobrazí ako repeat (1/6, 2/6…).
+  Použité v generátore aj v chat-e (`_build_and_schedule`).
+- ✅ **Idempotentný upload:** `_clear_planned_on_date()` pred zápisom zmaže starý tréning na
+  ten istý deň (žiadne duplikáty); odpoveď vracia `status` + `failed[]`, frontend to zobrazí.
+- ✅ **Per-week SOS šablóna** (`sos_for_week`/`sos_block`, `SPEED_LADDER`/`STRENGTH_LADDER`/
+  `TEMPO_MILES`) injektovaná do promptu — AI tréning NEvymýšľa štruktúru, len rozmiestni
+  predpísané SOS a dopočíta tempá. Frontend generátora vykresľuje repeat-bloky (editovateľné).
+- ⏳ **Odložené:** plne deterministický `build_week()` bez LLM pre všetky 3 varianty
+  (potrebné overené týždenné objemy Beginner/Just Finish) — viď 4.4.
 
 **P3 — UI/UX (frontend)**
 - Týždenný kalendár plánu s typmi a dňami; karta s tempo+HR-ref+„Prečo".

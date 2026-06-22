@@ -279,6 +279,68 @@ def phase_block(week: int) -> str:
     return f"\nFÁZA PRÍPRAVY: {ph['label']} (týždeň {week}/18)\n{ph['note']}\n"
 
 
+# ── Štruktúrované SOS progresie (Advanced plán) ──────────────────────────────
+# Hodnoty: (počet_opakovaní, dĺžka_úseku_m, dĺžka_pauzy_m). Pauza = pomalý jog.
+SPEED_LADDER = {
+    2: (12, 400, 400), 3: (8, 600, 400), 4: (6, 800, 400), 5: (5, 1000, 600),
+    6: (4, 1200, 600), 7: (3, 1609, 800), 8: (5, 1000, 600), 9: (6, 800, 400),
+    10: (12, 400, 400),
+}
+STRENGTH_LADDER = {
+    11: (6, 1609, 400), 12: (4, 2414, 800), 13: (3, 3219, 800), 14: (2, 4828, 1609),
+    15: (3, 3219, 800), 16: (4, 2414, 800), 17: (6, 1609, 400),
+}
+# Tempo beh (štvrtok) @ HMP — dĺžka v míľach podľa týždňa
+TEMPO_MILES = {2: 3, 3: 3, 4: 3, 5: 4, 6: 4, 7: 4, 8: 5, 9: 5, 10: 5,
+               11: 6, 12: 6, 13: 6, 14: 7, 15: 7, 16: 7, 17: 5}
+_MI = 1.609
+
+
+def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
+    def _d(m):
+        return f"{m} m" if m < 1000 else f"{round(m/1000, 1)} km"
+    return f"{reps}×{_d(dist_m)} (pauza {_d(rec_m)} jog)"
+
+
+def sos_for_week(week: int) -> Optional[dict]:
+    """Predpísané SOS tréningy pre daný týždeň (Advanced). Vráti štruktúru pre prompt aj
+    pre prípadný deterministický builder. None v T1 (len Easy) a T18 (taper)."""
+    if week <= 1 or week >= 18:
+        return None
+    out: Dict[str, dict] = {}
+    if week in SPEED_LADDER:
+        reps, dist_m, rec_m = SPEED_LADDER[week]
+        out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
+                          "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
+    elif week in STRENGTH_LADDER:
+        reps, dist_m, rec_m = STRENGTH_LADDER[week]
+        out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
+                          "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
+    tempo_km = round(TEMPO_MILES.get(week, 4) * _MI, 1)
+    out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
+                       "label": f"Tempo {tempo_km} km @ cieľové HMP"}
+    out["sunday"] = {"kind": "long", "pace": "easy",
+                     "label": "Dlhý beh @ Easy (≈10–14 míľ podľa fázy; max 25–30 % týždenného objemu, strop 16 míľ)"}
+    return out
+
+
+def sos_block(week: int) -> str:
+    """Per-week predpísané SOS do promptu — aby AI tréning NEvymýšľala, len rozmiestnila."""
+    sos = sos_for_week(week)
+    if not sos:
+        if week <= 1:
+            return "\nPREDPÍSANÉ SOS (T1): žiadne — len Easy behy (adaptácia).\n"
+        return "\nPREDPÍSANÉ SOS (T18 TAPER): žiadne tvrdé intervaly — zostupový týždeň.\n"
+    lines = ["\nPREDPÍSANÉ SOS PRE TENTO TÝŽDEŇ (drž sa ich, len ich rozmiestni na dostupné dni):"]
+    if "tuesday" in sos:
+        lines.append(f"  • Kľúčový intervalový (typicky utorok): {sos['tuesday']['label']}")
+    lines.append(f"  • Tempo (typicky štvrtok): {sos['thursday']['label']}")
+    lines.append(f"  • Dlhý (typicky nedeľa): {sos['sunday']['label']}")
+    lines.append("  Intervaly zapíš ako JEDEN 'repeat' krok (iterations = počet) s vnorenými krokmi "
+                 "[run úsek na danom tempe, recover pauza pomaly]. WU + CD 2–4 km na Easy tempe.")
+    return "\n".join(lines) + "\n"
+
+
 # ── Interpretácia tréningovej záťaže (acute:chronic ratio) ───────────────────
 
 def training_load_block(training_load: Optional[dict]) -> str:

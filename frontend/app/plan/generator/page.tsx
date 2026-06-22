@@ -2,11 +2,50 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2, MessageCircle } from "lucide-react";
+import { ArrowLeft, Loader2, Send, Calendar as CalIcon, Bot, CheckCircle2, MessageCircle, Repeat } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { generatePlan, uploadPlan, fetchProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
+
+const STEP_INPUT = "bg-[#1a1a24] border border-white/10 rounded px-1.5 py-1 text-white text-center focus:outline-none focus:border-primary/50";
+
+// Jeden editovateľný krok tréningu (vzdialenosť + tempo alebo HR). Použité aj vnútri repeat-blokov.
+function StepRow({ s, onField }: { s: any; onField: (field: string, value: any) => void }) {
+  const isHr = s.hr_min != null || s.hr_max != null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs bg-white/5 p-2 rounded-lg">
+      <span className="uppercase font-bold text-gray-300 w-16 shrink-0">{s.type}</span>
+      <span className="flex items-center gap-1">
+        <input
+          type="number" step="0.1" inputMode="decimal" value={s.distance_km ?? ""}
+          onChange={(e) => onField("distance_km", e.target.value === "" ? null : parseFloat(e.target.value))}
+          className={`w-16 ${STEP_INPUT}`}
+        />
+        <span className="text-gray-500">km</span>
+      </span>
+      {isHr ? (
+        <span className="flex items-center gap-1 text-rose-300 ml-auto">
+          <input type="number" inputMode="numeric" value={s.hr_min ?? ""}
+            onChange={(e) => onField("hr_min", e.target.value === "" ? null : parseInt(e.target.value))} className={`w-14 ${STEP_INPUT}`} />
+          <span>–</span>
+          <input type="number" inputMode="numeric" value={s.hr_max ?? ""}
+            onChange={(e) => onField("hr_max", e.target.value === "" ? null : parseInt(e.target.value))} className={`w-14 ${STEP_INPUT}`} />
+          <span className="text-gray-500">bpm</span>
+        </span>
+      ) : (
+        <span className="flex items-center gap-1 text-emerald-300 ml-auto">
+          <input value={s.pace_min ?? ""} placeholder="5:20"
+            onChange={(e) => onField("pace_min", e.target.value)} className={`w-14 ${STEP_INPUT}`} />
+          <span>–</span>
+          <input value={s.pace_max ?? ""} placeholder="5:10"
+            onChange={(e) => onField("pace_max", e.target.value)} className={`w-14 ${STEP_INPUT}`} />
+          <span className="text-gray-500">/km</span>
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function Generator() {
   const store = useStore();
@@ -59,10 +98,19 @@ export default function Generator() {
     setUploading(true);
     setError(null);
     try {
-      await uploadPlan(generatedPlan);
+      const res = await uploadPlan(generatedPlan);
       // Zneplatni cache, aby sa nové tréningy hneď zobrazili v Pláne a na Prehľade
       store.invalidateAll();
-      setUploadSuccess(true);
+      const failed = res?.failed?.length ?? 0;
+      if (res?.status === "error") {
+        setError("Nepodarilo sa zapísať žiadny tréning. Skús to znova.");
+      } else {
+        if (failed > 0) {
+          const dni = res.failed.map((f: any) => f.date).join(", ");
+          setError(`Časť tréningov sa nezapísala (${dni}). Ostatné sú v Garmine.`);
+        }
+        setUploadSuccess(true);
+      }
     } catch (err: any) {
       setError(err.message || "Chyba pri nahrávaní do Garminu.");
     } finally {
@@ -83,11 +131,21 @@ export default function Generator() {
     router.push("/chat");
   };
 
-  // Úprava vygenerovaného plánu pred zápisom do Garminu
-  const updateStep = (wi: number, si: number, field: string, value: any) => {
+  // Úprava vygenerovaného plánu pred zápisom do Garminu.
+  // ni (nepovinné) = index vnoreného kroku v repeat-bloku.
+  const updateStep = (wi: number, si: number, field: string, value: any, ni?: number) => {
     setGeneratedPlan((prev: any) => {
       const next = structuredClone(prev);
-      next.workouts[wi].steps[si][field] = value;
+      if (ni == null) next.workouts[wi].steps[si][field] = value;
+      else next.workouts[wi].steps[si].steps[ni][field] = value;
+      return next;
+    });
+  };
+
+  const updateRepeatIterations = (wi: number, si: number, value: any) => {
+    setGeneratedPlan((prev: any) => {
+      const next = structuredClone(prev);
+      next.workouts[wi].steps[si].iterations = value;
       return next;
     });
   };
@@ -211,55 +269,28 @@ export default function Generator() {
                   />
                   {w.description && <p className="text-xs text-gray-400 mb-3 mt-1">{w.description}</p>}
                   <div className="flex flex-col gap-2 mt-2">
-                    {w.steps.map((s: any, s_idx: number) => {
-                      const isHr = s.hr_min != null || s.hr_max != null;
-                      const inp = "bg-[#1a1a24] border border-white/10 rounded px-1.5 py-1 text-white text-center focus:outline-none focus:border-primary/50";
-                      return (
-                        <div key={s_idx} className="flex flex-wrap items-center gap-2 text-xs bg-white/5 p-2 rounded-lg">
-                          <span className="uppercase font-bold text-gray-300 w-16 shrink-0">{s.type}</span>
-                          <span className="flex items-center gap-1">
+                    {w.steps.map((s: any, s_idx: number) =>
+                      s.type === "repeat" && Array.isArray(s.steps) ? (
+                        <div key={s_idx} className="bg-white/5 rounded-lg p-2 border border-accent/20">
+                          <div className="flex items-center gap-2 text-xs font-bold text-accent mb-2">
+                            <Repeat size={13} />
                             <input
-                              type="number" step="0.1" inputMode="decimal"
-                              value={s.distance_km ?? ""}
-                              onChange={(e) => updateStep(idx, s_idx, "distance_km", e.target.value === "" ? null : parseFloat(e.target.value))}
-                              className={`w-16 ${inp}`}
+                              type="number" inputMode="numeric" min={1} value={s.iterations ?? 1}
+                              onChange={(e) => updateRepeatIterations(idx, s_idx, e.target.value === "" ? 1 : parseInt(e.target.value))}
+                              className={`w-12 ${STEP_INPUT}`}
                             />
-                            <span className="text-gray-500">km</span>
-                          </span>
-                          {isHr ? (
-                            <span className="flex items-center gap-1 text-rose-300 ml-auto">
-                              <input
-                                type="number" inputMode="numeric" value={s.hr_min ?? ""}
-                                onChange={(e) => updateStep(idx, s_idx, "hr_min", e.target.value === "" ? null : parseInt(e.target.value))}
-                                className={`w-14 ${inp}`}
-                              />
-                              <span>–</span>
-                              <input
-                                type="number" inputMode="numeric" value={s.hr_max ?? ""}
-                                onChange={(e) => updateStep(idx, s_idx, "hr_max", e.target.value === "" ? null : parseInt(e.target.value))}
-                                className={`w-14 ${inp}`}
-                              />
-                              <span className="text-gray-500">bpm</span>
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1 text-emerald-300 ml-auto">
-                              <input
-                                value={s.pace_min ?? ""} placeholder="5:20"
-                                onChange={(e) => updateStep(idx, s_idx, "pace_min", e.target.value)}
-                                className={`w-14 ${inp}`}
-                              />
-                              <span>–</span>
-                              <input
-                                value={s.pace_max ?? ""} placeholder="5:10"
-                                onChange={(e) => updateStep(idx, s_idx, "pace_max", e.target.value)}
-                                className={`w-14 ${inp}`}
-                              />
-                              <span className="text-gray-500">/km</span>
-                            </span>
-                          )}
+                            <span>× opakovať</span>
+                          </div>
+                          <div className="flex flex-col gap-2 pl-2 border-l-2 border-accent/20">
+                            {s.steps.map((ns: any, n_idx: number) => (
+                              <StepRow key={n_idx} s={ns} onField={(f, v) => updateStep(idx, s_idx, f, v, n_idx)} />
+                            ))}
+                          </div>
                         </div>
-                      );
-                    })}
+                      ) : (
+                        <StepRow key={s_idx} s={s} onField={(f, v) => updateStep(idx, s_idx, f, v)} />
+                      )
+                    )}
                   </div>
                 </div>
               ))}
