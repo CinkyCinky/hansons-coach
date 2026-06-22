@@ -28,6 +28,72 @@ const STEP_COLORS: Record<string, { border: string; text: string; label: string 
   cooldown: { border: "border-l-green-400",  text: "text-green-400",   label: "Vychladenie" },
 };
 
+// Fázy 18-týždňového Hanson plánu (na vzdelávací prehľad oblúka prípravy)
+const PHASES = [
+  { key: "intro", label: "Úvod", start: 1, end: 1, color: "bg-sky-400",
+    desc: "Rozbeh a adaptácia — zatiaľ len ľahké behy." },
+  { key: "speed", label: "Speed", start: 2, end: 10, color: "bg-rose-400",
+    desc: "Krátke rýchle intervaly @ 5K tempo — rozvoj rýchlosti a VO2max." },
+  { key: "strength", label: "Strength", start: 11, end: 17, color: "bg-orange-400",
+    desc: "Dlhšie intervaly tesne pod pretekovým tempom — sila a odolnosť. Objem vrcholí." },
+  { key: "taper", label: "Taper", start: 18, end: 18, color: "bg-emerald-400",
+    desc: "Posledný týždeň — menej behu, aby si na štart prišiel svieži." },
+];
+
+function phaseForWeek(week: number) {
+  return PHASES.find((p) => week >= p.start && week <= p.end) ?? PHASES[0];
+}
+
+// Vzdelávací prehľad celého 18-týždňového oblúka s označením "Tu si"
+function PhaseTimeline({ week }: { week: number | null }) {
+  const TOTAL = 18;
+  const w = week ?? 0;
+  const pct = w ? Math.min(100, Math.max(0, ((w - 0.5) / TOTAL) * 100)) : 0;
+  const cur = w ? phaseForWeek(w) : null;
+  return (
+    <div className="glass-card p-4">
+      <div className="flex justify-between text-sm mb-3">
+        <span className="font-bold">Tvoja cesta — 18 týždňov</span>
+        <span className="text-primary font-bold">Týždeň {week ?? "?"} / {TOTAL}</span>
+      </div>
+      {/* Segmenty fáz (šírka = počet týždňov fázy) */}
+      <div className="relative">
+        <div className="flex gap-0.5 h-2.5 rounded-full overflow-hidden">
+          {PHASES.map((p) => {
+            const span = p.end - p.start + 1;
+            const isCur = cur?.key === p.key;
+            return (
+              <div
+                key={p.key}
+                style={{ flexGrow: span }}
+                className={`${p.color} ${isCur ? "opacity-100" : "opacity-30"} transition-opacity`}
+                title={`${p.label} (T${p.start}${p.end !== p.start ? `–${p.end}` : ""})`}
+              />
+            );
+          })}
+        </div>
+        {/* Marker "Tu si" */}
+        {w > 0 && (
+          <div className="absolute -top-1 -translate-x-1/2" style={{ left: `${pct}%` }}>
+            <div className="w-2 h-4 rounded-full bg-white shadow ring-2 ring-[#0a0a0f]" />
+          </div>
+        )}
+      </div>
+      {/* Štítky fáz */}
+      <div className="flex justify-between mt-2 text-[9px] text-gray-500 uppercase tracking-wide">
+        {PHASES.map((p) => (
+          <span key={p.key} className={cur?.key === p.key ? "text-gray-200 font-bold" : ""}>{p.label}</span>
+        ))}
+      </div>
+      {cur && (
+        <p className="text-xs text-gray-400 mt-3 leading-snug">
+          <b className="text-gray-200">Teraz: {cur.label}.</b> {cur.desc}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // Slovenský popis posunu týždňa so správnym skloňovaním
 function relWeekLabel(off: number): string {
   if (off === 0) return "Tento týždeň";
@@ -54,8 +120,6 @@ export default function Plan() {
 
   // Aktuálny týždeň z backendu (dashboard)
   const trainingWeek = store.dashboard?.training_week ?? null;
-  const TOTAL_WEEKS = 18;
-  const progressPct = trainingWeek ? Math.round((trainingWeek / TOTAL_WEEKS) * 100) : 0;
 
   // Výpočet rozpätia zobrazeného týždňa
   const weekRange = useMemo(() => {
@@ -348,22 +412,24 @@ export default function Plan() {
         )}
       </AnimatePresence>
 
-      {/* Progress bar */}
-      <div className="glass-card p-4">
-        <div className="flex justify-between text-sm mb-2">
-          <span className="font-bold">Progres prípravy</span>
-          <span className="text-primary font-bold">
-            Týždeň {trainingWeek} / {TOTAL_WEEKS}
-          </span>
+      {/* Prehľad 18-týždňového oblúka prípravy (vzdelávací) */}
+      <PhaseTimeline week={trainingWeek} />
+
+      {/* Taper / pretekový týždeň */}
+      {trainingWeek != null && trainingWeek >= 18 && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
+          <h3 className="text-sm font-bold text-emerald-300 flex items-center gap-2 mb-1">
+            <Sparkles size={16} /> Pretekový týždeň — taper
+          </h3>
+          <p className="text-xs text-gray-300 leading-relaxed">
+            Toto je zostupový týždeň: výrazne menej behu, aby si na štart prišiel svieži.
+            Žiadne nové vzdialenosti ani tvrdé intervaly — len krátke ľahké behy s pár úsekmi
+            v pretekovom tempe. „Ťažké nohy" a nervozita sú normálne, dôveruj príprave.
+            Priorita: spánok, sacharidy, hydratácia.{" "}
+            <Link href="/about" className="text-emerald-300 underline underline-offset-2">Viac o taperi</Link>.
+          </p>
         </div>
-        <div className="w-full bg-gray-800 rounded-full h-2">
-          <div
-            className="bg-gradient-to-r from-primary to-accent h-2 rounded-full transition-all"
-            style={{ width: `${progressPct}%` }}
-          />
-        </div>
-        <p className="text-xs text-gray-500 mt-1 text-right">{progressPct}% dokončené</p>
-      </div>
+      )}
 
       {/* Zoznam tréningov */}
       <section>
