@@ -485,10 +485,25 @@ def _training_context_block(client) -> str:
 
     lines = []
 
-    # DNES
+    # DNES — zisti či bol tréning splnený a/alebo prepočítaný
     today_plan = _planned_on(today_str)
+    today_run = runs_by_date.get(today_str)
     if today_plan:
-        lines.append(f"Dnešný plán: {today_plan.get('title') or 'Beh'}.")
+        title = today_plan.get("title") or "Beh"
+        is_modified = any(kw in title.lower() for kw in ("modified", "softened", "upravený", "updated"))
+        if today_run:
+            extra = _run_summary(today_run)
+            lines.append(
+                f"Dnešný tréning ({title}) — SPLNENÝ DNES ({extra}). "
+                "Tréning bol DOKONČENÝ — nepredkladaj ďalšiu úpravu."
+            )
+        elif is_modified:
+            lines.append(
+                f"Dnešný plán: {title} — tréning bol PREPOČÍTANÝ AI (čaká na absolvovanie). "
+                "Nepodporuj ďalší prepočet."
+            )
+        else:
+            lines.append(f"Dnešný plán: {title}.")
     else:
         nxt = sorted(
             [i for i in planned if (i.get("date") or "")[:10] > today_str],
@@ -573,7 +588,10 @@ Daj mu osobnú radu na dnešný deň: 2-4 krátke úderné vety. Zohľadni v nej
 - čo robil včera (či splnil/vynechal tréning, alebo mal voľno) — nadviaž na to,
 - jeho objem a priebeh za posledných 7 dní (najmä vynechané kľúčové SOS tréningy),
 - čo má (ne)naplánované dnes — buď ho naladí na dnešný tréning, alebo pri voľne odporuč regeneráciu.
-Ak sú hodnoty slabé (Body Battery alebo Pripravenosť pod 50), odporúč mu nech si v sekcii Plán prepočíta tréning.
+Ak sú hodnoty slabé (Body Battery alebo Pripravenosť pod 50) A z kontextu NEVYPLÝVA, že dnešný tréning
+bol SPLNENÝ alebo PREPOČÍTANÝ — vtedy a JEN vtedy odporúč zvážiť prepočet v sekcii Plán.
+NIKDY neodporúčaj prepočítať tréning ak kontext hovorí "SPLNENÝ DNES" alebo "PREPOČÍTANÝ AI" —
+v takom prípade skôr pochváľ zverenca alebo ho naladí na ďalší deň.
 Ak sú hodnoty super, povzbuď ho. Pokojne pridaj 1 emoji.
 
 DÔLEŽITÉ: Odpovedz VÝHRADNE po slovensky. Vráť len samotnú radu pre bežca —
