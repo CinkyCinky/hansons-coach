@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, BookOpen, RotateCcw } from "lucide-react";
+import Link from "next/link";
+import { ChevronDown, BookOpen, RotateCcw, ChevronRight } from "lucide-react";
 import { openOnboarding } from "@/components/Onboarding";
 
 // Tap-prístupná „rozbaľovačka" (natívny <details> — funguje aj bez JS, ideálne na mobil).
@@ -133,6 +134,34 @@ export default function About() {
             <b className="text-gray-100">Dlhý beh = tréning žalúdka.</b> Vyskúšaj presne tú výživu a
             tekutiny, ktoré chceš použiť na pretekoch — v deň D nič nové.
           </p>
+        </Item>
+
+        <Item q="Rozcvička a strečing">
+          <p>
+            <b className="text-gray-100">Pred behom</b> si daj dynamickú rozcvičku — pohybové cviky,
+            ktoré prebudia svaly a nervový systém (statické naťahovanie pred behom výkon naopak zníži).
+            Zvlášť dôležitá je pred Speed a Strength tréningom.
+          </p>
+          <p>
+            <b className="text-gray-100">Po behu</b>, keď sú svaly teplé, príde na rad statický strečing —
+            podporí regeneráciu a je lacnou prevenciou zranení.
+          </p>
+          <div className="flex gap-2 mt-1">
+            <Link
+              href="/warmup?type=before"
+              className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center justify-between transition-colors"
+            >
+              <span className="text-sm font-bold text-gray-200">🏃 Rozcvička</span>
+              <ChevronRight size={16} className="text-gray-500" />
+            </Link>
+            <Link
+              href="/warmup?type=after"
+              className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center justify-between transition-colors"
+            >
+              <span className="text-sm font-bold text-gray-200">🧘 Strečing</span>
+              <ChevronRight size={16} className="text-gray-500" />
+            </Link>
+          </div>
         </Item>
 
         <Item q="Tvoje Garmin metriky — čo znamenajú">
