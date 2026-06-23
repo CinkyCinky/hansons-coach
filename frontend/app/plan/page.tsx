@@ -286,7 +286,8 @@ export default function Plan() {
         await store.loadPlan(true);
       }
     } catch (err: any) {
-      setUpdateMessage({ type: "error", text: err.message || "Nepodarilo sa uložiť tréning." });
+      const msg = typeof err?.message === "string" ? err.message : String(err?.message ?? "");
+      setUpdateMessage({ type: "error", text: msg || "Nepodarilo sa uložiť tréning." });
     } finally {
       setIsConfirming(false);
     }

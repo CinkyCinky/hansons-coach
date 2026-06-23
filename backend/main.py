@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
 import datetime
 import json
@@ -1061,6 +1061,9 @@ def generate_daily_update(feeling: str = "", pain: str = "", pain_area: str = ""
 
 
 class WorkoutConfirmRequest(BaseModel):
+    # Garmin workoutId chodí ako číslo → bez koercie by Pydantic v2 vrátil 422
+    # (a klient by zobrazil "[object Object]"). Povolíme aj numerické ID.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
     workout: dict
     old_workout_id: str
     target_date_str: str

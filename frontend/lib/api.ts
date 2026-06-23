@@ -2,6 +2,27 @@ import { createClient } from './supabase/client';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// FastAPI vracia `detail` ako reťazec (HTTPException) ALEBO ako pole objektov
+// (422 validačné chyby: [{loc, msg, type}]) ALEBO ako objekt. Bez normalizácie
+// by `new Error(detail)` skončil ako "[object Object]" v UI.
+function normalizeDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? (d as any).msg : String(d)))
+      .filter(Boolean);
+    if (msgs.length) return msgs.join('; ');
+  }
+  if (detail && typeof detail === 'object' && 'msg' in (detail as any)) {
+    return String((detail as any).msg);
+  }
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return 'Neznáma chyba.';
+  }
+}
+
 async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
@@ -18,7 +39,7 @@ async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
     let errorDetail = res.statusText;
     try {
       const errBody = await res.json();
-      if (errBody?.detail) errorDetail = errBody.detail;
+      if (errBody?.detail) errorDetail = normalizeDetail(errBody.detail);
     } catch {}
     throw new Error(errorDetail);
   }
