@@ -696,6 +696,7 @@ export default function Plan() {
                                   <p className="text-xs text-gray-500">Aeróbny efekt</p>
                                   <p className="font-bold text-purple-400">
                                     {details.stats.training_effect.toFixed(1)}
+                                    <span className="text-xs text-gray-500 font-normal"> / 5</span>
                                   </p>
                                 </div>
                               )}

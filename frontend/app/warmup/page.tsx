@@ -308,8 +308,9 @@ export default function Warmup() {
         <p className="text-xs text-gray-300 leading-relaxed">
           {phase === "before" ? (
             <>Dynamická rozcvička <b className="text-gray-100">prebudí svaly a nervový systém</b> —
-            na rozdiel od statického naťahovania pred behom nezníži výkon. Cviky 6–10 rob
-            v pohybe na ~30 m úseku (ideálne pred Speed a Strength tréningom).</>
+            na rozdiel od statického naťahovania pred behom nezníži výkon. Prvé cviky rob na mieste;
+            druhú polovicu (skiping, vysoké kolená, rovinky…) rob v pohybe na ~30 m úseku
+            (ideálne pred Speed a Strength tréningom).</>
           ) : (
             <>Po behu sú svaly teplé — ideálny čas na <b className="text-gray-100">statický strečing</b>.
             Každý ťah drž <b className="text-gray-100">plynule bez hojdania</b> a nikdy nenaťahuj

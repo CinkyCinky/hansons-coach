@@ -272,7 +272,7 @@ export default function Chat() {
             <div className="glass-card rounded-2xl rounded-bl-none px-4 py-3 flex items-center gap-2 text-gray-400">
               <Loader2 className="animate-spin" size={16} />
               <span className="text-sm">
-                {model === "pro" ? "Pro model myslí..." : "Píše..."}
+                {model === "pro" ? "Dôkladne analyzujem..." : "Píše..."}
               </span>
             </div>
           </motion.div>

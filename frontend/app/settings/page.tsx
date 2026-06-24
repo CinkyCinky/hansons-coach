@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact, estimateGoal } from "@/lib/api";
 import { useStore } from "@/lib/store";
+import { computePaces } from "@/lib/paces";
 
 function validateTargetTime(val: string): boolean {
   return /^\d{1,2}:\d{2}:\d{2}$/.test(val.trim());
@@ -338,6 +339,32 @@ export default function Settings() {
               prianie. Prehnaný cieľ spraví každý tréning prirýchly (najčastejšia chyba). Neistý?{" "}
               <Link href="/about" className="text-primary underline underline-offset-2">Pozri „O metóde"</Link>.
             </p>
+
+            {/* Tempová kalkulačka — naživo z cieľového času (zrkadlí backend) */}
+            {validateTargetTime(targetTime) && (() => {
+              const p = computePaces(targetTime);
+              if (!p) return null;
+              return (
+                <div className="mt-3 bg-black/20 border border-white/10 rounded-xl p-3">
+                  <p className="text-[11px] font-bold text-gray-300 mb-2">Tvoje tréningové tempá pri tomto cieli</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <span className="text-gray-400">Tempo (pretekové, HMP)</span>
+                    <span className="text-right font-mono text-amber-300">{p.tempo}/km</span>
+                    <span className="text-gray-400">Easy / Dlhé</span>
+                    <span className="text-right font-mono text-emerald-300">{p.easyMin}–{p.easyMax}/km</span>
+                    <span className="text-gray-400">Strength</span>
+                    <span className="text-right font-mono text-orange-300">{p.strength}/km</span>
+                    <span className="text-gray-400">Speed (5K)</span>
+                    <span className="text-right font-mono text-rose-300">~{p.speedApprox}/km</span>
+                  </div>
+                  <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
+                    Tempo, Easy a Strength sa počítajú priamo z cieľa. <b className="text-gray-500">Speed</b> je
+                    len orientačný — reálne sa určí z tvojej aktuálnej formy (Garmin VO2max), preto použi
+                    „Odhadnúť z mojej formy" nižšie.
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Re-kalibrácia: forma (VO2max) vs aktuálny cieľ */}
             {(() => {
