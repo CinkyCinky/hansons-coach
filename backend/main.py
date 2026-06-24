@@ -1146,12 +1146,17 @@ def _goal_pace_sec_per_km(target_time) -> Optional[int]:
 
 
 @app.get("/api/reports/weekly")
-def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(get_garmin_client)):
+def get_weekly_report(
+    refresh: bool = False,
+    user_id: str = Depends(get_current_user),
+    client=Depends(get_garmin_client),
+):
     """
     Reports pre Hansonovu metódu:
     - Regenerácia za 7 dní: spánok, HRV, Body Battery (zvládanie kumulovanej únavy)
     - Behy za posledných 7 dní (tempo/HR/kadencia) + cieľové tempo ako referencia
     - Týždenný objem (km/týždeň) cez celý cyklus prípravy — kľúčová Hanson metrika
+    ?refresh=true obíde denný cache a stiahne čerstvé dáta z Garminu.
     """
     try:
         today = datetime.date.today()
@@ -1163,7 +1168,7 @@ def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(g
         # Okno pre objemový graf: od začiatku prípravy, max ~12 týždňov (čitateľnosť + API limit)
         report_days = min(max(14, (today - start).days + 1), 84)
 
-        snap = _wellness_snapshot(client, user_id)
+        snap = _wellness_snapshot(client, user_id, force=refresh)
         activities = fetcher.get_recent_activities(client, days=report_days) or []
         sleep_data = snap["sleep"]
         hrv_data = snap["hrv"]
@@ -1245,6 +1250,29 @@ def get_weekly_report(user_id: str = Depends(get_current_user), client=Depends(g
         }
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa načítať report.")
+
+
+@app.get("/api/debug/hrv")
+def debug_hrv_raw(user_id: str = Depends(get_current_user), client=Depends(get_garmin_client)):
+    """Debug endpoint — vráti surovú štruktúru HRV odpovede z Garmin API za posledné 3 dni.
+    Pomáha diagnostikovať mapovanie polí (lastNight, hrvReadings atď.)."""
+    from datetime import date, timedelta
+    result = {}
+    for i in range(3):
+        d = (date.today() - timedelta(days=i)).isoformat()
+        try:
+            raw = fetcher._garmin_call(client.get_hrv_data, d)
+            summary = (raw or {}).get("hrvSummary") or {}
+            readings = (raw or {}).get("hrvReadings") or []
+            result[d] = {
+                "summary_keys": list(summary.keys()) if summary else [],
+                "summary": summary,
+                "readings_count": len(readings) if isinstance(readings, list) else type(readings).__name__,
+                "readings_sample": readings[:2] if isinstance(readings, list) else readings,
+            }
+        except Exception as e:
+            result[d] = {"error": str(e)}
+    return result
 
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
