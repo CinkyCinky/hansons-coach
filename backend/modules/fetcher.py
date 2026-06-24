@@ -63,10 +63,21 @@ def get_hrv_data(client) -> Optional[dict]:
             hrv = _garmin_call(client.get_hrv_data, d)
             if hrv and hrv.get("hrvSummary"):
                 summary = hrv["hrvSummary"]
+                # Garmin pre dnešný dátum vracia lastNight=null kým sa sleep nespracuje.
+                # Fallback 1: lastNight5MinHigh (najlepšie 5-min okno)
+                # Fallback 2: priemer z hourly readings (ručný výpočet)
+                last_night = summary.get("lastNight")
+                if last_night is None:
+                    last_night = summary.get("lastNight5MinHigh")
+                if last_night is None:
+                    readings = hrv.get("hrvReadings") or []
+                    vals = [r.get("hrvValue") for r in readings if r.get("hrvValue")]
+                    if vals:
+                        last_night = round(sum(vals) / len(vals))
                 results.append({
                     "date": d,
                     "weekly_avg": summary.get("weeklyAvg"),
-                    "last_night": summary.get("lastNight"),
+                    "last_night": last_night,
                     "status": summary.get("status", "unknown"),
                     "feedback": summary.get("feedbackPhrase", ""),
                 })

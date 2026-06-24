@@ -278,7 +278,7 @@ export default function Reports() {
             </div>
             <div className="glass-card p-4">
               <p className="text-xs text-gray-400 mb-1 flex items-center gap-1">
-                <Heart size={12} /> HRV weekly avg
+                <Heart size={12} /> HRV týž. priemer
               </p>
               <h3 className="text-2xl font-bold">
                 {data.hrv?.weekly_avg ? `${data.hrv.weekly_avg} ms` : "--"}
@@ -334,7 +334,7 @@ export default function Reports() {
                   <p className="text-xl font-bold text-rose-400">{data.hrv.last_night ?? "--"} ms</p>
                 </div>
                 <div className="flex-1 bg-black/20 rounded-xl p-3 text-center">
-                  <p className="text-xs text-gray-500 mb-1">Weekly avg</p>
+                  <p className="text-xs text-gray-500 mb-1">Týž. priemer</p>
                   <p className="text-xl font-bold text-rose-300">{data.hrv.weekly_avg ?? "--"} ms</p>
                 </div>
                 <div className="flex-1 bg-black/20 rounded-xl p-3 text-center">
