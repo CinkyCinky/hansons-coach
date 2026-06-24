@@ -756,6 +756,25 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
         except Exception:
             pass
 
+        # Rozloženie času v HR zónach (Z1–Z5) — Garmin /hrTimeInZones
+        hr_zones = None
+        try:
+            zraw = client.get_activity_hr_in_timezones(activity_id)
+            if isinstance(zraw, list) and zraw:
+                total = sum((item.get("secsInZone") or 0) for item in zraw)
+                if total > 0:
+                    hr_zones = [
+                        {
+                            "zone": item.get("zoneNumber"),
+                            "secs": round(item.get("secsInZone") or 0),
+                            "pct": round((item.get("secsInZone") or 0) / total * 100),
+                        }
+                        for item in zraw
+                        if item.get("zoneNumber") is not None
+                    ]
+        except Exception:
+            pass
+
         summary = details.get("summaryDTO", {})
         avg_speed = summary.get("averageSpeed")
         avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
@@ -774,6 +793,7 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
             "calories": summary.get("calories"),
             "training_effect": summary.get("trainingEffect"),
             "splits": splits.get("lapDTOs") if splits and isinstance(splits, dict) else None,
+            "hr_zones": hr_zones,
         }
         return {"stats": stats, "activity": details}
     except Exception as e:

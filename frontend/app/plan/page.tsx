@@ -29,6 +29,15 @@ const STEP_COLORS: Record<string, { border: string; text: string; label: string 
   cooldown: { border: "border-l-green-400",  text: "text-green-400",   label: "Vychladenie" },
 };
 
+// HR zóny Z1–Z5 — farba + slovenský názov (pre rozloženie času v behu)
+const ZONE_HR: Record<number, { bg: string; name: string }> = {
+  1: { bg: "bg-sky-500/70",     name: "ľahká regenerácia" },
+  2: { bg: "bg-emerald-500/70", name: "ľahká aeróbna" },
+  3: { bg: "bg-amber-500/70",   name: "stredná" },
+  4: { bg: "bg-orange-500/70",  name: "prah" },
+  5: { bg: "bg-rose-500/70",    name: "maximálka" },
+};
+
 // Fázy 18-týždňového Hanson plánu (na vzdelávací prehľad oblúka prípravy)
 const PHASES = [
   { key: "intro", label: "Úvod", start: 1, end: 1, color: "bg-sky-400",
@@ -701,6 +710,39 @@ export default function Plan() {
                                 </div>
                               )}
                             </div>
+
+                            {/* Rozloženie času v HR zónach (Z1–Z5) */}
+                            {details.stats?.hr_zones && details.stats.hr_zones.length > 0 && (
+                              <div className="bg-black/20 rounded-xl p-3">
+                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">
+                                  Čas v HR zónach
+                                </p>
+                                <div className="flex h-3 rounded-full overflow-hidden mb-3 bg-white/5">
+                                  {details.stats.hr_zones.map((z: any) =>
+                                    z.pct > 0 ? (
+                                      <div
+                                        key={z.zone}
+                                        style={{ width: `${z.pct}%` }}
+                                        className={ZONE_HR[z.zone]?.bg ?? "bg-gray-500"}
+                                        title={`Z${z.zone} ${ZONE_HR[z.zone]?.name ?? ""}: ${z.pct}% (${Math.round(z.secs / 60)} min)`}
+                                      />
+                                    ) : null
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-5 gap-1 text-center">
+                                  {details.stats.hr_zones.map((z: any) => (
+                                    <div key={z.zone}>
+                                      <div className={`h-1.5 rounded-full mb-1 ${ZONE_HR[z.zone]?.bg ?? "bg-gray-500"}`} />
+                                      <p className="text-[10px] text-gray-400">Z{z.zone}</p>
+                                      <p className="text-[11px] font-bold text-gray-200">{z.pct}%</p>
+                                    </div>
+                                  ))}
+                                </div>
+                                <p className="text-[10px] text-gray-600 mt-2 leading-snug">
+                                  Pri Easy behu by mala väčšina času padnúť do Z1–Z2. Veľa času v Z3+ znamená, že bol príliš rýchly.
+                                </p>
+                              </div>
+                            )}
                           </div>
                         ) : details?.type === "no_activity" ? (
                           <p className="italic text-gray-500">
