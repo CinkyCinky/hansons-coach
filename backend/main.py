@@ -768,6 +768,7 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
                             "zone": item.get("zoneNumber"),
                             "secs": round(item.get("secsInZone") or 0),
                             "pct": round((item.get("secsInZone") or 0) / total * 100),
+                            "low": item.get("zoneLowBoundary"),  # spodná hranica zóny (bpm)
                         }
                         for item in zraw
                         if item.get("zoneNumber") is not None
@@ -778,6 +779,13 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
         summary = details.get("summaryDTO", {})
         avg_speed = summary.get("averageSpeed")
         avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
+
+        # Tréningový efekt: aeróbny + anaeróbny + Garmin štítok (fallback na legacy pole)
+        aerobic_te = summary.get("aerobicTrainingEffect")
+        if aerobic_te is None:
+            aerobic_te = summary.get("trainingEffect")
+        anaerobic_te = summary.get("anaerobicTrainingEffect")
+        te_label = summary.get("trainingEffectLabel")
 
         stats = {
             "distance_km": round((summary.get("distance") or 0) / 1000, 2) or None,
@@ -791,7 +799,10 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
             )) else None,
             "total_ascent": summary.get("elevationGain"),
             "calories": summary.get("calories"),
-            "training_effect": summary.get("trainingEffect"),
+            "training_effect": summary.get("trainingEffect"),  # legacy (spätná kompatibilita)
+            "aerobic_te": aerobic_te,
+            "anaerobic_te": anaerobic_te,
+            "te_label": te_label,
             "splits": splits.get("lapDTOs") if splits and isinstance(splits, dict) else None,
             "hr_zones": hr_zones,
         }

@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
+import { runInsight, teLabelSk } from "@/lib/runInsight";
 
 const VARIANT_LABELS: Record<string, string> = {
   advanced: "Advanced", beginner: "Beginner", just_finish: "Just Finish",
@@ -700,11 +701,20 @@ export default function Plan() {
                                   <p className="font-bold text-orange-400">{details.stats.calories} kcal</p>
                                 </div>
                               )}
-                              {details.stats?.training_effect && (
-                                <div className="bg-black/20 p-2 rounded-lg">
+                              {(details.stats?.aerobic_te ?? details.stats?.training_effect) != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Aeróbny tréningový efekt (0–5): ako tréning rozvinul tvoju vytrvalosť a aeróbnu kondíciu.">
                                   <p className="text-xs text-gray-500">Aeróbny efekt</p>
                                   <p className="font-bold text-purple-400">
-                                    {details.stats.training_effect.toFixed(1)}
+                                    {(details.stats.aerobic_te ?? details.stats.training_effect).toFixed(1)}
+                                    <span className="text-xs text-gray-500 font-normal"> / 5</span>
+                                  </p>
+                                </div>
+                              )}
+                              {details.stats?.anaerobic_te != null && details.stats.anaerobic_te > 0 && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Anaeróbny tréningový efekt (0–5): ako tréning rozvinul tvoju rýchlosť a výkon (krátke intenzívne úseky nad prahom).">
+                                  <p className="text-xs text-gray-500">Anaeróbny efekt</p>
+                                  <p className="font-bold text-rose-400">
+                                    {details.stats.anaerobic_te.toFixed(1)}
                                     <span className="text-xs text-gray-500 font-normal"> / 5</span>
                                   </p>
                                 </div>
@@ -730,19 +740,46 @@ export default function Plan() {
                                   )}
                                 </div>
                                 <div className="grid grid-cols-5 gap-1 text-center">
-                                  {details.stats.hr_zones.map((z: any) => (
-                                    <div key={z.zone}>
-                                      <div className={`h-1.5 rounded-full mb-1 ${ZONE_HR[z.zone]?.bg ?? "bg-gray-500"}`} />
-                                      <p className="text-[10px] text-gray-400">Z{z.zone}</p>
-                                      <p className="text-[11px] font-bold text-gray-200">{z.pct}%</p>
-                                    </div>
-                                  ))}
+                                  {details.stats.hr_zones.map((z: any) => {
+                                    const next = details.stats.hr_zones.find((zz: any) => zz.zone === z.zone + 1);
+                                    const range = z.low != null ? (next?.low != null ? `${z.low}–${next.low}` : `${z.low}+`) : null;
+                                    return (
+                                      <div key={z.zone}>
+                                        <div className={`h-1.5 rounded-full mb-1 ${ZONE_HR[z.zone]?.bg ?? "bg-gray-500"}`} />
+                                        <p className="text-[10px] text-gray-400">Z{z.zone}</p>
+                                        <p className="text-[11px] font-bold text-gray-200">{z.pct}%</p>
+                                        {range && <p className="text-[9px] text-gray-500 leading-tight">{range}</p>}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
-                                <p className="text-[10px] text-gray-600 mt-2 leading-snug">
-                                  Pri Easy behu by mala väčšina času padnúť do Z1–Z2. Veľa času v Z3+ znamená, že bol príliš rýchly.
-                                </p>
+                                {details.stats.hr_zones.some((z: any) => z.low != null) && (
+                                  <p className="text-[9px] text-gray-600 mt-1.5 text-center">hodnoty v bpm (tep za minútu)</p>
+                                )}
                               </div>
                             )}
+
+                            {/* Hodnotenie behu — ako si ho zabehol a aký mal prínos */}
+                            {(() => {
+                              const insight = runInsight(workout.title || "", details.stats);
+                              const label = teLabelSk(details.stats?.te_label);
+                              if (!insight && !label) return null;
+                              const box =
+                                insight?.tone === "warn" ? "bg-amber-500/10 border-amber-500/20"
+                                : insight?.tone === "good" ? "bg-emerald-500/10 border-emerald-500/20"
+                                : "bg-blue-500/10 border-blue-500/20";
+                              const noteCls =
+                                insight?.tone === "warn" ? "text-amber-200"
+                                : insight?.tone === "good" ? "text-emerald-200"
+                                : "text-blue-200";
+                              return (
+                                <div className={`rounded-xl p-3 border ${box}`}>
+                                  <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">Hodnotenie</p>
+                                  {label && <p className="text-sm font-bold text-gray-100 mb-1">Hlavný prínos: {label}</p>}
+                                  {insight && <p className={`text-xs leading-snug ${noteCls}`}>{insight.note}</p>}
+                                </div>
+                              );
+                            })()}
                           </div>
                         ) : details?.type === "no_activity" ? (
                           <p className="italic text-gray-500">

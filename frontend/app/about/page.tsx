@@ -173,7 +173,8 @@ export default function About() {
           <Term name="Body Battery">odhad zásob energie tela (0–100). Ráno vysoké = nabitý, večer prirodzene klesá.</Term>
           <Term name="Pripravenosť">Garmin odhad, ako je telo pripravené na záťaž. Nízke = zvoľ ľahší tréning.</Term>
           <Term name="Kadencia (spm)">počet krokov za minútu (steps per minute). Vyššia kadencia (~170–180) býva efektívnejšia a šetrnejšia ku kĺbom než dlhé „doskakovanie".</Term>
-          <Term name="Aeróbny efekt (1–5)">ako veľmi tréning zaťažil tvoj aeróbny systém. 1–2 = ľahká udržiavacia záťaž, 3–4 = rozvoj kondície, 5 = veľmi náročné.</Term>
+          <Term name="Aeróbny efekt (0–5)">koľko tréning rozvinul tvoj aeróbny systém (vytrvalosť, kondícia). 1–2 = ľahká udržiavacia záťaž, 3–4 = rozvoj kondície, 5 = veľmi náročné.</Term>
+          <Term name="Anaeróbny efekt (0–5)">koľko tréning rozvinul tvoju rýchlosť a výkon cez krátke intenzívne úseky nad laktátovým prahom (intervaly, šprinty). Pri Easy a dlhých behoch býva 0 — a to je v poriadku. Vyšší vidíš pri Speed a Strength tréningoch.</Term>
         </Item>
 
         <Item q="Časté chyby začiatočníka">
