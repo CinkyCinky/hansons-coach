@@ -8,6 +8,7 @@ import {
 import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, RefreshCcw, Info } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
+import { hrvStatusSk } from "@/lib/garminLabels";
 
 function formatPace(sec: number | null): string {
   if (!sec) return "--";
@@ -18,6 +19,13 @@ function shortDate(dateStr: string): string {
   if (!dateStr) return "";
   const d = new Date(dateStr + "T00:00:00");
   return `${d.getDate()}.${d.getMonth() + 1}.`;
+}
+
+// Čitateľný dátum pre zoznam behov (napr. "15. januára")
+function longDate(dateStr: string): string {
+  if (!dateStr) return "";
+  const d = new Date(dateStr.includes("T") ? dateStr : dateStr + "T00:00:00");
+  return d.toLocaleDateString("sk-SK", { day: "numeric", month: "long" });
 }
 
 function VolumeRing({ pct, value, sub }: { pct: number; value: string; sub: string }) {
@@ -145,6 +153,7 @@ export default function Reports() {
   const vo2Data = trends.filter((t) => t.vo2max != null).map((t) => ({ day: shortDate(t.date), v: t.vo2max }));
   const rhrData = trends.filter((t) => t.resting_hr != null).map((t) => ({ day: shortDate(t.date), v: t.resting_hr }));
   const acData = trends.filter((t) => t.ac_ratio != null).map((t) => ({ day: shortDate(t.date), v: t.ac_ratio }));
+  const hrvTrend = trends.filter((t) => t.hrv != null).map((t) => ({ day: shortDate(t.date), v: t.hrv }));
   const hasTrends = vo2Data.length >= 3 || rhrData.length >= 3 || acData.length >= 3;
 
   // Kombinovaný týždenný graf (spánok + BB) — zarovnané podľa dátumu, nie podľa indexu
@@ -189,7 +198,7 @@ export default function Reports() {
           <p><b className="text-primary">Tempo trend</b> — priemerné tempo behov (min/km, nižšie = rýchlejšie). Zelená prerušovaná čiara je tvoje cieľové polmaratónske tempo.</p>
           <p><b className="text-emerald-300">Kadencia</b> — počet krokov za minútu (spm).</p>
           <p><b className="text-indigo-300">Spánok</b> — priemerná dĺžka spánku za noc.</p>
-          <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms). „BALANCED"/vyššie = dobrá regenerácia. „Minulú noc" sa zobrazí, keď ju hodinky cez noc namerajú.</p>
+          <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms), ukazovateľ regenerácie. „Priem. noc" je priemer za poslednú noc, „Týž. priemer" za 7 dní. Vyššie a stabilné hodnoty = oddýchnuté telo.</p>
           <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100). Dôležité na zvládanie únavy počas tvrdého bloku.</p>
         </div>
       )}
@@ -284,7 +293,7 @@ export default function Reports() {
                 {data.hrv?.weekly_avg ? `${data.hrv.weekly_avg} ms` : "--"}
               </h3>
               <p className="text-xs text-gray-500 mt-1">
-                {data.hrv?.status ?? ""}
+                {data.hrv?.status ? hrvStatusSk(data.hrv.status) : ""}
               </p>
             </div>
             <div className="glass-card p-4">
@@ -295,7 +304,7 @@ export default function Reports() {
                 {data.body_battery?.today ?? "--"}
               </h3>
               <p className="text-xs text-gray-500 mt-1">
-                avg {data.body_battery?.weekly_avg ?? "--"}
+                priem. {data.body_battery?.weekly_avg ?? "--"}
               </p>
             </div>
           </div>
@@ -342,9 +351,25 @@ export default function Reports() {
                 </div>
                 <div className="flex-1 bg-black/20 rounded-xl p-3 text-center">
                   <p className="text-xs text-gray-500 mb-1">Stav</p>
-                  <p className="text-sm font-bold text-gray-200">{data.hrv.status ?? "--"}</p>
+                  <p className="text-sm font-bold text-gray-200">{hrvStatusSk(data.hrv.status)}</p>
                 </div>
               </div>
+
+              {/* Trend HRV za noc — pribúda denne (čiara = týždňový priemer ako referencia) */}
+              {hrvTrend.length >= 3 ? (
+                <div className="mt-4">
+                  <TrendChart
+                    data={hrvTrend}
+                    color="#fb7185"
+                    label={`HRV za noc (ms) — posledných ${hrvTrend.length} dní, vyššie/stabilné = lepšie`}
+                    refLine={data.hrv.weekly_avg ?? undefined}
+                  />
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-600 mt-3 leading-snug">
+                  Graf trendu HRV sa zobrazí po pár dňoch — hodnoty pribúdajú každú noc.
+                </p>
+              )}
             </div>
           )}
 
@@ -452,7 +477,7 @@ export default function Reports() {
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <p className="font-bold text-sm">{run.name || "Beh"}</p>
-                      <p className="text-xs text-gray-500">{run.date}</p>
+                      <p className="text-xs text-gray-500">{longDate(run.date)}</p>
                     </div>
                     <span className="text-primary font-bold">{run.distance_km} km</span>
                   </div>
@@ -464,7 +489,7 @@ export default function Reports() {
                       </p>
                     </div>
                     <div className="bg-black/20 rounded-lg p-2">
-                      <p className="text-xs text-gray-500">Priem. HR</p>
+                      <p className="text-xs text-gray-500">Priem. tep</p>
                       <p className="font-bold text-rose-400 text-sm">{run.avg_hr ?? "--"} bpm</p>
                     </div>
                     <div className="bg-black/20 rounded-lg p-2">

@@ -212,7 +212,7 @@ export default function Generator() {
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-3">Zaznač dni, kedy si dostupný. Tréner sám rozhodne, kedy budeš behať (na základe Hansons metódy a tvojho profilu).</p>
+            <p className="text-xs text-gray-400 mt-3">Vyber dni, kedy môžeš behať. AI tréner z nich poskladá týždeň podľa Hansonovej metódy — kľúčové tréningy rozloží správne (nikdy nie 2 tvrdé dni za sebou). Návrh uvidíš pred zápisom do Garminu.</p>
           </div>
 
           <div className="glass-card p-5">
@@ -248,7 +248,7 @@ export default function Generator() {
       {generatedPlan && !loading && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-6">
           <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl">
-            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-2">Správa od trénera</h3>
+            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-2">Tréner radí</h3>
             <p className="text-sm text-gray-200">{generatedPlan.coach_message}</p>
             <button
               onClick={handleAskCoach}

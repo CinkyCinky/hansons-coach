@@ -10,6 +10,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
+import { hrvStatusSk } from "@/lib/garminLabels";
 import { fetchProfile, FEELING_KEY } from "@/lib/api";
 
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
@@ -48,6 +49,28 @@ function timeAgo(ts: number | null): string {
   return "dávnejšie";
 }
 
+// Slovenské skloňovanie pre odpočítavanie
+const dayWord = (n: number) => (n === 1 ? "deň" : n >= 2 && n <= 4 ? "dni" : "dní");
+const weekWord = (n: number) => (n === 1 ? "týždeň" : n >= 2 && n <= 4 ? "týždne" : "týždňov");
+
+// Odpočítavanie do dňa pretekov (z profilu) — dni + približné týždne
+function raceCountdown(raceDate?: string | null) {
+  if (!raceDate) return null;
+  const DAY = 1000 * 60 * 60 * 24;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const race = new Date(raceDate + "T00:00:00");
+  if (isNaN(race.getTime())) return null;
+  race.setHours(0, 0, 0, 0);
+  const days = Math.round((race.getTime() - today.getTime()) / DAY);
+  if (days < 0) return null;
+  return {
+    days,
+    weeks: Math.floor(days / 7),
+    rem: days % 7,
+    dateLabel: race.toLocaleDateString("sk-SK", { weekday: "long", day: "numeric", month: "long" }),
+  };
+}
+
 // Pretekové tempo + medzičasy z cieľového času (na pretekový týždeň)
 function goalSplits(t?: string | null) {
   if (!t) return null;
@@ -74,13 +97,18 @@ export default function Dashboard() {
   const [showFormInfo, setShowFormInfo] = useState(false);
   const [showLoadInfo, setShowLoadInfo] = useState(false);
   const [profile, setProfile] = useState<any>(null);
-  const [feeling, setFeeling] = useState<{ feeling?: string; pain?: string } | null>(null);
+  const [feeling, setFeeling] = useState<{ feeling?: string; pain?: string; pain_area?: string } | null>(null);
 
   const todayIso = () => new Date().toISOString().slice(0, 10);
-  const saveFeeling = (next: { feeling: string; pain?: string }) => {
-    const val = { date: todayIso(), ...next };
-    try { localStorage.setItem(FEELING_KEY, JSON.stringify(val)); } catch { /* ignore */ }
-    setFeeling(val);
+  // Merge so nastavovanie časti tela neprepíše intenzitu (a naopak). Explicitné
+  // undefined v `next` pole zruší (napr. pri zmene nálady späť na „Dobre").
+  const saveFeeling = (next: Partial<{ feeling: string; pain?: string; pain_area?: string }>) => {
+    setFeeling((prev) => {
+      const base = prev && (prev as any).date === todayIso() ? prev : {};
+      const val = { ...base, date: todayIso(), ...next };
+      try { localStorage.setItem(FEELING_KEY, JSON.stringify(val)); } catch { /* ignore */ }
+      return val;
+    });
   };
 
   useEffect(() => {
@@ -158,6 +186,8 @@ export default function Dashboard() {
   const weekNum = typeof d.training_week === "number" ? d.training_week : null;
   const isRaceWeek = weekNum != null && weekNum >= 18;
   const splits = isRaceWeek ? goalSplits(profile?.target_time) : null;
+  // Odpočítavanie do preteku (počas prípravy; v pretekovom týždni to pokrýva veľká karta)
+  const countdown = !isRaceWeek ? raceCountdown(profile?.race_date) : null;
   const todayKind = todayWorkout ? classifyWorkout(todayWorkout.title || "").type : null;
   const showFueling = todayKind === "long" || isRaceWeek;
 
@@ -206,6 +236,39 @@ export default function Dashboard() {
         <p className="text-[11px] text-gray-500 -mt-3">
           Naposledy synchronizované {timeAgo(store.dashboardLoadedAt)}
         </p>
+      )}
+
+      {/* Odpočítavanie do preteku */}
+      {countdown && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-accent/10 border border-accent/20 rounded-2xl px-4 py-3 flex items-center gap-4"
+        >
+          <div className="bg-accent/20 text-accent p-2.5 rounded-xl shrink-0">
+            <Trophy size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Do preteku</p>
+            <p className="leading-tight">
+              {countdown.days === 0 ? (
+                <span className="text-2xl font-bold text-accent">Dnes je deň D! 🏁</span>
+              ) : (
+                <>
+                  <span className="text-2xl font-bold text-accent">{countdown.days}</span>
+                  <span className="text-gray-300"> {dayWord(countdown.days)}</span>
+                  {countdown.weeks > 0 && (
+                    <span className="text-xs text-gray-500">
+                      {" "}· ≈ {countdown.weeks} {weekWord(countdown.weeks)}
+                      {countdown.rem ? ` ${countdown.rem} ${dayWord(countdown.rem)}` : ""}
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
+            <p className="text-[11px] text-gray-500 capitalize mt-0.5">{countdown.dateLabel}</p>
+          </div>
+        </motion.div>
       )}
 
       {/* Error */}
@@ -365,7 +428,7 @@ export default function Dashboard() {
             <p className="text-xs text-gray-300 leading-relaxed mt-2 pt-2 border-t border-white/10">
               Pomer <b className="text-gray-100">akútnej</b> (~7 dní) a <b className="text-gray-100">chronickej</b>
               {" "}(~28 dní) záťaže. <b className="text-gray-100">0,8–1,4</b> = bezpečné pásmo;
-              {" "}<b className="text-gray-100">nad 1,4</b> = priveľa priskoro, uber; <b className="text-gray-100">pod 0,8</b>
+              {" "}<b className="text-gray-100">nad 1,4</b> = priveľa priskoro (riziko preťaženia); <b className="text-gray-100">pod 0,8</b>
               {" "}= priestor pridať. Pomáha rásť bez zranenia.
             </p>
           )}
@@ -422,7 +485,11 @@ export default function Dashboard() {
           ].map((o) => (
             <button
               key={o.k}
-              onClick={() => saveFeeling({ feeling: o.k, pain: o.k === "pain" ? feeling?.pain : undefined })}
+              onClick={() =>
+                o.k === "pain"
+                  ? saveFeeling({ feeling: "pain" })
+                  : saveFeeling({ feeling: o.k, pain: undefined, pain_area: undefined })
+              }
               className={`flex-1 text-xs font-bold py-2 rounded-xl border transition-colors ${
                 feeling?.feeling === o.k
                   ? "bg-primary/20 border-primary text-white"
@@ -450,6 +517,35 @@ export default function Dashboard() {
                 {o.label}
               </button>
             ))}
+          </div>
+        )}
+        {feeling?.feeling === "pain" && (
+          <div className="mt-2">
+            <p className="text-[11px] text-gray-500 mb-1.5">Kde to bolí? (nepovinné — tréner to zohľadní)</p>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { k: "koleno", label: "Koleno" },
+                { k: "achilovka", label: "Achilovka / lýtko" },
+                { k: "holen", label: "Holeň" },
+                { k: "stehno", label: "Stehno" },
+                { k: "chodidlo", label: "Chodidlo" },
+                { k: "bedro", label: "Bedro / slabina" },
+                { k: "chrbat", label: "Chrbát" },
+                { k: "ine", label: "Iné" },
+              ].map((o) => (
+                <button
+                  key={o.k}
+                  onClick={() => saveFeeling({ feeling: "pain", pain_area: feeling?.pain_area === o.k ? undefined : o.k })}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
+                    feeling?.pain_area === o.k
+                      ? "bg-rose-500/20 border-rose-500/40 text-rose-200"
+                      : "bg-white/5 border-white/10 text-gray-400 hover:text-white"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {feeling?.feeling && (
@@ -622,7 +718,7 @@ export default function Dashboard() {
         {showLegend && (
           <div className="glass-card p-4 mb-3 text-xs text-gray-300 flex flex-col gap-2 leading-relaxed">
             <p><b className="text-indigo-300">Spánok</b> — dĺžka a kvalita spánku za noc (skóre 0–100). Lepší spánok = lepšia regenerácia.</p>
-            <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu, ukazovateľ regenerácie a stresu. „BALANCED"/vyššie = oddýchnuté telo.</p>
+            <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms), ukazovateľ regenerácie a stresu. Vyššie a stabilné hodnoty = oddýchnuté telo.</p>
             <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100). Ráno vysoké = si nabitý, nízke = treba oddych.</p>
             <p><b className="text-amber-300">Pokojový tep</b> — tep v pokoji (bpm). Nižší býva znakom lepšej kondície.</p>
             <p><b className="text-sky-300">Pripravenosť</b> — ako je telo pripravené na záťaž (0–100). Nízke = zvoľ ľahší tréning.</p>
@@ -663,10 +759,10 @@ export default function Dashboard() {
               <span className="font-bold text-sm">HRV</span>
             </div>
             <p className="text-xl font-bold">
-              {hrv.last_night ? `${hrv.last_night} ms` : hrv.status !== "unknown" ? hrv.status : "--"}
+              {hrv.last_night ? `${hrv.last_night} ms` : hrv.status && hrv.status !== "unknown" ? hrvStatusSk(hrv.status) : "--"}
             </p>
             <p className="text-xs text-gray-400 mt-1">
-              Avg: <span className="text-rose-300 font-bold">{hrv.weekly_avg ?? "--"} ms</span>
+              Priem.: <span className="text-rose-300 font-bold">{hrv.weekly_avg ?? "--"} ms</span>
             </p>
           </motion.div>
 

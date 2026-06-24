@@ -92,43 +92,54 @@ def save_garmin_snapshot(user_id: str, data: Dict[str, Any]):
         print(f"Snapshot save error: {e}")
 
 
-def save_metric_history(user_id: str, vo2max=None, resting_hr=None, ac_ratio=None):
+def save_metric_history(user_id: str, vo2max=None, resting_hr=None, ac_ratio=None, hrv=None):
     """Zaznamená denné kľúčové ukazovatele formy (upsert podľa user_id+date)."""
     if not supabase:
         return
+    row = {
+        "user_id": user_id,
+        "date": datetime.date.today().isoformat(),
+        "vo2max": vo2max,
+        "resting_hr": resting_hr,
+        "ac_ratio": ac_ratio,
+        "hrv": hrv,
+    }
     try:
-        supabase.table("metric_history").upsert(
-            {
-                "user_id": user_id,
-                "date": datetime.date.today().isoformat(),
-                "vo2max": vo2max,
-                "resting_hr": resting_hr,
-                "ac_ratio": ac_ratio,
-            },
-            on_conflict="user_id,date",
-        ).execute()
-    except Exception as e:
-        print(f"Metric history save error: {e}")
+        supabase.table("metric_history").upsert(row, on_conflict="user_id,date").execute()
+    except Exception:
+        # Stĺpec `hrv` ešte nemusí existovať (chýba migrácia) — skús zápis bez neho
+        try:
+            row.pop("hrv", None)
+            supabase.table("metric_history").upsert(row, on_conflict="user_id,date").execute()
+        except Exception as e:
+            print(f"Metric history save error: {e}")
 
 
 def get_metric_history(user_id: str, days: int = 90) -> list:
-    """Vráti históriu ukazovateľov (vo2max/resting_hr/ac_ratio) za posledných N dní, vzostupne."""
+    """Vráti históriu ukazovateľov (vo2max/resting_hr/ac_ratio/hrv) za posledných N dní, vzostupne."""
     if not supabase:
         return []
-    try:
-        since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
-        res = (
+    since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+
+    def _query(cols: str):
+        return (
             supabase.table("metric_history")
-            .select("date,vo2max,resting_hr,ac_ratio")
+            .select(cols)
             .eq("user_id", user_id)
             .gte("date", since)
             .order("date")
             .execute()
         )
-        return res.data or []
-    except Exception as e:
-        print(f"Metric history read error: {e}")
-        return []
+
+    try:
+        return _query("date,vo2max,resting_hr,ac_ratio,hrv").data or []
+    except Exception:
+        # Stĺpec `hrv` ešte nemusí existovať — načítaj bez neho (nech trendy nespadnú)
+        try:
+            return _query("date,vo2max,resting_hr,ac_ratio").data or []
+        except Exception as e:
+            print(f"Metric history read error: {e}")
+            return []
 
 
 def get_memory_facts(user_id: str) -> list:

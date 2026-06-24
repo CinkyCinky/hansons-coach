@@ -269,6 +269,7 @@ def _record_metric_history(user_id: str, wellness: dict):
             vo2max=(wellness.get("athlete") or {}).get("vo2max"),
             resting_hr=(wellness.get("stats") or {}).get("resting_hr"),
             ac_ratio=ratio,
+            hrv=(wellness.get("hrv") or {}).get("last_night"),
         )
     except Exception:
         logger.exception("Zápis trendov zlyhal")

@@ -165,13 +165,15 @@ export default function About() {
         </Item>
 
         <Item q="Tvoje Garmin metriky — čo znamenajú">
-          <Term name="A:C záťaž (akútna : chronická)">pomer záťaže za ~7 dní k ~28-dňovému priemeru. 0,8–1,4 = bezpečné pásmo; nad 1,4 = priveľa priskoro (uber); pod 0,8 = priestor pridať.</Term>
-          <Term name="VO2max">odhad aeróbnej kapacity. Appka z neho odhaduje tvoje aktuálne 5K tempo pre Speed intervaly.</Term>
-          <Term name="LTHR">tep na laktátovom prahu. Slúži ako referenčný strop (poistka, aby Easy nebol prirýchly), nie ako cieľ.</Term>
-          <Term name="HRV">variabilita tepu — ukazovateľ regenerácie a stresu. Vyššie/stabilné = oddýchnuté telo.</Term>
-          <Term name="Body Battery">odhad zásob energie tela (0–100). Ráno vysoké = nabitý.</Term>
+          <Term name="A:C záťaž (akútna : chronická)">pomer záťaže za ~7 dní k ~28-dňovému priemeru. 0,8–1,4 = bezpečné pásmo; nad 1,4 = priveľa priskoro (riziko preťaženia); pod 0,8 = priestor pridať.</Term>
+          <Term name="VO2max">odhad aeróbnej kapacity (koľko kyslíka telo využije). Vyššie = lepšia bežecká kondícia. Appka z neho odhaduje tvoje aktuálne 5K tempo pre Speed intervaly.</Term>
+          <Term name="Pokojový tep (RHR)">tep v úplnom pokoji, meraný cez noc. Nižší a klesajúci = lepšia kondícia a regenerácia. Náhle zvýšenie môže signalizovať únavu alebo nastupujúcu chorobu.</Term>
+          <Term name="Laktátový prah (LTHR)">tep na laktátovom prahu. Slúži ako referenčný strop (poistka, aby Easy nebol prirýchly), nie ako cieľ.</Term>
+          <Term name="HRV">variabilita srdcového tepu (ms) — ukazovateľ regenerácie a stresu. Vyššie a stabilné hodnoty = oddýchnuté telo.</Term>
+          <Term name="Body Battery">odhad zásob energie tela (0–100). Ráno vysoké = nabitý, večer prirodzene klesá.</Term>
           <Term name="Pripravenosť">Garmin odhad, ako je telo pripravené na záťaž. Nízke = zvoľ ľahší tréning.</Term>
-          <Term name="Kadencia (spm)">počet krokov za minútu. Aeróbny efekt = ako tréning zaťažil aeróbny systém (1–5).</Term>
+          <Term name="Kadencia (spm)">počet krokov za minútu (steps per minute). Vyššia kadencia (~170–180) býva efektívnejšia a šetrnejšia ku kĺbom než dlhé „doskakovanie".</Term>
+          <Term name="Aeróbny efekt (1–5)">ako veľmi tréning zaťažil tvoj aeróbny systém. 1–2 = ľahká udržiavacia záťaž, 3–4 = rozvoj kondície, 5 = veľmi náročné.</Term>
         </Item>
 
         <Item q="Časté chyby začiatočníka">
