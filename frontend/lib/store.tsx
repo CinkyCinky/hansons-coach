@@ -185,7 +185,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, reportLoading: true, reportError: null }));
 
     try {
-      const data = await fetchWeeklyReport();
+      const data = await fetchWeeklyReport(force);
       setState((s) => ({
         ...s,
         report: data,

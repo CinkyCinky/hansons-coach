@@ -65,8 +65,8 @@ export async function fetchScheduledPlan() {
   return fetchWithAuth('/api/plan/scheduled');
 }
 
-export async function fetchWeeklyReport() {
-  return fetchWithAuth('/api/reports/weekly');
+export async function fetchWeeklyReport(forceRefresh = false) {
+  return fetchWithAuth('/api/reports/weekly' + (forceRefresh ? '?refresh=true' : ''));
 }
 
 export async function generatePlan(constraints: string) {
