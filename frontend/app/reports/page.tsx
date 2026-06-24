@@ -330,12 +330,15 @@ export default function Reports() {
               </h3>
               <div className="flex gap-4 mt-2">
                 <div className="flex-1 bg-black/20 rounded-xl p-3 text-center">
-                  <p className="text-xs text-gray-500 mb-1">Minulú noc</p>
-                  <p className="text-xl font-bold text-rose-400">{data.hrv.last_night ?? "--"} ms</p>
+                  <p className="text-xs text-gray-500 mb-1">Priem. noc</p>
+                  <p className="text-xl font-bold text-rose-400">{data.hrv.last_night != null ? `${data.hrv.last_night} ms` : "--"}</p>
+                  {data.hrv.last_5min_high != null && (
+                    <p className="text-[10px] text-gray-600 mt-1">5-min max: {data.hrv.last_5min_high} ms</p>
+                  )}
                 </div>
                 <div className="flex-1 bg-black/20 rounded-xl p-3 text-center">
                   <p className="text-xs text-gray-500 mb-1">Týž. priemer</p>
-                  <p className="text-xl font-bold text-rose-300">{data.hrv.weekly_avg ?? "--"} ms</p>
+                  <p className="text-xl font-bold text-rose-300">{data.hrv.weekly_avg != null ? `${data.hrv.weekly_avg} ms` : "--"}</p>
                 </div>
                 <div className="flex-1 bg-black/20 rounded-xl p-3 text-center">
                   <p className="text-xs text-gray-500 mb-1">Stav</p>

@@ -63,21 +63,21 @@ def get_hrv_data(client) -> Optional[dict]:
             hrv = _garmin_call(client.get_hrv_data, d)
             if hrv and hrv.get("hrvSummary"):
                 summary = hrv["hrvSummary"]
-                # Garmin pre dnešný dátum vracia lastNight=null kým sa sleep nespracuje.
-                # Fallback 1: lastNight5MinHigh (najlepšie 5-min okno)
-                # Fallback 2: priemer z hourly readings (ručný výpočet)
+                # lastNight = "Priem. cez noc" (priemerné HRV počas spánku, ~50 ms)
+                # lastNight5MinHigh = "Najvyšší 5-min priemer" (iná metrika, ~83 ms) — NEMIEŠAŤ!
+                # Ak lastNight nie je ešte spracované, vypočítaj priemer z hodinových readings.
                 last_night = summary.get("lastNight")
                 if last_night is None:
-                    last_night = summary.get("lastNight5MinHigh")
-                if last_night is None:
                     readings = hrv.get("hrvReadings") or []
-                    vals = [r.get("hrvValue") for r in readings if r.get("hrvValue")]
-                    if vals:
-                        last_night = round(sum(vals) / len(vals))
+                    if isinstance(readings, list):
+                        vals = [r.get("hrvValue") for r in readings if r.get("hrvValue")]
+                        if vals:
+                            last_night = round(sum(vals) / len(vals))
                 results.append({
                     "date": d,
                     "weekly_avg": summary.get("weeklyAvg"),
                     "last_night": last_night,
+                    "last_5min_high": summary.get("lastNight5MinHigh"),
                     "status": summary.get("status", "unknown"),
                     "feedback": summary.get("feedbackPhrase", ""),
                 })
@@ -86,11 +86,14 @@ def get_hrv_data(client) -> Optional[dict]:
 
     if not results:
         return None
-    # Najnovší deň pre status/weekly_avg; last_night z najnovšieho dňa, ktorý ho má
-    # (dnešná noc nemusí byť ešte spracovaná → bola by null).
+    # Najnovší deň pre status/weekly_avg; last_night + last_5min_high z najnovšieho dňa,
+    # ktorý ich má (dnešná noc nemusí byť ešte spracovaná → boli by null).
     latest = results[0]
     latest["last_night"] = next(
         (r["last_night"] for r in results if r.get("last_night") is not None), None
+    )
+    latest["last_5min_high"] = next(
+        (r.get("last_5min_high") for r in results if r.get("last_5min_high") is not None), None
     )
     return latest
 
