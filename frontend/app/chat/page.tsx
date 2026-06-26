@@ -95,8 +95,16 @@ export default function Chat() {
           const bb = d.stats?.body_battery;
           const todayW = d.today_workout?.title;
           const week = d.training_week;
+          // Je dnešný tréning už odbehnutý? (porovnaj dnešný dátum s aktivitami z Garminu)
+          const now = new Date();
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+          const doneToday = (d.activities ?? []).some(
+            (a: any) => (a.startTimeLocal || a.startTimeGMT || "").slice(0, 10) === todayStr
+          );
           if (todayW) {
-            greetContext = `Ahoj ${displayName}! Dnes ťa čaká: **${todayW}**.`;
+            greetContext = doneToday
+              ? `Ahoj ${displayName}! Dnešný tréning (**${todayW}**) už máš za sebou — pekná práca! 💪`
+              : `Ahoj ${displayName}! Dnes ťa čaká: **${todayW}**.`;
             if (bb) greetContext += ` Tvoja Body Battery je na ${bb}/100.`;
           } else {
             greetContext = `Ahoj ${displayName}! Sme v týždni ${week ?? "?"}/18.`;

@@ -116,6 +116,10 @@ export async function fetchPlanOverview() {
   return fetchWithAuth('/api/plan/overview');
 }
 
+export async function fetchPlanChanges() {
+  return fetchWithAuth('/api/plan/changes');
+}
+
 export async function confirmDailyUpdate(
   workout: any,
   old_workout_id: string,

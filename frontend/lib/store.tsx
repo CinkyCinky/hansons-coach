@@ -45,6 +45,7 @@ interface StoreState {
 
   // Plan
   plan: any[] | null;
+  planCancelledSos: any[] | null;   // SOS zrušené (odstránené z kalendára), z /api/plan/scheduled
   planLoadedAt: number | null;
   planLoading: boolean;
   planError: string | null;
@@ -79,6 +80,7 @@ const initialState: StoreState = {
   chatSeed: null,
 
   plan: null,
+  planCancelledSos: null,
   planLoadedAt: null,
   planLoading: false,
   planError: null,
@@ -163,6 +165,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setState((s) => ({
         ...s,
         plan: sorted,
+        planCancelledSos: data?.cancelled_sos ?? [],
         planLoadedAt: Date.now(),
         planLoading: false,
       }));

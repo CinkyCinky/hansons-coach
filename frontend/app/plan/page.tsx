@@ -5,12 +5,12 @@ import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
   Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles, AlertTriangle,
-  ChevronDown, CalendarRange
+  ChevronDown, CalendarRange, History
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   fetchDailyUpdateProposal, confirmDailyUpdate,
-  fetchWorkoutDetails, fetchActivityStats, fetchPlanOverview
+  fetchWorkoutDetails, fetchActivityStats, fetchPlanOverview, fetchPlanChanges
 } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
@@ -182,6 +182,92 @@ function FullPlanOverview() {
           )}
           {!loading && data && weeks.length === 0 && (
             <p className="text-xs text-gray-500">Prehľad sa nepodarilo načítať.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Denník zmien plánu — odkiaľ (button/chat), aká akcia, dôvod
+const CHANGE_ACTION: Record<string, { label: string; cls: string }> = {
+  recompute: { label: "Prepočítané", cls: "bg-blue-500/15 text-blue-300 border-blue-500/30" },
+  skip:      { label: "Vynechané",   cls: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
+  cancel:    { label: "Zrušené",     cls: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
+  move:      { label: "Presunuté",   cls: "bg-sky-500/15 text-sky-300 border-sky-500/30" },
+  create:    { label: "Pridané",     cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
+};
+
+function PlanChangeLog() {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const toggle = async () => {
+    const willOpen = !open;
+    setOpen(willOpen);
+    if (willOpen && data === null && !loading) {
+      setLoading(true);
+      try {
+        const res = await fetchPlanChanges();
+        setData(res?.changes ?? []);
+      } catch { setData([]); } finally { setLoading(false); }
+    }
+  };
+
+  return (
+    <div className="glass-card p-4">
+      <button onClick={toggle} className="w-full flex items-center justify-between font-bold text-sm">
+        <span className="flex items-center gap-2">
+          <History size={16} className="text-primary" /> Denník zmien plánu
+        </span>
+        <ChevronDown size={18} className={`text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          {loading && (
+            <div className="flex items-center gap-2 text-gray-400 text-sm">
+              <Loader2 className="animate-spin" size={16} /> Načítavam…
+            </div>
+          )}
+          {!loading && data && data.length === 0 && (
+            <p className="text-xs text-gray-500">Za posledných 28 dní žiadne zmeny plánu.</p>
+          )}
+          {!loading && data && data.length > 0 && (
+            <>
+              <p className="text-[11px] text-gray-500 mb-2 leading-snug">
+                Kto a prečo menil tvoj plán (posledných 28 dní). „Odkiaľ“ rozlišuje úpravu cez
+                tlačidlo od konverzácie s trénerom.
+              </p>
+              <div className="flex flex-col gap-2">
+                {data.map((c: any) => {
+                  const act = CHANGE_ACTION[c.action] || { label: c.action, cls: "bg-gray-500/15 text-gray-300 border-gray-500/30" };
+                  const when = c.workout_date
+                    ? new Date(c.workout_date + "T00:00:00").toLocaleDateString("sk-SK", { day: "numeric", month: "long" })
+                    : (c.created_at ? new Date(c.created_at).toLocaleDateString("sk-SK", { day: "numeric", month: "long" }) : "");
+                  return (
+                    <div key={c.id} className="bg-black/20 rounded-xl p-3">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${act.cls}`}>
+                          {act.label}
+                        </span>
+                        <span className="text-[10px] text-gray-400 px-2 py-0.5 rounded-full bg-white/5 border border-white/10">
+                          {c.origin === "button" ? "🔘 tlačidlo" : "💬 chat"}
+                        </span>
+                        {when && <span className="text-[11px] text-gray-500">{when}</span>}
+                      </div>
+                      {c.workout_title && (
+                        <p className="text-sm text-gray-200 leading-snug">{c.workout_title}</p>
+                      )}
+                      {c.reason && (
+                        <p className="text-xs text-gray-400 italic mt-0.5 leading-snug">„{c.reason}“</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -515,6 +601,9 @@ export default function Plan() {
 
       {/* Celý 18-týždňový plán (rozbaľovací) */}
       <FullPlanOverview />
+
+      {/* Denník zmien plánu (kto/odkiaľ/prečo menil tréningy) */}
+      <PlanChangeLog />
 
       {/* Taper / pretekový týždeň */}
       {trainingWeek != null && trainingWeek >= 18 && (
