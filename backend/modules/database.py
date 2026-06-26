@@ -182,3 +182,45 @@ def delete_memory_fact(user_id: str, fact_id: str):
         supabase.table("athlete_memory").delete().eq("user_id", user_id).eq("id", fact_id).execute()
     except Exception as e:
         print(f"Memory delete error: {e}")
+
+
+def log_plan_change(user_id: str, action: str, origin: str, workout_date=None,
+                    workout_title: Optional[str] = None, sos_kind: Optional[str] = None,
+                    reason: Optional[str] = None):
+    """Zapíše jednu zmenu plánu do denníka (fail-open — appka funguje aj bez tabuľky).
+    action: recompute|skip|cancel|move|create. origin: button|chat."""
+    if not supabase:
+        return
+    try:
+        supabase.table("plan_change_log").insert({
+            "user_id": user_id,
+            "action": action,
+            "origin": origin,
+            "workout_date": str(workout_date)[:10] if workout_date else None,
+            "workout_title": (workout_title or "")[:200] or None,
+            "sos_kind": sos_kind,
+            "reason": (reason or "").strip()[:500] or None,
+        }).execute()
+    except Exception as e:
+        print(f"Plan change log error: {e}")
+
+
+def get_plan_changes(user_id: str, days: int = 28) -> list:
+    """Posledné zmeny plánu používateľa (najnovšie prvé). Fail-open."""
+    if not supabase:
+        return []
+    try:
+        cutoff = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+        res = (
+            supabase.table("plan_change_log")
+            .select("id,workout_date,workout_title,sos_kind,action,origin,reason,created_at")
+            .eq("user_id", user_id)
+            .gte("created_at", cutoff)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        print(f"Plan changes read error: {e}")
+        return []

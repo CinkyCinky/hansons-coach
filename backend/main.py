@@ -23,6 +23,7 @@ from modules.database import (
     get_garmin_snapshot, save_garmin_snapshot,
     save_metric_history, get_metric_history,
     get_memory_facts, add_memory_fact, delete_memory_fact,
+    log_plan_change, get_plan_changes,
 )
 from modules import workout_generator
 from modules import hansons_knowledge
@@ -511,9 +512,16 @@ def _training_context_block(client) -> str:
             key=lambda x: x.get("date") or "",
         )
         if nxt:
-            lines.append(f"Dnes je voľno. Najbližší tréning: {nxt[0].get('date')} — {nxt[0].get('title') or 'Beh'}.")
+            lines.append(
+                f"Dnes je VOĽNO (žiadny tréning na dnes) — NIE je čo prepočítavať, "
+                f"NEnavrhuj prepočet tréningu, odporuč len regeneráciu. "
+                f"Najbližší tréning: {nxt[0].get('date')} — {nxt[0].get('title') or 'Beh'}."
+            )
         else:
-            lines.append("Dnes je voľno, žiadny tréning naplánovaný.")
+            lines.append(
+                "Dnes je VOĽNO, žiadny tréning naplánovaný — NIE je čo prepočítavať, "
+                "NEnavrhuj prepočet tréningu, odporuč len regeneráciu."
+            )
 
     # VČERA
     y_plan = _planned_on(yest_str)
@@ -589,8 +597,10 @@ Daj mu osobnú radu na dnešný deň: 2-4 krátke úderné vety. Zohľadni v nej
 - čo robil včera (či splnil/vynechal tréning, alebo mal voľno) — nadviaž na to,
 - jeho objem a priebeh za posledných 7 dní (najmä vynechané kľúčové SOS tréningy),
 - čo má (ne)naplánované dnes — buď ho naladí na dnešný tréning, alebo pri voľne odporuč regeneráciu.
-Ak sú hodnoty slabé (Body Battery alebo Pripravenosť pod 50) A z kontextu NEVYPLÝVA, že dnešný tréning
-bol SPLNENÝ alebo PREPOČÍTANÝ — vtedy a JEN vtedy odporúč zvážiť prepočet v sekcii Plán.
+Prepočet tréningu v sekcii Plán odporuč LEN ak sú splnené VŠETKY tri podmienky naraz:
+(1) hodnoty sú slabé (Body Battery alebo Pripravenosť pod 50), (2) na DNES je naplánovaný tréning
+(kontext NEhovorí, že je voľno), a (3) z kontextu NEVYPLÝVA, že tréning bol SPLNENÝ alebo PREPOČÍTANÝ.
+Ak je DNES VOĽNO (žiadny tréning), prepočet NIKDY neodporúčaj — nie je čo prepočítavať, odporuč regeneráciu.
 NIKDY neodporúčaj prepočítať tréning ak kontext hovorí "SPLNENÝ DNES" alebo "PREPOČÍTANÝ AI" —
 v takom prípade skôr pochváľ zverenca alebo ho naladí na ďalší deň.
 Ak sú hodnoty super, povzbuď ho. Pokojne pridaj 1 emoji.
@@ -626,6 +636,69 @@ Stav formy dnes: {form_score}/100
 
 
 # ── Plan ─────────────────────────────────────────────────────────────────────
+
+_HARD_SOS = {"speed", "strength", "tempo"}
+_SOS_KIND_LABEL = {"speed": "Speed intervaly", "strength": "Strength intervaly", "tempo": "Tempo beh"}
+
+
+def _dropped_sos(items: list, profile: dict, today: datetime.date) -> list:
+    """Kľúčové (SOS) tréningy, ktoré Hanson PREDPIS na daný UZAVRETÝ týždeň vyžadoval,
+    ale v kalendári pre ten týždeň úplne CHÝBAJÚ → „ZRUŠENÉ“ (odstránené z kalendára).
+    Rozlíšenie troch typov zmeny:
+      • PREPOČÍTANÉ/ZMÄKČENÉ (button „Upraviť“ / odporúčanie trénera): `update_next_workout`
+        ZACHOVÁVA typ tréningu (Tempo ostane Tempo „(Updated)“) → kind je STÁLE prítomný →
+        sem sa NErátá (dátovo-riadená adaptácia, ostáva v pláne).
+      • VYNECHANÉ (no-show): SOS je v kalendári STÁLE, len bez odbehnutej aktivity (iná logika).
+      • ZRUŠENÉ: SOS bol z kalendára ODSTRÁNENÝ (napr. „zruš mi dnešný a prepočítaj zvyšok“) →
+        kind v týždni chýba a nič ho nenahradilo → zachytáva táto funkcia.
+    Meria sa voči predpisu (deterministický `sos_for_week`), preto úpravy kalendára zrušenie
+    nezamaskujú. Posledné 4 uzavreté týždne (~okno konzistencie)."""
+    variant = (profile.get("plan_variant") or "advanced").lower()
+    cur_week = hansons_knowledge.current_training_week(profile)
+    this_monday = today - datetime.timedelta(days=today.weekday())
+
+    # Kindy SOS prítomné v kalendári podľa ISO týždňa (pondelok)
+    kinds_by_week: Dict[datetime.date, set] = {}
+    for it in items:
+        try:
+            d = datetime.date.fromisoformat((it.get("date") or "")[:10])
+        except Exception:
+            continue
+        wk = d - datetime.timedelta(days=d.weekday())
+        kinds_by_week.setdefault(wk, set()).add(
+            workout_generator.classify_workout_kind(it.get("title") or "")
+        )
+
+    out = []
+    for back in range(1, 5):  # 4 uzavreté týždne dozadu
+        wk_monday = this_monday - datetime.timedelta(days=7 * back)
+        week_num = cur_week - back
+        if week_num < 2 or week_num > 17:
+            continue  # mimo SOS fáz (T1 úvod / T18 taper)
+        sos = hansons_knowledge.sos_for_week(week_num, variant)
+        if not sos:
+            continue
+        prescribed = [
+            sos[day]["kind"] for day in ("tuesday", "thursday")
+            if sos.get(day, {}).get("kind") in _HARD_SOS
+        ]
+        present = kinds_by_week.get(wk_monday, set())
+        # Poistka proti falošným flagom: vyhodnocuj len týždeň, ktorý má aspoň jeden
+        # naplánovaný/odbehnutý beh (dôkaz, že to bol aktívny tréningový týždeň).
+        # Prázdny týždeň = chýbajúce dáta / pred štartom prípravy → preskoč.
+        if not present:
+            continue
+        for kind in prescribed:
+            if kind not in present:
+                out.append({
+                    "week": week_num,
+                    "kind": kind,
+                    "label": _SOS_KIND_LABEL.get(kind, kind),
+                    "week_start": wk_monday.isoformat(),
+                    "week_end": (wk_monday + datetime.timedelta(days=6)).isoformat(),
+                })
+    return out
+
 
 @app.get("/api/plan/scheduled")
 def get_scheduled_plan(user_id: str = Depends(get_current_user), client=Depends(get_garmin_client)):
@@ -667,11 +740,14 @@ def get_scheduled_plan(user_id: str = Depends(get_current_user), client=Depends(
                 if d:
                     runs_by_date.setdefault(d, []).append(a)
 
-            # 1) Naplánovaným minulým tréningom priraď splnenú aktivitu (zelená fajka)
+            # 1) Naplánovaným minulým AJ dnešným tréningom priraď splnenú aktivitu
+            #    (zelená fajka). Aj dnešok (<=), inak sa dnes odbehnutý beh zobrazí
+            #    duplicitne: naplánovaný tréning ostane „nesplnený“ a aktivita pribudne
+            #    ako samostatná karta. Spáruje sa až na druhý deň.
             used_ids = set()
             for item in items:
                 item_date = (item.get("date") or "")[:10]
-                if item_date and item_date < today_str and not item.get("activityId"):
+                if item_date and item_date <= today_str and not item.get("activityId"):
                     day_runs = runs_by_date.get(item_date, [])
                     if day_runs:
                         chosen = day_runs[0]
@@ -698,9 +774,22 @@ def get_scheduled_plan(user_id: str = Depends(get_current_user), client=Depends(
         except Exception as enrich_err:
             print(f"Activity enrichment failed: {enrich_err}")
 
-        return {"workouts": items}
+        # Zrušené SOS (odstránené z kalendára) — merané voči Hanson predpisu, fail-open
+        cancelled_sos = []
+        try:
+            cancelled_sos = _dropped_sos(items, profile, today)
+        except Exception as drop_err:
+            print(f"Cancelled SOS calc failed: {drop_err}")
+
+        return {"workouts": items, "cancelled_sos": cancelled_sos}
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa načítať tréningový plán.")
+
+
+@app.get("/api/plan/changes")
+def api_plan_changes(user_id: str = Depends(get_current_user)):
+    """Denník zmien plánu (posledných 28 dní) — odkiaľ (button/chat), aká akcia, dôvod."""
+    return {"changes": get_plan_changes(user_id, days=28)}
 
 
 @app.get("/api/plan/workout/{workout_id}")
@@ -1119,7 +1208,8 @@ class WorkoutConfirmRequest(BaseModel):
     target_date_str: str
 
 @app.post("/api/plan/daily_update/confirm")
-def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_client)):
+def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_client),
+                         user_id: str = Depends(get_current_user)):
     """Uloží potvrdený AI tréning do Garminu a zmaže starý."""
     try:
         new_w_data = req.workout
@@ -1137,7 +1227,7 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
         )
         gw = workout_generator.RunningWorkout(
             workoutName=new_w_data.get("workout_name", "Updated Workout"),
-            description=new_w_data.get("description", ""),
+            description=workout_generator.clean_workout_description(new_w_data.get("description", "")),
             estimatedDurationInSecs=int(est_dur),
             workoutSegments=[segment],
         )
@@ -1151,6 +1241,11 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
                     client.delete_workout(old_workout_id)
                 except Exception:
                     pass
+            new_name = new_w_data.get("workout_name", "")
+            log_plan_change(user_id, "recompute", "button", workout_date=target_date_str,
+                            workout_title=new_name,
+                            sos_kind=workout_generator.classify_workout_kind(new_name),
+                            reason=new_w_data.get("description", ""))
             return {"status": "success", "message": "Tréning bol úspešne uložený do Garminu."}
         else:
             raise HTTPException(status_code=500, detail="Garmin nevrátil ID nového tréningu.")
@@ -1592,10 +1687,12 @@ Najbližší tréning: {next_w_str}
         except Exception as e:
             return f"Chyba pri čítaní detailov: {str(e)}"
 
-    def reschedule_workout(workout_id: str, new_date: str) -> str:
+    def reschedule_workout(workout_id: str, new_date: str, reason: str = "") -> str:
         """Presunie existujúci tréning na nový dátum (YYYY-MM-DD). Tréning identifikuj cez
         workout_id (z list_garmin_workouts). Funkcia naozaj PRESUNIE — najprv zruší pôvodný
-        záznam v kalendári a potom naplánuje na nový dátum (nezostane duplikát na starom dni)."""
+        záznam v kalendári a potom naplánuje na nový dátum (nezostane duplikát na starom dni).
+        reason: stručný dôvod presunu po slovensky (napr. o čo zverenec požiadal alebo prečo
+        to odporúčaš) — uloží sa do denníka zmien."""
         try:
             today = datetime.date.today()
             # Nájdi všetky kalendárové výskyty tohto workoutId (3 mesiace dopredu/mesiac dozadu)
@@ -1606,6 +1703,7 @@ Najbližší tréning: {next_w_str}
                 it for it in items
                 if str(it.get("workoutId")) == str(workout_id) and it.get("id")
             ]
+            title = occurrences[0].get("title") if occurrences else None
             # Zruš pôvodné naplánovania (schedule id = 'id'), aby nevznikol duplikát
             unscheduled = 0
             for occ in occurrences:
@@ -1616,13 +1714,20 @@ Najbližší tréning: {next_w_str}
                     pass
             # Naplánuj na nový dátum
             client.schedule_workout(workout_id, new_date)
+            log_plan_change(user_id, "move", "chat", workout_date=new_date,
+                            workout_title=title,
+                            sos_kind=workout_generator.classify_workout_kind(title or ""),
+                            reason=reason)
             note = "" if unscheduled else " (pôvodný termín sa nenašiel — vytvoril sa nový záznam)"
             return f"Tréning {workout_id} presunutý na {new_date}{note}."
         except Exception as e:
             return f"Chyba pri presune tréningu: {str(e)}"
 
-    def delete_garmin_workout(date: str) -> str:
-        """Vymaže všetky tréningy naplánované na daný dátum v Garmin kalendári. Format: YYYY-MM-DD."""
+    def delete_garmin_workout(date: str, reason: str = "") -> str:
+        """Vymaže všetky tréningy naplánované na daný dátum v Garmin kalendári. Format: YYYY-MM-DD.
+        reason: stručný dôvod zrušenia po slovensky — ČO o to požiadal zverenec (napr. „nestíham,
+        mal som náročný deň") alebo PREČO to odporúčaš (napr. „nízka pripravenosť / HRV"). Uloží sa
+        do denníka zmien, aby appka rozlíšila zrušenie pre únavu od lifestyle dôvodu."""
         try:
             d = datetime.datetime.strptime(date, "%Y-%m-%d")
             scheduled = client.get_scheduled_workouts(d.year, d.month)
@@ -1634,6 +1739,10 @@ Najbližší tréning: {next_w_str}
                     if w_id:
                         client.delete_workout(w_id)
                         deleted += 1
+                        log_plan_change(user_id, "cancel", "chat", workout_date=date,
+                                        workout_title=item.get("title"),
+                                        sos_kind=workout_generator.classify_workout_kind(item.get("title") or ""),
+                                        reason=reason)
             return f"Úspešne vymazané {deleted} tréning(ov) pre dátum {date}." if deleted > 0 else f"Na dátum {date} nebol nájdený žiadny tréning."
         except Exception as e:
             return f"Chyba pri mazaní: {str(e)}"
@@ -1650,7 +1759,7 @@ Najbližší tréning: {next_w_str}
         )
         garmin_workout = workout_generator.RunningWorkout(
             workoutName=workout_data.get("workout_name", "Beh"),
-            description=workout_data.get("description", ""),
+            description=workout_generator.clean_workout_description(workout_data.get("description", "")),
             estimatedDurationInSecs=int(est_dur),
             workoutSegments=[segment],
         )
@@ -1678,16 +1787,21 @@ Najbližší tréning: {next_w_str}
         except Exception:
             return False
 
-    def create_and_schedule_workout(date: str, description: str) -> str:
+    def create_and_schedule_workout(date: str, description: str, reason: str = "") -> str:
         """Vygeneruje NOVÝ tréning podľa požiadavky (Hanson metodika + tvoje Garmin dáta/zóny)
-        a naplánuje ho na daný dátum (YYYY-MM-DD). Všetko TEMPOM; intervaly ako repeat-blok."""
+        a naplánuje ho na daný dátum (YYYY-MM-DD). Všetko TEMPOM; intervaly ako repeat-blok.
+        reason: stručný dôvod po slovensky (o čo zverenec požiadal / prečo) — do denníka zmien."""
         try:
             datetime.datetime.strptime(date, "%Y-%m-%d")  # validácia
             profile = get_user_profile(user_id) or {}
             workout_data = workout_generator.generate_single_workout(profile, description, client, date)
             new_id = _build_and_schedule(workout_data, date)
             if new_id:
-                return f"✓ Nový tréning '{workout_data.get('workout_name')}' naplánovaný na {date}."
+                name = workout_data.get("workout_name")
+                log_plan_change(user_id, "create", "chat", workout_date=date, workout_title=name,
+                                sos_kind=workout_generator.classify_workout_kind(name or ""),
+                                reason=reason or description)
+                return f"✓ Nový tréning '{name}' naplánovaný na {date}."
             return "Chyba: Garmin nevrátil ID nového tréningu."
         except json.JSONDecodeError:
             return "Chyba: AI nevygenerovala platný JSON."
@@ -1713,7 +1827,11 @@ Najbližší tréning: {next_w_str}
             if not new_id:
                 return "Chyba: Garmin nevrátil ID upraveného tréningu."
             _remove_workout_by_id(workout_id)  # odstráň pôvodný
-            return f"✓ Tréning upravený: '{workout_data.get('workout_name')}' na {date}."
+            new_name = workout_data.get("workout_name")
+            log_plan_change(user_id, "recompute", "chat", workout_date=date, workout_title=new_name,
+                            sos_kind=workout_generator.classify_workout_kind(new_name or ""),
+                            reason=change_request)
+            return f"✓ Tréning upravený: '{new_name}' na {date}."
         except json.JSONDecodeError:
             return "Chyba: AI nevygenerovala platný JSON."
         except Exception as e:

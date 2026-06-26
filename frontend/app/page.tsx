@@ -139,9 +139,13 @@ export default function Dashboard() {
       if (w.activityId) { done++; continue; }
       if (SOS.includes(classifyWorkout(w.title).type)) missedSos++;
     }
-    if (done === 0 && missedSos === 0) return null;
-    return { done, missedSos };
-  }, [store.plan]);
+    // Zrušené = SOS odstránené z kalendára (merané voči Hanson predpisu, backend).
+    // Líši sa od „vynechaných“ (tie sú v kalendári stále) aj od „zmäkčených/prepočítaných“
+    // (tie ostávajú v pláne ako ten istý typ — preto sa sem nerátajú).
+    const cancelled = (store.planCancelledSos ?? []).length;
+    if (done === 0 && missedSos === 0 && cancelled === 0) return null;
+    return { done, missedSos, cancelled };
+  }, [store.plan, store.planCancelledSos]);
 
   const handleRefresh = async () => {
     store.invalidateAll();
@@ -854,9 +858,17 @@ export default function Dashboard() {
               </p>
               <p className="text-xs text-gray-500">vynechaných kľúčových</p>
             </div>
+            {consistency.cancelled > 0 && (
+              <div>
+                <p className="text-2xl font-bold text-amber-400">{consistency.cancelled}</p>
+                <p className="text-xs text-gray-500">zrušených</p>
+              </div>
+            )}
           </div>
           <p className="text-xs text-gray-400 mt-3 leading-snug">
-            {consistency.missedSos === 0
+            {consistency.cancelled > 0
+              ? "„Zrušené“ = kľúčový (SOS) tréning, ktorý už nie je v pláne — odstránený alebo nahradený ľahším behom (či už tebou, alebo trénerom). Zmäkčené tréningy, čo ostali rovnakého typu, sa sem nerátajú. Jeden raz nič nepokazí, séria zrušených SOS ale oslabuje prípravu (jadrom Hansona je odbehnúť kľúčové tréningy)."
+              : consistency.missedSos === 0
               ? "Žiadny vynechaný kľúčový tréning — konzistencia je pilier Hansonovej metódy. 💪"
               : "Kľúčové (SOS) tréningy nehromaď — radšej pokračuj podľa plánu, nikdy nie 2 tvrdé dni za sebou."}
           </p>

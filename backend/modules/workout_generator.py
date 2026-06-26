@@ -56,6 +56,44 @@ def _generate_json(prompt: str) -> dict:
         raise
 
 
+# ── Čistenie popisu tréningu ──────────────────────────────────────────────────
+# Gemini pri dlhšom JSON výstupe (najmä s „thinking“ tokenmi) môže reťazec
+# 'description' uťať uprostred slova; structured-output ho potom uzavrie do
+# platného JSON, takže sa nahrá neúplná poznámka a v UI sa zobrazí odseknutá
+# (napr. „…ktorú využiješ na pre“). Pred zápisom do Garminu popis znormalizujeme
+# a odseknutý chvost orežeme späť na poslednú celú vetu.
+_DESC_MAX = 480                 # bezpečne pod Garmin limitom poznámky (~512)
+_SENT_END = (". ", "! ", "? ", "… ")
+
+
+def clean_workout_description(text: Optional[str]) -> str:
+    """Znormalizuje popis a odstráni odseknutý (truncated) chvost.
+    Bezpečné voči bežným popisom — chvost orezáva len pri silnom signáli uťatia
+    (dlhý text, ktorý nekončí vetnou interpunkciou) a vždy ponechá aspoň ~40 % textu."""
+    if not text:
+        return ""
+    s = " ".join(str(text).split())
+    if not s:
+        return ""
+
+    def _last_sentence_end(t: str) -> int:
+        return max((t.rfind(p) for p in _SENT_END), default=-1)
+
+    # 1) Tvrdý strop dĺžky (Garmin pole) — orež na poslednú celú vetu pod limitom.
+    if len(s) > _DESC_MAX:
+        cut = s[:_DESC_MAX]
+        b = _last_sentence_end(cut)
+        s = (cut[: b + 1] if b >= _DESC_MAX * 0.5 else cut).rstrip()
+
+    # 2) Odseknutý chvost: dlhý popis, ktorý nekončí vetnou interpunkciou ani „)“,
+    #    je takmer isto uťatý → vráť ho po poslednú celú vetu (ak je dosť ďaleko).
+    if len(s) >= 140 and s[-1] not in ".!?…)\"":
+        b = _last_sentence_end(s)
+        if b >= len(s) * 0.4:
+            s = s[: b + 1].rstrip()
+    return s
+
+
 def _gather_athlete_context(client, profile: dict) -> str:
     """Pozbiera živé dáta z Garminu (osobný profil, LTHR, HR zóny) + vypočítané tempá
     a vráti hotový textový blok pre AI prompt. Toto robí trénera 'múdrym'."""
@@ -426,7 +464,7 @@ Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
     {{
       "day_offset": 0,
       "workout_name": "Napr. Easy Run 8km alebo Tempo 6km @ HMP",
-      "description": "Popis vrátane účelu + orientačný tep ako referencia (napr. Easy strop ~150 bpm)",
+      "description": "Krátky popis (1–2 úplné vety, max ~300 znakov) vrátane účelu + orientačný tep ako referencia (napr. Easy strop ~150 bpm)",
       "steps": [
         {{ "type": "warmup", "distance_km": 2.5, "pace_min": "6:20", "pace_max": "5:55" }},
         {{ "type": "run", "distance_km": 6.0, "pace_min": "5:18", "pace_max": "5:10" }},
@@ -584,7 +622,7 @@ def build_one_garmin_workout(w: dict) -> "tuple[datetime.date, RunningWorkout]":
     )
     garmin_workout = RunningWorkout(
         workoutName=w.get("workout_name", "Beh"),
-        description=w.get("description", ""),
+        description=clean_workout_description(w.get("description", "")),
         estimatedDurationInSecs=int(total_duration),
         workoutSegments=[segment],
     )
