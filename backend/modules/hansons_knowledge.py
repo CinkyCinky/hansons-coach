@@ -294,11 +294,18 @@ def current_training_week(profile: dict) -> int:
         return 1
 
 
-def training_phase(week: int) -> Dict[str, str]:
-    """Mapuje aktuálny týždeň prípravy (1–18) na Hanson fázu + krátky pokyn pre trénera."""
+def training_phase(week: int, variant: Optional[str] = "advanced") -> Dict[str, str]:
+    """Mapuje aktuálny týždeň prípravy (1–18) na Hanson fázu + krátky pokyn pre trénera.
+    Pri variante 'just_finish' fázy NEMAJÚ speed/tempo — len Easy behy + nedeľný dlhý beh."""
     if week <= 1:
         return {"key": "intro", "label": "Úvod (T1)",
                 "note": "Úvodný týždeň — len Easy behy, adaptácia. Žiadne SOS tréningy."}
+    if (variant or "advanced").lower() == "just_finish":
+        if week <= 17:
+            return {"key": "just_finish", "label": f"Just Finish (T{week})",
+                    "note": "JUST FINISH — ŽIADNE intervaly ani tempo. Len Easy behy + nedeľný dlhý beh "
+                            "(Easy). Cieľ je v pohode dobehnúť: rozhoduje objem a konzistencia, nie rýchlosť."}
+        return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
     if week <= 10:
         return {"key": "speed", "label": f"Speed fáza (T{week})",
                 "note": "SPEED fáza — krátke intervaly @ aktuálne 5k tempo (z VO2max). SOS: Speed (ut), Tempo (št), Dlhý (ne)."}
@@ -308,9 +315,9 @@ def training_phase(week: int) -> Dict[str, str]:
     return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
 
 
-def phase_block(week: int) -> str:
+def phase_block(week: int, variant: Optional[str] = "advanced") -> str:
     """Formátovaný blok o aktuálnej fáze prípravy pre prompt."""
-    ph = training_phase(week)
+    ph = training_phase(week, variant)
     return f"\nFÁZA PRÍPRAVY: {ph['label']} (týždeň {week}/18)\n{ph['note']}\n"
 
 
@@ -331,6 +338,39 @@ TEMPO_MILES = {2: 3, 3: 3, 4: 3, 5: 4, 6: 4, 7: 4, 8: 5, 9: 5, 10: 5,
 _MI = 1.609
 
 
+# ── Just Finish (Program pre nenáročných) — VERNÁ tabuľka z knihy ─────────────
+# Hansons Half-Marathon Method, „Just Finish / Program pro nenáročné" (Tabulka 4.4,
+# str. 120–123). Overené z knihy + krížovo cez oficiálne Hansons zdroje (knižné km =
+# zaokrúhlené míle: 2mí→3, 3→5, 4→6.5, 5→8, 6→10, 7→11, 8→13, 10→16 km).
+# Na rozdiel od Advanced/Beginner: ŽIADNY speed ani tempo — len Easy behy + nedeľný
+# dlhý beh (Easy). Hodnoty = km na deň; chýbajúci deň = voľno. Streda je vždy voľno.
+JUST_FINISH_KM: Dict[int, Dict[str, object]] = {
+    1:  {"tue": 3,   "thu": 3,                                       "sun": 5},
+    2:  {"tue": 3,   "thu": 3,              "sat": 3,                 "sun": 5},
+    3:  {"tue": 5,   "thu": 5,              "sat": 5,                 "sun": 6.5},
+    4:  {"tue": 5,   "thu": 5,   "fri": 3,  "sat": 5,                 "sun": 8},
+    5:  {"tue": 5,   "thu": 6.5, "fri": 3,  "sat": 5,                 "sun": 10},
+    6:  {"mon": 3,   "tue": 5,   "thu": 6.5, "fri": 3, "sat": 5,      "sun": 10},
+    7:  {"mon": 5,   "tue": 5,   "thu": 6.5, "fri": 5, "sat": 5,      "sun": 11},
+    8:  {"mon": 5,   "tue": 6.5, "thu": 6.5, "fri": 5, "sat": 5,      "sun": 13},
+    9:  {"mon": 5,   "tue": 8,   "thu": 8,  "fri": 5,  "sat": 5,      "sun": 10},
+    10: {"mon": 5,   "tue": 8,   "thu": 8,  "fri": 5,  "sat": 6.5,    "sun": 13},
+    11: {"mon": 6.5, "tue": 8,   "thu": 8,  "fri": 6.5, "sat": 6.5,   "sun": 10},
+    12: {"mon": 5,   "tue": 8,   "thu": 8,  "fri": 6.5, "sat": 8,     "sun": 16},
+    13: {"mon": 6.5, "tue": 8,   "thu": 8,  "fri": 5,  "sat": 10,     "sun": 13},
+    14: {"mon": 5,   "tue": 8,   "thu": 8,  "fri": 6.5, "sat": 8,     "sun": 16},
+    15: {"mon": 6.5, "tue": 8,   "thu": 8,  "fri": 5,  "sat": 10,     "sun": 13},
+    16: {"mon": 6.5, "tue": 8,   "thu": 8,  "fri": 6.5, "sat": 8,     "sun": 16},
+    17: {"mon": 6.5, "tue": 6.5, "thu": 6.5, "fri": 5, "sat": 5,      "sun": 10},
+    18: {"mon": 5,   "tue": 6.5, "thu": 5,  "fri": 5,  "sat": 5,      "sun": "race"},
+}
+# Pozn.: vrchol dlhého behu v Just Finish = 16 km (~10 mí); strop sa vynucuje v
+# workout_generator._JF_LONG_CAP_KM (tam, kde žijú ostatné guardrail stropy).
+
+_DAY_SK_FULL = {"mon": "Pondelok", "tue": "Utorok", "wed": "Streda", "thu": "Štvrtok",
+                "fri": "Piatok", "sat": "Sobota", "sun": "Nedeľa"}
+
+
 def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
     def _d(m):
         return f"{m} m" if m < 1000 else f"{round(m/1000, 1)} km"
@@ -340,7 +380,7 @@ def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
 VARIANTS = {
     "advanced": "Advanced — plný objem (~51 mi/týž vo vrchole), 6 dní behu.",
     "beginner": "Beginner — nižší objem (~48 mi/týž vo vrchole), kratšie Easy behy; rovnaké SOS ako Advanced.",
-    "just_finish": "Just Finish — cieľ je dobehnúť: ŽIADNE tvrdé intervaly, dôraz na objem a dlhý beh.",
+    "just_finish": "Just Finish — cieľ je dobehnúť (HMP 2:25+): ŽIADNE intervaly ani tempo, len Easy behy + nedeľný dlhý beh (vrchol ~16 km / 10 mí, objem ~53 km vo vrchole).",
 }
 
 
@@ -357,34 +397,72 @@ def variant_note(variant: Optional[str]) -> str:
 def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dict]:
     """Predpísané SOS tréningy pre daný týždeň. Vráti štruktúru pre prompt aj pre prípadný
     deterministický builder. None v T1 (len Easy) a T18 (taper).
-    Pri variante 'just_finish' sa intervaly (utorok) vynechávajú."""
+    Pri variante 'just_finish' NIE sú intervaly ani tempo — len Easy + nedeľný dlhý beh
+    s vernými vzdialenosťami z knihy (JUST_FINISH_KM)."""
     if week <= 1 or week >= 18:
         return None
     v = (variant or "advanced").lower()
     out: Dict[str, dict] = {}
-    if v != "just_finish":
-        if week in SPEED_LADDER:
-            reps, dist_m, rec_m = SPEED_LADDER[week]
-            out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                              "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
-        elif week in STRENGTH_LADDER:
-            reps, dist_m, rec_m = STRENGTH_LADDER[week]
-            out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                              "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
-    tempo_km = round(TEMPO_MILES.get(week, 4) * _MI, 1)
+
+    # Just Finish (nenároční): vlastná verná tabuľka — žiadny speed/tempo (utorok nie je SOS).
+    # Štvrtok aj nedeľa sú Easy; nedeľa je „dlhý" beh týždňa s knižnou vzdialenosťou.
     if v == "just_finish":
-        out["thursday"] = {"kind": "easy", "dist_km": tempo_km, "pace": "easy",
-                           "label": f"Súvislý beh {tempo_km} km @ Easy (Just Finish — bez tvrdého tempa)"}
-    else:
-        out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
-                           "label": f"Tempo {tempo_km} km @ cieľové HMP"}
+        day = JUST_FINISH_KM.get(week, {})
+        thu = day.get("thu")
+        if isinstance(thu, (int, float)):
+            out["thursday"] = {"kind": "easy", "dist_km": thu, "pace": "easy",
+                               "label": f"Easy beh {thu} km (Just Finish — bez tempa)"}
+        sun = day.get("sun")
+        if isinstance(sun, (int, float)):
+            out["sunday"] = {"kind": "long", "dist_km": sun, "pace": "easy",
+                             "label": f"Dlhý beh {sun} km @ Easy (Just Finish; vrchol ~16 km / 10 mí)"}
+        return out
+
+    if week in SPEED_LADDER:
+        reps, dist_m, rec_m = SPEED_LADDER[week]
+        out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
+                          "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
+    elif week in STRENGTH_LADDER:
+        reps, dist_m, rec_m = STRENGTH_LADDER[week]
+        out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
+                          "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
+    tempo_km = round(TEMPO_MILES.get(week, 4) * _MI, 1)
+    out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
+                       "label": f"Tempo {tempo_km} km @ cieľové HMP"}
     out["sunday"] = {"kind": "long", "pace": "easy",
                      "label": "Dlhý beh @ Easy (≈8–12 míľ podľa fázy, vrchol ~12 míľ / ~19 km; max ~30 % týždenného objemu)"}
     return out
 
 
+def just_finish_block(week: int) -> str:
+    """Verný denný rozpis Just Finish (z knihy) pre daný týždeň do promptu.
+    Všetko Easy; nedeľa = dlhý beh (Easy). AI len rozmiestni PRESNE tieto vzdialenosti."""
+    day = JUST_FINISH_KM.get(week)
+    if not day:
+        return "\nPREDPÍSANÝ TÝŽDEŇ (Just Finish): len Easy behy podľa pocitu.\n"
+    lines = ["\nPREDPÍSANÝ TÝŽDEŇ — JUST FINISH (verne podľa knihy). DRŽ tieto vzdialenosti — "
+             "km NEMEŇ a NEPRIDÁVAJ behy navyše; behy môžeš presunúť na iný deň podľa preferencií "
+             "zverenca. Všetko EASY tempom (žiadny speed ani tempo):"]
+    for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun"):
+        if d == "wed":
+            lines.append("  • Streda: voľno (rest / cross-train)")
+            continue
+        val = day.get(d)
+        if val is None:
+            lines.append(f"  • {_DAY_SK_FULL[d]}: voľno")
+        elif val == "race":
+            lines.append(f"  • {_DAY_SK_FULL[d]}: PRETEKY — polmaratón")
+        elif d == "sun":
+            lines.append(f"  • Nedeľa: dlhý beh {val} km @ Easy")
+        else:
+            lines.append(f"  • {_DAY_SK_FULL[d]}: Easy beh {val} km")
+    return "\n".join(lines) + "\n"
+
+
 def sos_block(week: int, variant: Optional[str] = "advanced") -> str:
     """Per-week predpísané SOS do promptu — aby AI tréning NEvymýšľala, len rozmiestnila."""
+    if (variant or "advanced").lower() == "just_finish":
+        return just_finish_block(week)
     sos = sos_for_week(week, variant)
     if not sos:
         if week <= 1:

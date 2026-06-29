@@ -1032,7 +1032,8 @@ def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_u
         try:
             prof = get_user_profile(user_id) or {}
             _p = hansons_knowledge.compute_training_paces(prof.get("target_time", "")) or {}
-            workout_generator.apply_plan_guardrails(req.plan_data, _p.get("easy_min"), _p.get("easy_max"))
+            workout_generator.apply_plan_guardrails(req.plan_data, _p.get("easy_min"), _p.get("easy_max"),
+                                                    prof.get("plan_variant") or "advanced")
             workouts_json = (req.plan_data or {}).get("workouts", []) or []
         except Exception:
             logger.exception("Guardraily na upload zlyhali — pokračujem bez nich")
@@ -1139,7 +1140,7 @@ def api_plan_overview(user_id: str = Depends(get_current_user)):
         cur = hansons_knowledge.current_training_week(profile)
         weeks = []
         for wk in range(1, 19):
-            ph = hansons_knowledge.training_phase(wk)
+            ph = hansons_knowledge.training_phase(wk, variant)
             sos = hansons_knowledge.sos_for_week(wk, variant)
             weeks.append({
                 "week": wk,
@@ -1589,7 +1590,7 @@ Posledné behy (14 dní):
 {chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
 
 Najbližší tréning: {next_w_str}
-{hansons_knowledge.training_load_block(training_load)}{hansons_knowledge.phase_block(training_week)}
+{hansons_knowledge.training_load_block(training_load)}{hansons_knowledge.phase_block(training_week, profile.get('plan_variant'))}
 --- KONIEC ---"""
     except Exception as e:
         garmin_context = f"(Garmin dáta sa nepodarilo načítať: {e})"

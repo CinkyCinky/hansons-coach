@@ -306,6 +306,7 @@ def _enrich_and_clip_to_week(plan: dict, today: Optional[datetime.date] = None) 
 _HARD_KINDS = {"speed", "strength", "tempo", "long"}      # SOS = tvrdé dni
 _KIND_PRIORITY = {"long": 3, "tempo": 2, "strength": 1, "speed": 1}
 _HALF_LONG_CAP_KM = 19.5    # ~12 míľ — polmaratónsky strop dlhého behu (NIE 16 mí = maratón)
+_JF_LONG_CAP_KM = 16.0      # Just Finish — vrchol dlhého behu ~10 míľ (nižší než Adv/Beg)
 _LONG_FRAC = 0.30           # dlhý beh ≤ 30 % týždenného objemu
 
 
@@ -333,18 +334,23 @@ def _workout_km(w: dict) -> float:
     return dist_m / 1000.0
 
 
-def _enforce_long_run_cap(workouts: list, notes: list) -> None:
-    """Dlhý beh ≤ ~12 míľ (vždy) a ≤ 30 % týždenného objemu (len pri ~plnom týždni —
-    aby sa pri oklieštenom zvyšku týždňa neorezal legitímny dlhý beh)."""
+def _enforce_long_run_cap(workouts: list, notes: list, variant: str = "advanced") -> None:
+    """Dlhý beh ≤ strop a ≤ 30 % týždenného objemu (len pri ~plnom týždni — aby sa pri
+    oklieštenom zvyšku týždňa neorezal legitímny dlhý beh).
+    Strop: Advanced/Beginner ~12 míľ (19.5 km); Just Finish 16 km (~10 mí). Pre Just Finish
+    30 % pravidlo NEPLATÍ — vzdialenosti sú verne z knihy a vrchol 16 km je ~31 % objemu
+    (T12/14/16), čo by inak guardrail nesprávne orezal."""
+    jf = (variant or "advanced").lower() == "just_finish"
     runs = [w for w in workouts if w.get("steps")]
     weekly_km = sum(_workout_km(w) for w in runs)
     near_full_week = len(runs) >= 4
+    base_cap = _JF_LONG_CAP_KM if jf else _HALF_LONG_CAP_KM
     for w in workouts:
         if classify_workout_kind(w.get("workout_name", "")) != "long":
             continue
         km = _workout_km(w)
-        cap = _HALF_LONG_CAP_KM
-        if near_full_week and weekly_km > 0:
+        cap = base_cap
+        if near_full_week and weekly_km > 0 and not jf:
             cap = min(cap, _LONG_FRAC * weekly_km)
         if km > cap + 0.1:
             main = max(w.get("steps", []) or [], key=lambda s: s.get("distance_km", 0) or 0,
@@ -355,10 +361,9 @@ def _enforce_long_run_cap(workouts: list, notes: list) -> None:
             if main.get("pace_max"):
                 new_step["pace_max"] = main["pace_max"]
             w["steps"] = [new_step]
-            notes.append(
-                f"Dlhý beh som skrátil na ~{round(cap, 1)} km — podľa Hansona dlhý beh nejde nad "
-                f"~30 % týždenného objemu a na polmaratón nad ~12 míľ."
-            )
+            reason = ("vrchol dlhého behu v Just Finish je ~16 km (10 mí)" if jf else
+                      "podľa Hansona dlhý beh nejde nad ~30 % týždenného objemu a na polmaratón nad ~12 míľ")
+            notes.append(f"Dlhý beh som skrátil na ~{round(cap, 1)} km — {reason}.")
 
 
 def _enforce_hard_spacing(workouts: list, easy_fast, easy_slow, notes: list) -> None:
@@ -393,13 +398,14 @@ def _enforce_hard_spacing(workouts: list, easy_fast, easy_slow, notes: list) -> 
 
 
 def apply_plan_guardrails(plan: dict, easy_fast: Optional[str] = None,
-                          easy_slow: Optional[str] = None) -> dict:
+                          easy_slow: Optional[str] = None, variant: str = "advanced") -> dict:
     """Deterministické Hanson guardraily na vygenerovaný/upravený plán (mutuje a vráti plan).
-    Vynucuje: žiadne 2 tvrdé dni za sebou + strop dlhého behu. Zmeny zhrnie do coach_message."""
+    Vynucuje: žiadne 2 tvrdé dni za sebou + strop dlhého behu (variantovo závislý).
+    Zmeny zhrnie do coach_message."""
     workouts = plan.get("workouts", []) or []
     notes: list = []
     _enforce_hard_spacing(workouts, easy_fast, easy_slow, notes)
-    _enforce_long_run_cap(workouts, notes)
+    _enforce_long_run_cap(workouts, notes, variant)
     if notes:
         plan["coach_message"] = ((plan.get("coach_message", "") or "") + "\n\n" + " ".join(notes)).strip()
     return plan
@@ -430,7 +436,7 @@ Cieľový čas na polmaratón: {target_time}.
 OSOBNÉ POZNÁMKY K ZVERENCOVI: {ai_context}
 {training_timeline_note(profile)}
 {hansons_knowledge.variant_note(variant)}
-{hansons_knowledge.phase_block(week_num)}
+{hansons_knowledge.phase_block(week_num, variant)}
 {hansons_knowledge.sos_block(week_num, variant)}
 {athlete_context}
 
@@ -496,7 +502,7 @@ HR ako cieľ nepoužívaj. Vraciaš LEN platný JSON."""
     # Deterministické guardraily: žiadne 2 tvrdé dni za sebou + strop dlhého behu.
     # Easy tempá z cieľa (nezávisí od VO2max) na prípadné demótovanie SOS → Easy.
     _p = hansons_knowledge.compute_training_paces(target_time) or {}
-    return apply_plan_guardrails(plan, _p.get("easy_min"), _p.get("easy_max"))
+    return apply_plan_guardrails(plan, _p.get("easy_min"), _p.get("easy_max"), variant)
 
 def generate_single_workout(profile: dict, description: str, client=None,
                             for_date: Optional[str] = None) -> dict:
@@ -508,7 +514,7 @@ def generate_single_workout(profile: dict, description: str, client=None,
     when = f" na dátum {for_date}" if for_date else ""
 
     prompt = f"""Si špičkový tréner Hanson Half-Marathon Method. Cieľový čas: {target_time}.
-{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
+{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile), profile.get('plan_variant'))}
 {athlete_context}
 
 Vygeneruj JEDEN bežecký tréning{when} podľa tejto požiadavky: "{description}"
@@ -692,7 +698,7 @@ Tréning na dátum {target_date_str}: "{old_workout_name}".
 Cieľový čas na polmaratón: {profile.get('target_time', 'neuvedený')}
 OSOBNÉ POZNÁMKY: {ai_context}
 {training_timeline_note(profile)}
-{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile))}
+{hansons_knowledge.phase_block(hansons_knowledge.current_training_week(profile), profile.get('plan_variant'))}
 {athlete_context}
 {form_context}
 
