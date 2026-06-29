@@ -36,9 +36,74 @@ interface RunStats {
   avg_hr?: number | null;
   aerobic_te?: number | null;
   anaerobic_te?: number | null;
+  total_ascent?: number | null;
+  avg_pace_sec_km?: number | null;
+  gap_pace_sec_km?: number | null;
+  form_drift?: {
+    pace_sec_delta?: number | null;
+    hr_delta?: number | null;
+    vertical_ratio_delta?: number | null;
+    stride_length_delta_cm?: number | null;
+    cadence_delta?: number | null;
+  } | null;
+  weather?: {
+    temp_c?: number | null;
+    feels_like_c?: number | null;
+    humidity_pct?: number | null;
+    wind_kmh?: number | null;
+  } | null;
 }
 
 export function runInsight(title: string, stats: RunStats | null | undefined): RunInsight | null {
+  const base = baseInsight(title, stats);
+  if (!base) return null;
+
+  // Terénový doplnok: pri výraznom prevýšení vysvetli rozdiel reálneho tempa a GAP
+  // (tempo prepočítané na rovinu), aby kopec nevyzeral ako strata formy.
+  const asc = stats?.total_ascent;
+  const gap = stats?.gap_pace_sec_km;
+  const pace = stats?.avg_pace_sec_km;
+  if (asc != null && asc >= 80) {
+    let t = ` Terén: nastúpaných ${Math.round(asc)} m.`;
+    if (gap && pace && Math.abs(gap - pace) >= 5) {
+      const f = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      t += ` Tempo na rovine (GAP) ${f(gap)}/km vs. reálne ${f(pace)}/km — ${
+        gap < pace
+          ? "kopce ti spomalili tempo, výkonnostne to bolo lepšie, než vyzerá"
+          : "klesanie ti tempo nadľahčilo"
+      }.`;
+    }
+    base.note += t;
+  }
+
+  // Rozpad formy: rast tepu + vert. pomeru a skrátenie kroku v 2. polovici = únava.
+  const fd = stats?.form_drift;
+  if (fd) {
+    const hrUp = (fd.hr_delta ?? 0) >= 5;
+    const ratioUp = (fd.vertical_ratio_delta ?? 0) >= 0.3;
+    const strideDown = (fd.stride_length_delta_cm ?? 0) <= -2;
+    if ((hrUp && ratioUp) || (hrUp && strideDown)) {
+      base.note += ` Forma sa v 2. polovici rozpadávala (tep ${fd.hr_delta! >= 0 ? "+" : ""}${fd.hr_delta} bpm${
+        ratioUp ? `, vert. pomer +${fd.vertical_ratio_delta}%` : ""
+      }${strideDown ? `, krok ${fd.stride_length_delta_cm} cm` : ""}) — znak únavy/nedostatočnej durability.`;
+      if (base.tone === "good") base.tone = "info";
+    } else if (fd.hr_delta != null && fd.hr_delta <= 2 && (fd.stride_length_delta_cm ?? 0) >= -1) {
+      base.note += " Formu si držal stabilnú až do konca — dobrá odolnosť (durability).";
+    }
+  }
+
+  // Počasie: teplo + vlhko zvyšujú tep pri rovnakom tempe (drift z tepla).
+  const wx = stats?.weather;
+  const feels = wx?.feels_like_c ?? wx?.temp_c;
+  if (feels != null && feels >= 22) {
+    const humid = (wx?.humidity_pct ?? 0) >= 70;
+    base.note += ` Bolo teplo (${feels} °C${humid ? `, vlhko ${wx!.humidity_pct} %` : ""}) — vyšší tep pri rovnakom tempe je čakaný (drift z tepla), neber to ako stratu formy.`;
+    if (base.tone === "warn") base.tone = "info";
+  }
+  return base;
+}
+
+function baseInsight(title: string, stats: RunStats | null | undefined): RunInsight | null {
   const zones = stats?.hr_zones;
   if (!zones || !zones.length) return null;
 

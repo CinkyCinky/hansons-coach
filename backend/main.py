@@ -27,6 +27,7 @@ from modules.database import (
 )
 from modules import workout_generator
 from modules import hansons_knowledge
+from modules import run_metrics
 
 app = FastAPI(title="Hansons Running Coach API", version="2.0.0")
 security = HTTPBearer()
@@ -845,6 +846,9 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
         except Exception:
             pass
 
+        # Počasie zaznamenané k behu (Garmin /weather, bez externého API)
+        weather = fetcher.get_activity_weather(client, activity_id)
+
         # Rozloženie času v HR zónach (Z1–Z5) — Garmin /hrTimeInZones
         hr_zones = None
         try:
@@ -869,12 +873,31 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
         avg_speed = summary.get("averageSpeed")
         avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
 
+        # Terén + Grade Adjusted Pace (tempo prepočítané na rovinu)
+        elev_gain = summary.get("elevationGain")
+        elev_loss = summary.get("elevationLoss")
+        has_elev = elev_gain is not None or elev_loss is not None
+        gap_pace_sec_km = run_metrics.gap_pace_sec(
+            avg_pace_sec, summary.get("distance"),
+            (elev_gain or 0) - (elev_loss or 0) if has_elev else None,
+        )
+
         # Tréningový efekt: aeróbny + anaeróbny + Garmin štítok (fallback na legacy pole)
         aerobic_te = summary.get("aerobicTrainingEffect")
         if aerobic_te is None:
             aerobic_te = summary.get("trainingEffect")
         anaerobic_te = summary.get("anaerobicTrainingEffect")
         te_label = summary.get("trainingEffectLabel")
+
+        # Bežecká ekonomika + rozpad formy (1. vs 2. polovica behu)
+        lap_list = splits.get("lapDTOs") if splits and isinstance(splits, dict) else None
+        dynamics = run_metrics.running_dynamics(summary)
+        form_drift = run_metrics.form_drift(lap_list)
+
+        # Odvodené fitness ukazovatele: EF (GAP-neutrálne) + aeróbny decoupling
+        avg_hr_val = round(summary["averageHR"]) if summary.get("averageHR") else None
+        efficiency_factor = run_metrics.efficiency_factor(gap_pace_sec_km or avg_pace_sec, avg_hr_val)
+        decoupling_pct = run_metrics.decoupling(lap_list)
 
         stats = {
             "distance_km": round((summary.get("distance") or 0) / 1000, 2) or None,
@@ -887,12 +910,21 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
                 or summary.get("averageCadence")
             )) else None,
             "total_ascent": summary.get("elevationGain"),
+            "total_descent": summary.get("elevationLoss"),
+            "min_elevation": summary.get("minElevation"),
+            "max_elevation": summary.get("maxElevation"),
+            "gap_pace_sec_km": gap_pace_sec_km,
             "calories": summary.get("calories"),
             "training_effect": summary.get("trainingEffect"),  # legacy (spätná kompatibilita)
             "aerobic_te": aerobic_te,
             "anaerobic_te": anaerobic_te,
             "te_label": te_label,
-            "splits": splits.get("lapDTOs") if splits and isinstance(splits, dict) else None,
+            "running_dynamics": dynamics or None,
+            "form_drift": form_drift,
+            "weather": weather,
+            "efficiency_factor": efficiency_factor,
+            "decoupling_pct": decoupling_pct,
+            "splits": lap_list,
             "hr_zones": hr_zones,
         }
         return {"stats": stats, "activity": details}
@@ -1317,18 +1349,46 @@ def get_weekly_report(
                 continue
             avg_speed = act.get("averageSpeed")
             avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
+            r_hr = round(act["averageHR"]) if act.get("averageHR") else None
+            r_gain, r_loss = act.get("elevationGain"), act.get("elevationLoss")
+            r_net = (r_gain or 0) - (r_loss or 0) if (r_gain is not None or r_loss is not None) else None
+            r_gap = run_metrics.gap_pace_sec(avg_pace_sec, act.get("distance"), r_net)
             runs.append({
                 "date": d,
                 "name": act.get("activityName", "Beh"),
                 "distance_km": round((act.get("distance") or 0) / 1000, 2),
                 "avg_pace_sec": avg_pace_sec,
                 "avg_pace_str": (f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}" if avg_pace_sec else None),
-                "avg_hr": round(act["averageHR"]) if act.get("averageHR") else None,
+                "avg_hr": r_hr,
                 "avg_cadence": round(cad) if (cad := (act.get("averageRunningCadenceInStepsPerMinute") or act.get("averageCadence"))) else None,
                 "calories": round(act["calories"]) if act.get("calories") else None,
+                "ef": run_metrics.efficiency_factor(r_gap or avg_pace_sec, r_hr),  # GAP-neutrálne
             })
 
         total_km = round(sum(r["distance_km"] for r in runs), 1)
+
+        # EF trend cez celé okno (sledovanie kondície v čase). GAP-neutrálne, len behy
+        # ≥3 km s tepom — krátke rozbehania/strides by trend zašumeli. Najvýpovednejšie
+        # pri Easy behoch (porovnateľná intenzita).
+        ef_trend = []
+        for act in sorted(running, key=lambda a: (a.get("startTimeLocal") or "")):
+            sp = act.get("averageSpeed")
+            hr = round(act["averageHR"]) if act.get("averageHR") else None
+            dist = act.get("distance") or 0
+            if not sp or not hr or dist < 3000:
+                continue
+            pace = round(1000 / sp)
+            g, lo = act.get("elevationGain"), act.get("elevationLoss")
+            net = (g or 0) - (lo or 0) if (g is not None or lo is not None) else None
+            gp = run_metrics.gap_pace_sec(pace, dist, net)
+            ef = run_metrics.efficiency_factor(gp or pace, hr)
+            if ef:
+                ef_trend.append({
+                    "date": (act.get("startTimeLocal") or "")[:10],
+                    "ef": ef,
+                    "name": act.get("activityName", "Beh"),
+                    "distance_km": round(dist / 1000, 1),
+                })
 
         # Týždenný objem (Po–Ne) cez celý cyklus
         buckets: Dict[datetime.date, float] = {}
@@ -1363,6 +1423,7 @@ def get_weekly_report(
             "total_km": total_km,
             "avg_sleep_hours": avg_sleep,
             "runs": runs,
+            "ef_trend": ef_trend,
             "weekly_volume": weekly_volume,
             "goal_pace_sec": _goal_pace_sec_per_km(profile.get("target_time")),
             "training_load": training_load,
@@ -1450,10 +1511,24 @@ def chat_with_coach(
             pace_str = f"{pace_sec // 60}:{pace_sec % 60:02d}/km" if pace_sec else "N/A"
             act_name = a.get("activityName") or "Beh"
             act_id = a.get("activityId", "")
+            # Terén + GAP → AI rozozná, či pomalšie tempo spôsobil kopec, nie strata formy
+            r_gain = a.get("elevationGain")
+            r_loss = a.get("elevationLoss")
+            r_has_elev = r_gain is not None or r_loss is not None
+            r_gap = run_metrics.gap_pace_sec(
+                pace_sec, a.get("distance"),
+                (r_gain or 0) - (r_loss or 0) if r_has_elev else None,
+            )
+            elev_part = f", prevýšenie +{round(r_gain or 0)}/-{round(r_loss or 0)}m" if r_has_elev else ""
+            gap_part = f" (GAP {run_metrics.fmt_pace(r_gap)}/km)" if r_gap else ""
+            # EF (efektivita) → trend kondície naprieč behmi bez volania nástroja
+            r_hr = round(a["averageHR"]) if a.get("averageHR") else None
+            r_ef = run_metrics.efficiency_factor(r_gap or pace_sec, r_hr)
+            ef_part = f", EF {r_ef}" if r_ef else ""
             runs_summary.append(
                 f"  - {(a.get('startTimeLocal') or '')[:10]} [{act_name}] (ID:{act_id}): "
-                f"{d_km}km @ {pace_str}, HR {a.get('averageHR', '?')}bpm, "
-                f"kadencia {a.get('averageRunningCadenceInStepsPerMinute', '?')} spm"
+                f"{d_km}km @ {pace_str}{gap_part}{elev_part}, HR {a.get('averageHR', '?')}bpm, "
+                f"kadencia {a.get('averageRunningCadenceInStepsPerMinute', '?')} spm{ef_part}"
             )
 
         next_w_str = "Žiadny naplánovaný tréning."
@@ -1530,6 +1605,20 @@ Najbližší tréning: {next_w_str}
         f"VŽDY hovor po slovensky. Buď konkrétny, vecný a povzbudivý. "
         f"Odpovede prispôsob mobilnej aplikácii – stručne, ale neobetuj odbornosť. "
         f"Pri analýze tréningu/intervalov si vyžiadaj detaily nástrojom get_activity_laps. "
+        f"Pri hodnotení tempa zohľadni TERÉN: GAP je tempo prepočítané na rovinu a prevýšenie (+stúpanie/-klesanie) "
+        f"ukazuje sklon. Keď je reálne tempo pomalšie pri rovnakom/nižšom tepe, najprv over kopec — ak GAP sedí s cieľom, "
+        f"výkon bol v poriadku, athlét len bežal do kopca. Nehodnoť stúpanie ako stratu formy. "
+        f"BEŽECKÁ EKONOMIKA: nižší vert. pomer a kratší ground contact time = ekonomickejší beh. "
+        f"ROZPAD FORMY (2. vs 1. polovica): keď v 2. polovici pri rovnakom/pomalšom tempe RASTIE tep a vert. pomer "
+        f"a KLESÁ dĺžka kroku, je to objektívny dôkaz únavy (durability) — kľúčové pri Hansonovej kumulovanej únave; "
+        f"pochváľ stabilnú formu, prípadne uprav dávkovanie ak sa forma rozpadá priskoro. "
+        f"POČASIE: horúčava (>20–22 °C) a vysoká vlhkosť prirodzene dvíhajú tep o niekoľko úderov pri rovnakom tempe "
+        f"(kardiovaskulárny drift z tepla) — nehodnoť to ako stratu formy. Silný vietor spomaľuje tempo proti smeru. "
+        f"Zohľadni počasie (z get_activity_laps) skôr než vyvodíš záver o kondícii. "
+        f"KONDÍCIA: EF (efektivita = rýchlosť na rovine/tep) je v zozname behov — porovnateľné Easy behy s RASTÚCIM EF "
+        f"v čase = objektívne stúpajúca kondícia (nezávisle od pocitu); klesajúci EF pri rovnakom počasí signalizuje "
+        f"únavu/preťaženie. Decoupling (z get_activity_laps) <5 % = výborná aeróbna báza, >8 % = slabšia durability. "
+        f"Pri otázkach na kondíciu/napredovanie argumentuj práve trendom EF a decouplingom, nie len tempom. "
         f"Easy a dlhé behy VŽDY odporúčaj podľa TEPU (Easy HR zóna), nie podľa tempa — vysvetli prečo. "
         f"REORGANIZÁCIA TÝŽDŇA: keď používateľ nemôže absolvovať tréning v daný deň a chce upraviť plán, "
         f"NAJPRV si zavolaj list_garmin_workouts a pozri si CELÝ týždeň. Potom navrhni presun podľa Hanson pravidiel "
@@ -1567,7 +1656,9 @@ Najbližší tréning: {next_w_str}
 
     def get_activity_laps(date: str) -> str:
         """Načíta podrobné lap/split dáta pre aktivitu na daný dátum (YYYY-MM-DD alebo 'yesterday'/'dnes').
-        Vracia tempo, HR a kadencia pre každý úsek/lap — nevyhnutné pri analýze intervalových tréningov."""
+        Vracia per lap: tempo, GAP (tempo na rovine), prevýšenie, HR, kadenciu, čas a bežeckú
+        dynamiku (vert. pomer, vert. osciláciu, ground contact time, dĺžku kroku). Na záver pridá
+        rozpad formy (2. vs 1. polovica behu) — únava/durability. Nevyhnutné pri analýze tréningov."""
         try:
             # Preložiť aliasy
             today = datetime.date.today()
@@ -1595,9 +1686,25 @@ Najbližší tréning: {next_w_str}
             avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
             avg_pace_str = f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}/km" if avg_pace_sec else "N/A"
 
+            # Terén celého behu + Grade Adjusted Pace (tempo prepočítané na rovinu)
+            total_gain = act.get("elevationGain")
+            total_loss = act.get("elevationLoss")
+            has_elev = total_gain is not None or total_loss is not None
+            elev_str = f", prevýšenie +{round(total_gain or 0)}/-{round(total_loss or 0)} m" if has_elev else ""
+            overall_gap = run_metrics.gap_pace_sec(
+                avg_pace_sec, act.get("distance"),
+                (total_gain or 0) - (total_loss or 0) if has_elev else None,
+            )
+            gap_str = f" (GAP {run_metrics.fmt_pace(overall_gap)}/km)" if overall_gap else ""
+
+            # Počasie (vysvetľuje zvýšený tep pri horúčave/vlhku alebo pomalšie tempo proti vetru)
+            weather_line = run_metrics.weather_str(fetcher.get_activity_weather(client, act_id))
+            weather_part = f"Počasie: {weather_line}\n" if weather_line else ""
+
             result = (
                 f"Aktivita: {act_name} ({target_date})\n"
-                f"Celková vzdialenosť: {d_km} km, priemerné tempo: {avg_pace_str}, "
+                f"{weather_part}"
+                f"Celková vzdialenosť: {d_km} km, priemerné tempo: {avg_pace_str}{gap_str}{elev_str}, "
                 f"avg HR: {round(act.get('averageHR') or 0)} bpm, "
                 f"avg kadencia: {round(act.get('averageRunningCadenceInStepsPerMinute') or 0)} spm\n\n"
             )
@@ -1624,10 +1731,34 @@ Najbližší tréning: {next_w_str}
                         lap_cad = round(lap.get("averageRunningCadenceInStepsPerMinute") or lap.get("averageCadence") or 0) or "N/A"
                         lap_dur_sec = lap.get("duration") or 0
                         dur_str = f"{int(lap_dur_sec // 60)}:{int(lap_dur_sec % 60):02d}" if lap_dur_sec else "N/A"
+                        # Terén + GAP per lap → AI vie vysvetliť pomalšie tempo pri rovnakom tepe (kopec)
+                        lap_gain, lap_loss = run_metrics.lap_elevation(lap)
+                        net_elev = (lap_gain or 0) - (lap_loss or 0) if (lap_gain is not None or lap_loss is not None) else None
+                        lap_gap = run_metrics.gap_pace_sec(lap_pace_sec, lap_dist_m, net_elev)
+                        gap_part = f" (GAP {run_metrics.fmt_pace(lap_gap)})" if lap_gap else ""
+                        elev_part = f" | +{lap_gain or 0}/-{lap_loss or 0} m" if net_elev is not None else ""
+                        # Bežecká ekonomika per lap (rozpad formy v rámci behu)
+                        dyn_str = run_metrics.dynamics_str(run_metrics.running_dynamics(lap))
+                        dyn_part = f" | {dyn_str}" if dyn_str else ""
                         result += (
-                            f"  Lap {i}: {lap_dist_km}km | {lap_pace_str} | "
-                            f"HR {lap_hr}/{lap_max_hr} bpm | kadencia {lap_cad} spm | čas {dur_str}\n"
+                            f"  Lap {i}: {lap_dist_km}km | {lap_pace_str}{gap_part}{elev_part} | "
+                            f"HR {lap_hr}/{lap_max_hr} bpm | kadencia {lap_cad} spm | čas {dur_str}{dyn_part}\n"
                         )
+                    # Rozpad formy: 2. vs 1. polovica behu (objektívna únava/durability)
+                    drift_str = run_metrics.form_drift_str(run_metrics.form_drift(laps))
+                    if drift_str:
+                        result += f"\nRozpad formy (2. polovica vs 1.): {drift_str}\n"
+                    # Odvodené fitness ukazovatele: EF (GAP-neutrálne) + aeróbny decoupling
+                    act_hr = round(act.get("averageHR")) if act.get("averageHR") else None
+                    ef = run_metrics.efficiency_factor(overall_gap or avg_pace_sec, act_hr)
+                    dec = run_metrics.decoupling(laps)
+                    fit_bits = []
+                    if ef:
+                        fit_bits.append(f"EF {ef} (vyššie = ekonomickejšie; sleduj trend pri Easy behoch)")
+                    if dec is not None:
+                        fit_bits.append(f"decoupling {dec}% ({run_metrics.decoupling_label(dec)})")
+                    if fit_bits:
+                        result += "Kondícia: " + ", ".join(fit_bits) + "\n"
                 else:
                     result += "(Lap dáta nie sú dostupné pre túto aktivitu.)"
             except Exception as e:

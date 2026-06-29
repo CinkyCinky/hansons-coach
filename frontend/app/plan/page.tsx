@@ -756,6 +756,27 @@ export default function Plan() {
                         ) : details?.type === "activity" ? (
                           // ── Splnený beh: reálne štatistiky + porovnanie ──
                           <div className="flex flex-col gap-3">
+                            {details.stats?.weather && (
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm bg-sky-500/10 border border-sky-500/20 rounded-lg px-3 py-2" title="Počasie zaznamenané k behu z najbližšej meteostanice.">
+                                {details.stats.weather.temp_c != null && (
+                                  <span className="font-bold text-sky-300">
+                                    {details.stats.weather.temp_c} °C
+                                    {details.stats.weather.feels_like_c != null && details.stats.weather.feels_like_c !== details.stats.weather.temp_c && (
+                                      <span className="font-normal text-gray-400"> (pocitovo {details.stats.weather.feels_like_c} °C)</span>
+                                    )}
+                                  </span>
+                                )}
+                                {details.stats.weather.humidity_pct != null && (
+                                  <span className="text-gray-300">💧 {details.stats.weather.humidity_pct} %</span>
+                                )}
+                                {details.stats.weather.wind_kmh != null && (
+                                  <span className="text-gray-300">💨 {details.stats.weather.wind_kmh} km/h{details.stats.weather.wind_dir ? ` ${details.stats.weather.wind_dir}` : ""}</span>
+                                )}
+                                {details.stats.weather.conditions && (
+                                  <span className="text-gray-400">{details.stats.weather.conditions}</span>
+                                )}
+                              </div>
+                            )}
                             <div className="grid grid-cols-2 gap-2">
                               {details.stats?.distance_km && (
                                 <div className="bg-black/20 p-2 rounded-lg">
@@ -772,6 +793,15 @@ export default function Plan() {
                                   </p>
                                 </div>
                               )}
+                              {details.stats?.gap_pace_sec_km && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Grade Adjusted Pace: tempo prepočítané na rovinu. Ukazuje reálny výkon nezávisle od stúpania/klesania.">
+                                  <p className="text-xs text-gray-500">Tempo na rovine (GAP)</p>
+                                  <p className="font-bold text-primary font-mono">
+                                    {Math.floor(details.stats.gap_pace_sec_km / 60)}:
+                                    {String(details.stats.gap_pace_sec_km % 60).padStart(2, "0")}/km
+                                  </p>
+                                </div>
+                              )}
                               {details.stats?.avg_hr && (
                                 <div className="bg-black/20 p-2 rounded-lg">
                                   <p className="text-xs text-gray-500">Priem. tep</p>
@@ -782,6 +812,14 @@ export default function Plan() {
                                 <div className="bg-black/20 p-2 rounded-lg">
                                   <p className="text-xs text-gray-500">Kadencia</p>
                                   <p className="font-bold text-emerald-400">{details.stats.avg_cadence} spm</p>
+                                </div>
+                              )}
+                              {(details.stats?.total_ascent != null || details.stats?.total_descent != null) && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Nastúpané a naklesané metre počas behu.">
+                                  <p className="text-xs text-gray-500">Prevýšenie</p>
+                                  <p className="font-bold text-sky-400">
+                                    +{Math.round(details.stats.total_ascent ?? 0)} / -{Math.round(details.stats.total_descent ?? 0)} m
+                                  </p>
                                 </div>
                               )}
                               {details.stats?.calories && (
@@ -808,7 +846,70 @@ export default function Plan() {
                                   </p>
                                 </div>
                               )}
+                              {details.stats?.running_dynamics?.vertical_ratio_pct != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Vertikálny pomer: koľko % z dĺžky kroku tvorí vertikálny pohyb. Nižšie = ekonomickejší beh (menej energie hore-dole).">
+                                  <p className="text-xs text-gray-500">Vert. pomer</p>
+                                  <p className="font-bold text-teal-400">{details.stats.running_dynamics.vertical_ratio_pct} %</p>
+                                </div>
+                              )}
+                              {details.stats?.running_dynamics?.ground_contact_ms != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Ground Contact Time: čas kontaktu chodidla so zemou. Nižšie (zvyčajne pri vyššej kadencii) = ekonomickejší, pružnejší beh.">
+                                  <p className="text-xs text-gray-500">Kontakt so zemou</p>
+                                  <p className="font-bold text-teal-400">{details.stats.running_dynamics.ground_contact_ms} ms</p>
+                                </div>
+                              )}
+                              {details.stats?.running_dynamics?.stride_length_cm != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Priemerná dĺžka kroku. Skracovanie kroku v 2. polovici behu pri rovnakom tempe je znakom únavy.">
+                                  <p className="text-xs text-gray-500">Dĺžka kroku</p>
+                                  <p className="font-bold text-teal-400">{details.stats.running_dynamics.stride_length_cm} cm</p>
+                                </div>
+                              )}
+                              {details.stats?.running_dynamics?.vertical_oscillation_cm != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Vertikálna oscilácia: o koľko sa ťažisko pohybuje hore-dole pri každom kroku. Nižšie = menej premrhanej energie.">
+                                  <p className="text-xs text-gray-500">Vert. oscilácia</p>
+                                  <p className="font-bold text-teal-400">{details.stats.running_dynamics.vertical_oscillation_cm} cm</p>
+                                </div>
+                              )}
+                              {details.stats?.efficiency_factor != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Efficiency Factor = rýchlosť na rovine / tep. Vyššie = ekonomickejší beh. Absolútna hodnota nič nehovorí — dôležitý je RAST v čase pri Easy behoch (= stúpajúca kondícia).">
+                                  <p className="text-xs text-gray-500">Efektivita (EF)</p>
+                                  <p className="font-bold text-indigo-400">{details.stats.efficiency_factor.toFixed(2)}</p>
+                                </div>
+                              )}
+                              {details.stats?.decoupling_pct != null && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Aeróbny decoupling (Pa:HR): o koľko klesla ekonomika v 2. polovici. <5 % = výborná aeróbna báza; >8 % = výrazný drift (únava/teplo/slabšia báza).">
+                                  <p className="text-xs text-gray-500">Decoupling</p>
+                                  <p className={`font-bold ${details.stats.decoupling_pct < 5 ? "text-emerald-400" : details.stats.decoupling_pct < 8 ? "text-amber-400" : "text-rose-400"}`}>
+                                    {details.stats.decoupling_pct >= 0 ? "+" : ""}{details.stats.decoupling_pct} %
+                                  </p>
+                                </div>
+                              )}
                             </div>
+
+                            {/* Rozpad formy: 2. vs 1. polovica behu (únava / durability) */}
+                            {details.stats?.form_drift && (
+                              <div className="bg-black/20 rounded-xl p-3" title="Porovnanie 2. a 1. polovice behu. Rast tepu a vert. pomeru spolu so skrátením kroku pri rovnakom tempe = rozpad formy / únava.">
+                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Rozpad formy (2. vs 1. polovica)</p>
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                                  {details.stats.form_drift.pace_sec_delta != null && (
+                                    <span>Tempo <b className={details.stats.form_drift.pace_sec_delta > 3 ? "text-amber-400" : "text-emerald-400"}>
+                                      {details.stats.form_drift.pace_sec_delta >= 0 ? "+" : ""}{details.stats.form_drift.pace_sec_delta}s/km</b></span>
+                                  )}
+                                  {details.stats.form_drift.hr_delta != null && (
+                                    <span>Tep <b className={details.stats.form_drift.hr_delta > 5 ? "text-amber-400" : "text-emerald-400"}>
+                                      {details.stats.form_drift.hr_delta >= 0 ? "+" : ""}{details.stats.form_drift.hr_delta} bpm</b></span>
+                                  )}
+                                  {details.stats.form_drift.vertical_ratio_delta != null && (
+                                    <span>Vert. pomer <b className={details.stats.form_drift.vertical_ratio_delta > 0.3 ? "text-amber-400" : "text-emerald-400"}>
+                                      {details.stats.form_drift.vertical_ratio_delta >= 0 ? "+" : ""}{details.stats.form_drift.vertical_ratio_delta}%</b></span>
+                                  )}
+                                  {details.stats.form_drift.stride_length_delta_cm != null && (
+                                    <span>Krok <b className={details.stats.form_drift.stride_length_delta_cm < -2 ? "text-amber-400" : "text-emerald-400"}>
+                                      {details.stats.form_drift.stride_length_delta_cm >= 0 ? "+" : ""}{details.stats.form_drift.stride_length_delta_cm} cm</b></span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
 
                             {/* Rozloženie času v HR zónach (Z1–Z5) */}
                             {details.stats?.hr_zones && details.stats.hr_zones.length > 0 && (

@@ -129,6 +129,17 @@ export default function Reports() {
     tempoStr: formatPace(r.avg_pace_sec),
   }));
 
+  // EF trend (efektivita = rýchlosť na rovine / tep) — rast v čase = stúpajúca kondícia
+  const efTrendData = (data?.ef_trend ?? []).map((e: any) => ({
+    day: shortDate(e.date),
+    ef: e.ef,
+    name: e.name,
+  }));
+  const efChange =
+    efTrendData.length >= 2
+      ? Math.round(((efTrendData[efTrendData.length - 1].ef - efTrendData[0].ef) / efTrendData[0].ef) * 1000) / 10
+      : null;
+
   // Týždenný objem (km/týždeň) — kľúčová Hanson metrika
   const volumeData = (data?.weekly_volume ?? []) as { week: string; km: number }[];
   const goalPace: number | null = data?.goal_pace_sec ?? null;
@@ -462,6 +473,35 @@ export default function Reports() {
                       <ReferenceLine y={goalPace} stroke="#34d399" strokeDasharray="4 4" strokeWidth={1.5} />
                     )}
                     <Line type="monotone" dataKey="tempo" name="Tempo" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3, fill: "#3b82f6" }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Graf: EF trend (efektivita behu = kondícia v čase) */}
+          {efTrendData.length >= 3 && (
+            <div className="glass-card p-4">
+              <h3 className="text-base font-bold mb-1 flex items-center gap-2">
+                <TrendingUp className="text-indigo-400" size={18} /> Efektivita (EF) — trend kondície
+              </h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Rýchlosť na rovine / tep. Vyššie = ekonomickejší beh.{" "}
+                {efChange != null && (
+                  <span className={efChange >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                    {efChange >= 0 ? "▲" : "▼"} {Math.abs(efChange)} % za obdobie
+                  </span>
+                )}
+                . Najvýpovednejšie pri Easy behoch.
+              </p>
+              <div className="h-44 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={efTrendData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" vertical={false} />
+                    <XAxis dataKey="day" stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="rgba(255,255,255,0.4)" fontSize={11} tickLine={false} axisLine={false} domain={["dataMin - 0.05", "dataMax + 0.05"]} tickFormatter={(v) => Number(v).toFixed(2)} />
+                    <Tooltip {...CHART_STYLE} formatter={(v: any) => [Number(v).toFixed(3), "EF"]} />
+                    <Line type="monotone" dataKey="ef" name="EF" stroke="#818cf8" strokeWidth={2.5} dot={{ r: 3, fill: "#818cf8" }} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               </div>

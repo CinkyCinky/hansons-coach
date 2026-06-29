@@ -54,6 +54,59 @@ def get_recent_activities(client, days: int = 7) -> list:
         return []
 
 
+def _to_celsius(t) -> Optional[int]:
+    """Teplota na °C. Metrický Garmin účet vracia °C; ak je hodnota podozrivo
+    vysoká (>45), ide o °F a prepočítame ju (bežecká teplota nikdy nie je >45 °C)."""
+    if t is None:
+        return None
+    try:
+        t = float(t)
+    except (TypeError, ValueError):
+        return None
+    return round((t - 32) * 5 / 9) if t > 45 else round(t)
+
+
+def _deg_to_compass(deg) -> Optional[str]:
+    """Smer vetra v stupňoch → slovenská skratka svetovej strany."""
+    if deg is None:
+        return None
+    try:
+        deg = float(deg)
+    except (TypeError, ValueError):
+        return None
+    dirs = ["S", "SV", "V", "JV", "J", "JZ", "Z", "SZ"]  # od severu po smere hodín
+    return dirs[int((deg / 45) + 0.5) % 8]
+
+
+def get_activity_weather(client, activity_id) -> Optional[dict]:
+    """Stiahne počasie zaznamenané k aktivite (Garmin /activity/{id}/weather).
+    Bez externého API — Garmin si ukladá podmienky z najbližšej meteostanice
+    v čase behu (teplota, pocitová teplota, vlhkosť, vietor, stav oblohy)."""
+    try:
+        w = _garmin_call(client.get_activity_weather, activity_id)
+        if not w or not isinstance(w, dict):
+            return None
+        temp = _to_celsius(w.get("temp"))
+        feels = _to_celsius(w.get("apparentTemp"))
+        humidity = w.get("relativeHumidity")
+        wind_speed = w.get("windSpeed")
+        wind_dir = _deg_to_compass(w.get("windDirection")) or w.get("windDirectionCompassPoint")
+        cond = (w.get("weatherTypeDTO") or {}).get("desc") if isinstance(w.get("weatherTypeDTO"), dict) else None
+        if temp is None and humidity is None and wind_speed is None and not cond:
+            return None
+        return {
+            "temp_c": temp,
+            "feels_like_c": feels,
+            "humidity_pct": round(humidity) if humidity is not None else None,
+            "wind_kmh": round(wind_speed) if wind_speed is not None else None,
+            "wind_dir": wind_dir,
+            "conditions": cond,
+        }
+    except Exception as e:
+        print(f"  ⚠️  Počasie: {e}")
+    return None
+
+
 def get_hrv_data(client) -> Optional[dict]:
     """Stiahne HRV dáta za posledných 7 dní."""
     results = []
