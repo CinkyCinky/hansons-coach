@@ -433,7 +433,9 @@ def get_dashboard_today(
             "hrv": hrv,
             "stats": {
                 **stats,
-                "body_battery": bb.get("today_charged"),
+                # Ranný report + stav formy = ranná hodnota (kvalita zotavenia).
+                "body_battery": bb.get("morning"),
+                "body_battery_now": bb.get("current"),  # živá hodnota (koľko paliva teraz)
             },
             "readiness": {
                 "readiness_score": readiness.get("score"),
@@ -612,7 +614,7 @@ DÔLEŽITÉ: Odpovedz VÝHRADNE po slovensky. Vráť len samotnú radu pre bežc
 Stav formy dnes: {form_score}/100
 - Spánok skóre: {metrics.sleep_score}/100
 - HRV: {metrics.hrv_status}
-- Body Battery: {metrics.body_battery}/100
+- Body Battery pri zobudení: {metrics.body_battery}/100 (ranná hodnota = stav zotavenia; NIE aktuálna večerná)
 - Pripravenosť: {metrics.readiness}/100
 {load_note}{context_block}"""
 
@@ -1170,7 +1172,7 @@ def generate_daily_update(feeling: str = "", pain: str = "", pain_area: str = ""
                 "STAV DŇA (pre rozhodnutie o zmäkčení):\n"
                 f"- Pripravenosť: {r.get('score', 'N/A')}/100 ({r.get('level', '')})\n"
                 f"- HRV: {hrv.get('status', 'N/A')} (last night {hrv.get('last_night', 'N/A')} ms)\n"
-                f"- Body Battery: {bb.get('today_charged', 'N/A')}/100\n"
+                f"- Body Battery pri zobudení: {bb.get('morning', 'N/A')}/100\n"
                 + hansons_knowledge.training_load_block(tl)
             )
         except Exception:
@@ -1431,7 +1433,8 @@ def get_weekly_report(
             "sleep": sleep_data,
             "hrv": hrv_data,
             "body_battery": {
-                "today": bb_data.get("today_charged"),
+                "today": bb_data.get("morning"),       # ranná hodnota (zotavenie)
+                "now": bb_data.get("current"),          # aktuálna (živá)
                 "weekly_avg": bb_data.get("weekly_avg"),
                 "daily": bb_daily,
             },
@@ -1573,7 +1576,7 @@ def chat_with_coach(
 --- GARMIN DÁTA ---
 Týždeň prípravy: {training_week}/18
 Športovec: {athlete_line}
-Body Battery: {bb.get('today_charged', 'N/A')}/100
+Body Battery: pri zobudení {bb.get('morning', 'N/A')}/100 (stav zotavenia), teraz {bb.get('current', 'N/A')}/100 (zvyšné palivo; cez deň prirodzene klesá)
 HRV: {hrv.get('status', 'N/A')} (last night: {hrv.get('last_night', 'N/A')} ms, weekly avg: {hrv.get('weekly_avg', 'N/A')} ms)
 Pokojový tep: {resting_hr or 'N/A'} bpm | Max HR (z histórie): {max_hr or 'N/A'} bpm
 LTHR: {lthr_data.get('lthr') or athlete.get('lthr', 'N/A')} bpm | LT tempo: {lthr_data.get('lthr_pace') or athlete.get('lthr_pace', 'N/A')}
@@ -1619,6 +1622,10 @@ Najbližší tréning: {next_w_str}
         f"v čase = objektívne stúpajúca kondícia (nezávisle od pocitu); klesajúci EF pri rovnakom počasí signalizuje "
         f"únavu/preťaženie. Decoupling (z get_activity_laps) <5 % = výborná aeróbna báza, >8 % = slabšia durability. "
         f"Pri otázkach na kondíciu/napredovanie argumentuj práve trendom EF a decouplingom, nie len tempom. "
+        f"BODY BATTERY: rozlišuj rannú hodnotu (pri zobudení = ako dobre sa telo cez noc zotavilo) od aktuálnej "
+        f"(teraz = koľko paliva ostáva dnes). Aktuálna cez deň prirodzene klesá — nízka hodnota večer je normálna a "
+        f"NIE je znakom zlého zotavenia. O kvalite zotavenia/forme hovor podľa RANNEJ hodnoty, nikdy nehovor, že sa "
+        f"zverenec „zobudil s nízkou batériou", ak to nepotvrdzuje práve ranná hodnota. "
         f"Easy a dlhé behy VŽDY odporúčaj podľa TEPU (Easy HR zóna), nie podľa tempa — vysvetli prečo. "
         f"REORGANIZÁCIA TÝŽDŇA: keď používateľ nemôže absolvovať tréning v daný deň a chce upraviť plán, "
         f"NAJPRV si zavolaj list_garmin_workouts a pozri si CELÝ týždeň. Potom navrhni presun podľa Hanson pravidiel "

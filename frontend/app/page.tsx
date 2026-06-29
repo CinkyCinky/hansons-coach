@@ -781,6 +781,7 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 mb-2 text-emerald-400">
               <Battery size={18} />
               <span className="font-bold text-sm">Body Battery</span>
+              <span className="text-[10px] text-gray-500 font-normal">pri zobudení</span>
             </div>
             <p className="text-2xl font-bold">{stats.body_battery ?? "--"}</p>
             <div className="w-full bg-gray-800 rounded-full h-1.5 mt-2">
@@ -789,6 +790,9 @@ export default function Dashboard() {
                 style={{ width: `${stats.body_battery ?? 0}%` }}
               />
             </div>
+            {stats.body_battery_now != null && (
+              <p className="text-[11px] text-gray-500 mt-1.5">teraz: {stats.body_battery_now}</p>
+            )}
           </motion.div>
 
           {/* Pokojový tep */}
