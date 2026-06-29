@@ -77,13 +77,16 @@ def generate_report(client, days: int = 7, output: Optional[str] = None):
     lines.append("")
     lines.append("▶ BODY BATTERY")
     if body_battery:
-        today_val = body_battery.get("today_charged")
+        morning_val = body_battery.get("morning") or body_battery.get("today_charged")
+        current_val = body_battery.get("current")
         weekly_avg = body_battery.get("weekly_avg")
-        if today_val is not None:
-            bb_emoji = "🟢" if today_val >= 60 else ("🟡" if today_val >= 30 else "🔴")
-            lines.append(f"  Dnes ráno:     {bb_emoji} {today_val}/100")
+        if morning_val is not None:
+            bb_emoji = "🟢" if morning_val >= 60 else ("🟡" if morning_val >= 30 else "🔴")
+            lines.append(f"  Pri zobudení:  {bb_emoji} {morning_val}/100")
+        if current_val is not None and current_val != morning_val:
+            lines.append(f"  Teraz:         {current_val}/100 (cez deň klesá — normálne)")
         if weekly_avg is not None:
-            lines.append(f"  Týždenný prier.: {weekly_avg}/100")
+            lines.append(f"  Týž. nabitie:  {weekly_avg}/100")
     else:
         lines.append("  Dáta nie sú dostupné")
 

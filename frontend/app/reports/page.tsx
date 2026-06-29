@@ -309,13 +309,13 @@ export default function Reports() {
             </div>
             <div className="glass-card p-4">
               <p className="text-xs text-gray-400 mb-1 flex items-center gap-1">
-                <Battery size={12} /> Body Battery dnes
+                <Battery size={12} /> Body Battery <span className="text-gray-500">pri zobudení</span>
               </p>
               <h3 className="text-2xl font-bold">
                 {data.body_battery?.today ?? "--"}
               </h3>
               <p className="text-xs text-gray-500 mt-1">
-                priem. {data.body_battery?.weekly_avg ?? "--"}
+                {data.body_battery?.now != null ? `teraz ${data.body_battery.now}` : `priem. ${data.body_battery?.weekly_avg ?? "--"}`}
               </p>
             </div>
           </div>

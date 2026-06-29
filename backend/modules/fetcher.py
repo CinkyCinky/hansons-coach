@@ -173,8 +173,28 @@ def get_sleep_data(client, days: int = 7) -> list:
     return results
 
 
+def _bb_value(entry) -> Optional[float]:
+    """Vytiahne číselnú hodnotu Body Battery (0–100) z jedného záznamu časového radu.
+    Garmin vracia záznamy ako [timestamp_ms, hodnota] alebo [timestamp_ms, status, hodnota],
+    prípadne dict. Timestamp (veľké číslo) ignoruj, ber číslo v rozsahu 0–100."""
+    if isinstance(entry, dict):
+        v = entry.get("bodyBatteryValue")
+        if v is None:
+            v = entry.get("value")
+        return v if isinstance(v, (int, float)) and 0 <= v <= 100 else None
+    if isinstance(entry, (list, tuple)):
+        nums = [x for x in entry if isinstance(x, (int, float)) and 0 <= x <= 100]
+        return nums[-1] if nums else None
+    return None
+
+
 def get_body_battery(client) -> Optional[dict]:
-    """Stiahne Body Battery za posledných 7 dní."""
+    """Stiahne Body Battery za posledných 7 dní a rozlíši DVA pohľady:
+      • morning — hodnota pri zobudení (vrchol dňa po nočnom nabití) → ukazovateľ
+        KVALITY ZOTAVENIA; patrí do ranného reportu a do hodnotenia formy.
+      • current — posledná (živá) hodnota → koľko PALIVA ostáva práve teraz; cez deň
+        prirodzene klesá (večer býva nízka aj u oddýchnutého bežca).
+    Miešať ich je chyba: večerné dno nie je ranný stav zotavenia."""
     try:
         today = date.today().isoformat()
         week_ago = (date.today() - timedelta(days=6)).isoformat()
@@ -183,35 +203,45 @@ def get_body_battery(client) -> Optional[dict]:
         if not bb_data:
             return None
 
-        # Nájdi aktuálnu hodnotu (posledný záznam z dnešného dňa)
+        morning_value = None
         current_value = None
         weekly_avg = None
-        
+
         # bb_data je list za posledných 7 dní, posledný prvok by mal byť dnešok
-        if bb_data:
-            today_data = bb_data[-1]
-            # Skús nájsť bodyBatteryValuesArray
-            values_array = today_data.get("bodyBatteryValueDescriptors") or today_data.get("bodyBatteryValuesArray")
-            if values_array and len(values_array) > 0:
-                # Posledná známa hodnota v poli (timestamp, value)
-                last_entry = values_array[-1]
-                if isinstance(last_entry, list) and len(last_entry) >= 2:
-                    current_value = last_entry[1]
-                elif isinstance(last_entry, dict):
-                    current_value = last_entry.get("bodyBatteryValue") or last_entry.get("value")
-            
-            # Ak sa nenašlo cez pole, skús default
-            if current_value is None:
-                 # Fallback na charged, hoci to nie je to isté
-                 current_value = today_data.get("charged")
-                 
-            # Vypočítajme týždenný priemer "charged" len pre info
-            charged_vals = [d.get("charged") for d in bb_data if d.get("charged") is not None]
-            if charged_vals:
-                weekly_avg = round(sum(charged_vals) / len(charged_vals), 1)
+        today_data = bb_data[-1]
+        values_array = (
+            today_data.get("bodyBatteryValuesArray")
+            or today_data.get("bodyBatteryValueDescriptors")
+            or []
+        )
+        values = [v for v in (_bb_value(e) for e in values_array) if v is not None]
+
+        if values:
+            current_value = values[-1]   # najnovšie meranie = aktuálny stav
+            # Ranná hodnota = denný vrchol: BB sa cez noc nabíja a po zobudení už len
+            # klesá → max je robustný odhad „pri zobudení" bez závislosti na čase prebudenia.
+            morning_value = max(values)
+
+        # Ak Garmin priamo dáva hodnotu pri zobudení / najvyššiu, uprednostni ju.
+        wake = today_data.get("bodyBatteryAtWakeTime")
+        if isinstance(wake, (int, float)) and 0 <= wake <= 100:
+            morning_value = wake
+
+        # Fallback ak časový rad chýbal (rôzne zariadenia)
+        if current_value is None:
+            current_value = today_data.get("bodyBatteryMostRecentValue") or today_data.get("charged")
+        if morning_value is None:
+            morning_value = today_data.get("bodyBatteryHighestValue")
+
+        # Týždenný priemer nočného nabitia (charged) — orientačný, iná veličina než stav.
+        charged_vals = [d.get("charged") for d in bb_data if d.get("charged") is not None]
+        if charged_vals:
+            weekly_avg = round(sum(charged_vals) / len(charged_vals), 1)
 
         return {
-            "today_charged": current_value,
+            "morning": morning_value,
+            "current": current_value,
+            "today_charged": current_value,  # spätná kompatibilita (deprecated, = current)
             "weekly_avg": weekly_avg,
             "raw": bb_data[:7],
         }

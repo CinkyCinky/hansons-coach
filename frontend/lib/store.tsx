@@ -131,7 +131,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           const adviceData = await fetchDashboardAdvice({
             sleep_score: data.sleep?.score,
             hrv_status: data.hrv?.status,
-            body_battery: data.stats?.body_battery,
+            // Živá hodnota — rada má reflektovať aktuálny stav (napr. večer pred behom).
+            body_battery: data.stats?.body_battery_now ?? data.stats?.body_battery,
             readiness: data.readiness?.readiness_score,
           });
           setState((s) => ({ ...s, advice: adviceData.advice }));
