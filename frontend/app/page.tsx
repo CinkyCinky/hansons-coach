@@ -195,7 +195,9 @@ export default function Dashboard() {
   const todayKind = todayWorkout ? classifyWorkout(todayWorkout.title || "").type : null;
   const showFueling = todayKind === "long" || isRaceWeek;
 
-  const formStatus = getFormStatus(sleep.score, stats.body_battery, readiness.readiness_score);
+  // Stav formy = ŽIVÁ Body Battery (rozhodnutie „vládzem teraz?"), nie ranná —
+  // dôležité pre večerný beh: ranná top forma už pred behom platiť nemusí.
+  const formStatus = getFormStatus(sleep.score, stats.body_battery_now ?? stats.body_battery, readiness.readiness_score);
 
   // Tréningová záťaž (acute:chronic ratio) — kľúčový Hanson ukazovateľ preťaženia
   const tl = d.training_load || {};
