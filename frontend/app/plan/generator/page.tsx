@@ -17,6 +17,12 @@ const STEP_LABELS: Record<string, string> = {
   recovery: "Zotavenie", cooldown: "Vychladenie", repeat: "Opakovanie",
 };
 
+// Dni týždňa v poradí Po→Ne (index 0..6). Generuje sa len zvyšok týždňa,
+// preto dni, ktoré už tento týždeň prešli, nie sú voliteľné.
+const DAY_KEYS = ["Po", "Ut", "St", "Št", "Pi", "So", "Ne"] as const;
+// Dnešný deň ako index Po=0..Ne=6 (JS getDay: Ne=0..So=6 → posun o +6 mod 7).
+const todayWeekIdx = () => (new Date().getDay() + 6) % 7;
+
 // Jeden editovateľný krok tréningu (vzdialenosť + tempo alebo HR). Použité aj vnútri repeat-blokov.
 function StepRow({ s, onField }: { s: any; onField: (field: string, value: any) => void }) {
   const isHr = s.hr_min != null || s.hr_max != null;
@@ -79,6 +85,18 @@ export default function Generator() {
       .catch(() => {});
   }, []);
 
+  // Dni, ktoré už tento týždeň prešli (Po=0..Ne=6), nemôžeš vybrať — odznač ich pri načítaní.
+  const todayIdx = todayWeekIdx();
+  const isPastDay = (day: string) => DAY_KEYS.indexOf(day as (typeof DAY_KEYS)[number]) < todayIdx;
+  useEffect(() => {
+    setDays((prev) => {
+      const next = { ...prev };
+      DAY_KEYS.forEach((k, i) => { if (i < todayIdx) next[k] = false; });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const selectedCount = Object.values(days).filter(Boolean).length;
 
   const handleGenerate = async () => {
@@ -88,9 +106,14 @@ export default function Generator() {
     setUploadSuccess(false);
     try {
       const availableDays = Object.entries(days).filter(([_, v]) => v).map(([k]) => k).join(", ");
+      // Dni tohto týždňa, ktoré už prešli — AI ich má brať ako zmeškané a neplánovať.
+      const passedDays = DAY_KEYS.filter((_, i) => i < todayIdx).join(", ");
+      const passedPart = passedDays
+        ? ` Dni tohto týždňa, ktoré už PREŠLI (zmeškané — NEplánuj ich a ak na ne padol kľúčový tréning, ber ho ako neabsolvovaný): ${passedDays}.`
+        : "";
       // Zloučenie užívateľských inštrukcií s AI kontext (ai_context z profilu)
       const contextPart = aiContext ? `\n\nDOPLNKOVÉ INFORMÁCIE O ZVERENCOVI (z profilu): ${aiContext}` : "";
-      const constraints = `Dostupné dni na beh: ${availableDays}. Ďalšie požiadavky od zverenca: ${message || "Žiadne"}.${contextPart}`;
+      const constraints = `Dostupné dni na beh (zvyšok tohto týždňa): ${availableDays}.${passedPart} Ďalšie požiadavky od zverenca: ${message || "Žiadne"}.${contextPart}`;
       
       const plan = await generatePlan(constraints);
       setGeneratedPlan(plan);
@@ -200,19 +223,28 @@ export default function Generator() {
           <div className="glass-card p-5">
             <h3 className="font-bold mb-3 flex items-center gap-2"><CalIcon size={18} className="text-primary"/> 1. Dostupné dni na beh</h3>
             <div className="flex flex-wrap gap-2">
-              {Object.entries(days).map(([day, isSelected]) => (
-                <button
-                  key={day}
-                  onClick={() => toggleDay(day as keyof typeof days)}
-                  className={`w-12 h-12 rounded-xl font-bold transition-colors ${
-                    isSelected ? "bg-primary text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]" : "bg-white/5 text-gray-500 border border-white/10"
-                  }`}
-                >
-                  {day}
-                </button>
-              ))}
+              {Object.entries(days).map(([day, isSelected]) => {
+                const past = isPastDay(day);
+                return (
+                  <button
+                    key={day}
+                    onClick={() => { if (!past) toggleDay(day as keyof typeof days); }}
+                    disabled={past}
+                    title={past ? "Tento deň už tento týždeň prešiel" : undefined}
+                    className={`w-12 h-12 rounded-xl font-bold transition-colors ${
+                      past
+                        ? "bg-white/5 text-gray-700 line-through opacity-40 cursor-not-allowed"
+                        : isSelected
+                        ? "bg-primary text-white shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+                        : "bg-white/5 text-gray-500 border border-white/10"
+                    }`}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
             </div>
-            <p className="text-xs text-gray-400 mt-3">Vyber dni, kedy môžeš behať. AI tréner z nich poskladá týždeň podľa Hansonovej metódy — kľúčové tréningy rozloží správne (nikdy nie 2 tvrdé dni za sebou). Návrh uvidíš pred zápisom do Garminu.</p>
+            <p className="text-xs text-gray-400 mt-3">Vyber dni, kedy môžeš behať <b className="text-gray-300">tento týždeň</b> — dni, ktoré už prešli, sa vybrať nedajú. AI tréner z nich poskladá zvyšok týždňa podľa Hansonovej metódy (kľúčové tréningy rozloží správne, nikdy nie 2 tvrdé dni za sebou). Návrh uvidíš pred zápisom do Garminu.</p>
           </div>
 
           <div className="glass-card p-5">

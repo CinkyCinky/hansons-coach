@@ -612,9 +612,9 @@ export default function Plan() {
               <Sparkles size={22} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-bold">Vygenerovať plán na 7 dní</p>
+              <p className="font-bold">Vygenerovať zvyšok týždňa</p>
               <p className="text-xs text-gray-400 leading-snug mt-0.5">
-                AI navrhne tréningy na najbližší týždeň. Najprv ich uvidíš — do Garminu sa zapíšu až po tvojom schválení.
+                AI navrhne tréningy na zvyšok tohto týždňa (dnes → nedeľa). Najprv ich uvidíš — do Garminu sa zapíšu až po tvojom schválení.
               </p>
             </div>
             <ChevronRight size={18} className="text-gray-500 shrink-0" />
