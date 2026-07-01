@@ -92,7 +92,8 @@ export default function Chat() {
         const d = store.dashboard;
         let greetContext = "Ahoj! Som tvoj AI bežecký tréner.";
         if (d) {
-          const bb = d.stats?.body_battery;
+          // Živá hodnota (aktuálny stav) — pozdrav je „teraz", nie ranný report.
+          const bb = d.stats?.body_battery_now ?? d.stats?.body_battery;
           const todayW = d.today_workout?.title;
           const week = d.training_week;
           // Je dnešný tréning už odbehnutý? (porovnaj dnešný dátum s aktivitami z Garminu)

@@ -171,7 +171,11 @@ def estimate_5k_pace_sec(vo2max: Optional[float]) -> Optional[int]:
 
 def compute_training_paces(goal_time: str, vo2max: Optional[float] = None) -> Optional[Dict[str, str]]:
     """Hanson polmaratónové tempá (s/km). Strength a Tempo z cieľa, Speed z AKTUÁLNEJ
-    formy (VO2max). Easy je tempové pásmo (riadené tempom, nie tepom)."""
+    formy (VO2max). Easy je tempové pásmo (riadené tempom, nie tepom).
+
+    POZOR: tieto vzorce ZRKADLÍ frontend v `frontend/lib/paces.ts` (živá kalkulačka
+    v Nastaveniach). Pri zmene vzorca (napr. Easy pásmo, Strength −6 s/km) uprav OBE miesta,
+    inak sa UI náhľad rozíde s reálne vygenerovaným plánom."""
     total = _parse_goal_to_sec(goal_time)
     if not total:
         return None

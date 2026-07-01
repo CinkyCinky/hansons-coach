@@ -90,6 +90,12 @@ export default function About() {
             najdlhší beh týždňa, ale v <b className="text-gray-100">ľahkom (Easy) tempe</b>, nie
             pretekovom. Na polmaratón vrcholí okolo 12 míľ (~19 km).
           </Term>
+          <p className="text-[13px] text-gray-500 leading-relaxed mt-1">
+            Časovanie utorkov platí pre <b className="text-gray-400">Advanced</b>.
+            <b className="text-gray-400"> Beginner</b> má úvodnú base fázu — intervaly aj tempo začína
+            až od T6. <b className="text-gray-400">Just Finish</b> je celý bez intervalov a tempa
+            (len Easy behy + nedeľný dlhý beh do ~16 km).
+          </p>
         </Item>
 
         <Item q="Tréningové tempá — z čoho sa počítajú?">
@@ -106,6 +112,12 @@ export default function About() {
           <Term name="Speed (T2–10)">krátke rýchle intervaly — rýchlosť a ekonomika.</Term>
           <Term name="Strength (T11–17)">dlhšie intervaly pri pretekovom tempe — sila a odolnosť. Objem vrcholí (~T14–16).</Term>
           <Term name="Taper (T18)">posledný týždeň — výrazne menej behu, aby si na štart prišiel svieži.</Term>
+          <p className="text-[13px] text-gray-500 leading-relaxed mt-1">
+            Fázy vyššie sú pre <b className="text-gray-400">Advanced</b>.
+            <b className="text-gray-400"> Beginner</b>: T1–5 je base (len Easy + dlhý beh), Speed až
+            T6–10, Strength T11–17. <b className="text-gray-400">Just Finish</b>: bez Speed/Strength
+            fáz — len postupne rastúci objem a dlhý beh.
+          </p>
         </Item>
 
         <Item q="Taper a pretekový týždeň">
