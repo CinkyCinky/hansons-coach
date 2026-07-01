@@ -8,6 +8,8 @@ frontend/.env*.local
 # Python / Backend
 backend/__pycache__/
 backend/venv/
+backend/.venv/
+.venv/
 backend/.env
 backend/.garmin_hanson_coach
 *.pyc

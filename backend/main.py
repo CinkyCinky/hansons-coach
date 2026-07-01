@@ -375,9 +375,11 @@ def _wellness_snapshot(client, user_id: str, force: bool = False) -> dict:
 def read_root():
     return {"status": "ok", "app": "Hansons Running Coach", "version": "2.0.0"}
 
-@app.get("/keepalive")
+@app.api_route("/keepalive", methods=["GET", "HEAD"])
 def keepalive():
-    """Endpoint pre UptimeRobot — zabraňuje cold startu na Render free tieri."""
+    """Endpoint pre UptimeRobot — zabraňuje cold startu na Render free tieri.
+    Prijíma GET aj HEAD: UptimeRobot na Free pláne posiela HEAD (metóda sa nedá zmeniť),
+    a čistý @app.get by naň vrátil 405 → monitor by hlásil „Down" napriek živému serveru."""
     return {"ok": True, "timestamp": datetime.datetime.now().isoformat()}
 
 
