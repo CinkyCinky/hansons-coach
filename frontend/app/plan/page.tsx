@@ -105,7 +105,7 @@ function phaseFallback(phase?: string): string {
 // obrazovku (ani pri kartách pri okraji) a zároveň ho neoreže overflow-hidden panel.
 // stopPropagation, aby tap nezbalil rozkliknutý tréning; tap mimo popover ho zavrie.
 function InfoTip({ text }: { text: string }) {
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number | null; bottom: number | null; left: number; width: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
   const toggle = (e: React.MouseEvent) => {
@@ -119,7 +119,16 @@ function InfoTip({ text }: { text: string }) {
       Math.max(margin, r.left + r.width / 2 - width / 2),
       window.innerWidth - width - margin,
     );
-    setPos({ top: r.bottom + 6, left, width });
+    // V spodnej časti obrazovky otvor popover NAHOR, nech nezájde do spodnej navigácie.
+    const vh = window.innerHeight;
+    const navSafe = 84; // výška spodnej navigácie + rezerva
+    const openUp = r.bottom > vh - navSafe - 130;
+    setPos({
+      left,
+      width,
+      top: openUp ? null : r.bottom + 6,
+      bottom: openUp ? Math.max(navSafe, vh - r.top + 6) : null,
+    });
   };
 
   return (
@@ -141,7 +150,7 @@ function InfoTip({ text }: { text: string }) {
           />
           <span
             onClick={(e) => e.stopPropagation()}
-            style={{ top: pos.top, left: pos.left, width: pos.width }}
+            style={{ top: pos.top ?? undefined, bottom: pos.bottom ?? undefined, left: pos.left, width: pos.width }}
             className="fixed z-50 bg-[#1a1a24] border border-white/15 rounded-lg p-2.5 text-[11px] text-gray-300 leading-snug shadow-xl font-normal normal-case tracking-normal whitespace-normal"
           >
             {text}
