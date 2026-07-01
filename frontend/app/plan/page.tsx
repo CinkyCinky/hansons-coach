@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
   Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles, AlertTriangle,
-  ChevronDown, CalendarRange, History
+  ChevronDown, CalendarRange, History, Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -29,6 +29,14 @@ const STEP_COLORS: Record<string, { border: string; text: string; label: string 
   recovery: { border: "border-l-emerald-400",text: "text-emerald-400", label: "Zotavenie" },
   cooldown: { border: "border-l-green-400",  text: "text-green-400",   label: "Vychladenie" },
 };
+
+// Preklad typov krokov z AI JSON (warmup/run/recover/cooldown…) do slovenčiny —
+// používa sa v návrhu úpravy tréningu (pôvodné aj navrhované kroky).
+const STEP_TYPE_SK: Record<string, string> = {
+  warmup: "Rozcvička", run: "Beh", recover: "Zotavenie", recovery: "Zotavenie",
+  cooldown: "Vychladenie", interval: "Intervalový beh", repeat: "Opakovanie",
+};
+const stepTypeSk = (t?: string) => (t ? STEP_TYPE_SK[t] ?? t : "");
 
 // HR zóny Z1–Z5 — farba + slovenský názov (pre rozloženie času v behu)
 const ZONE_HR: Record<number, { bg: string; name: string }> = {
@@ -90,6 +98,38 @@ function phaseFallback(phase?: string): string {
   if (phase === "intro") return "len Easy behy (adaptácia)";
   if (phase === "base" || phase === "just_finish") return "len Easy behy + nedeľný dlhý beh";
   return "—";
+}
+
+// Tapnuteľná vysvetlivka „i" — funguje na dotyku (mobil), kde title= tooltip nie.
+// stopPropagation, aby tap nezbalil rozkliknutý tréning; tap mimo popover ho zavrie.
+function InfoTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex align-middle">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className="text-gray-500 hover:text-gray-200 transition-colors"
+        aria-label="Vysvetlenie"
+      >
+        <Info size={13} />
+      </button>
+      {open && (
+        <>
+          <span
+            className="fixed inset-0 z-40"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+          />
+          <span
+            onClick={(e) => e.stopPropagation()}
+            className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1.5 w-56 max-w-[72vw] bg-[#1a1a24] border border-white/15 rounded-lg p-2.5 text-[11px] text-gray-300 leading-snug shadow-xl font-normal normal-case tracking-normal whitespace-normal"
+          >
+            {text}
+          </span>
+        </>
+      )}
+    </span>
+  );
 }
 
 // Vzdelávací prehľad celého 18-týždňového oblúka s označením "Tu si" (variant-aware)
@@ -600,7 +640,7 @@ export default function Plan() {
                   <div className="flex flex-col gap-1">
                     {proposal.original_steps.map((s: any, idx: number) => (
                       <div key={idx} className="text-xs text-gray-400 flex justify-between bg-black/20 p-1.5 rounded">
-                        <span className="capitalize">{s.type}</span>
+                        <span>{stepTypeSk(s.type)}</span>
                         <span>{s.distance_km ? `${s.distance_km}km` : ""}{s.target ? ` @ ${s.target}` : ""}</span>
                       </div>
                     ))}
@@ -615,7 +655,7 @@ export default function Plan() {
                 <div className="mt-2 flex flex-col gap-1">
                   {proposal.proposed_workout?.steps?.map((s: any, idx: number) => (
                     <div key={idx} className="text-xs text-gray-300 flex justify-between bg-black/20 p-1.5 rounded">
-                      <span className="capitalize">{s.type}</span>
+                      <span>{stepTypeSk(s.type)}</span>
                       <span>{s.distance_km}km @ {s.pace_max}-{s.pace_min}</span>
                     </div>
                   ))}
@@ -843,7 +883,7 @@ export default function Plan() {
                               )}
                               {details.stats?.gap_pace_sec_km && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Grade Adjusted Pace: tempo prepočítané na rovinu. Ukazuje reálny výkon nezávisle od stúpania/klesania.">
-                                  <p className="text-xs text-gray-500">Tempo na rovine (GAP)</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Tempo na rovine (GAP) <InfoTip text="Grade Adjusted Pace: tempo prepočítané na rovinu. Ukazuje reálny výkon nezávisle od stúpania a klesania — do kopca je GAP rýchlejší než reálne tempo." /></p>
                                   <p className="font-bold text-primary font-mono">
                                     {Math.floor(details.stats.gap_pace_sec_km / 60)}:
                                     {String(details.stats.gap_pace_sec_km % 60).padStart(2, "0")}/km
@@ -896,7 +936,7 @@ export default function Plan() {
                               )}
                               {details.stats?.running_dynamics?.vertical_ratio_pct != null && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Vertikálny pomer: koľko % z dĺžky kroku tvorí vertikálny pohyb. Nižšie = ekonomickejší beh (menej energie hore-dole).">
-                                  <p className="text-xs text-gray-500">Vert. pomer</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Vert. pomer <InfoTip text="Bežecká dynamika: vertikálny pomer = koľko % dĺžky kroku tvorí pohyb hore-dole. Nižšie = ekonomickejší beh. (Podobne kontakt so zemou, dĺžka kroku a oscilácia sú ukazovatele ekonomiky behu.)" /></p>
                                   <p className="font-bold text-teal-400">{details.stats.running_dynamics.vertical_ratio_pct} %</p>
                                 </div>
                               )}
@@ -920,13 +960,13 @@ export default function Plan() {
                               )}
                               {details.stats?.efficiency_factor != null && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Efficiency Factor = rýchlosť na rovine / tep. Vyššie = ekonomickejší beh. Absolútna hodnota nič nehovorí — dôležitý je RAST v čase pri Easy behoch (= stúpajúca kondícia).">
-                                  <p className="text-xs text-gray-500">Efektivita (EF)</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Efektivita (EF) <InfoTip text="Efficiency Factor = rýchlosť na rovine / tep. Vyššie = ekonomickejší beh. Absolútna hodnota nič nehovorí — dôležitý je RAST v čase pri Easy behoch (= stúpajúca kondícia)." /></p>
                                   <p className="font-bold text-indigo-400">{details.stats.efficiency_factor.toFixed(2)}</p>
                                 </div>
                               )}
                               {details.stats?.decoupling_pct != null && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Aeróbny decoupling (Pa:HR): o koľko klesla ekonomika v 2. polovici. <5 % = výborná aeróbna báza; >8 % = výrazný drift (únava/teplo/slabšia báza).">
-                                  <p className="text-xs text-gray-500">Decoupling</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Decoupling <InfoTip text="Aeróbny decoupling (Pa:HR): o koľko klesla ekonomika (tempo vs tep) v 2. polovici behu. <5 % = výborná aeróbna báza; >8 % = výrazný drift (únava, teplo alebo slabšia báza)." /></p>
                                   <p className={`font-bold ${details.stats.decoupling_pct < 5 ? "text-emerald-400" : details.stats.decoupling_pct < 8 ? "text-amber-400" : "text-rose-400"}`}>
                                     {details.stats.decoupling_pct >= 0 ? "+" : ""}{details.stats.decoupling_pct} %
                                   </p>
@@ -937,7 +977,7 @@ export default function Plan() {
                             {/* Rozpad formy: 2. vs 1. polovica behu (únava / durability) */}
                             {details.stats?.form_drift && (
                               <div className="bg-black/20 rounded-xl p-3" title="Porovnanie 2. a 1. polovice behu. Rast tepu a vert. pomeru spolu so skrátením kroku pri rovnakom tempe = rozpad formy / únava.">
-                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">Rozpad formy (2. vs 1. polovica)</p>
+                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2 flex items-center gap-1">Rozpad formy (2. vs 1. polovica) <InfoTip text="Porovnanie 2. a 1. polovice behu. Keď pri rovnakom tempe RASTIE tep a vert. pomer a KLESÁ dĺžka kroku, forma sa rozpadá — objektívny znak únavy (durability). Stabilné hodnoty = dobrá odolnosť." /></p>
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
                                   {details.stats.form_drift.pace_sec_delta != null && (
                                     <span>Tempo <b className={details.stats.form_drift.pace_sec_delta > 3 ? "text-amber-400" : "text-emerald-400"}>
@@ -962,8 +1002,9 @@ export default function Plan() {
                             {/* Rozloženie času v HR zónach (Z1–Z5) */}
                             {details.stats?.hr_zones && details.stats.hr_zones.length > 0 && (
                               <div className="bg-black/20 rounded-xl p-3">
-                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2">
+                                <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-2 flex items-center gap-1">
                                   Čas v HR zónach
+                                  <InfoTip text="Koľko času si strávil v jednotlivých tepových zónach (Z1 najľahšia … Z5 maximálka). Pri Easy behu má väčšina času padnúť do Z1–Z2; pri tempe/intervaloch vyššie zóny." />
                                 </p>
                                 <div className="flex h-3 rounded-full overflow-hidden mb-3 bg-white/5">
                                   {details.stats.hr_zones.map((z: any) =>

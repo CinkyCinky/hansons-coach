@@ -58,7 +58,14 @@ export default function Login() {
 
         <Flame size={48} className="text-primary mb-4" />
         <h1 className="text-2xl font-bold mb-2">Hansons Coach</h1>
-        <p className="text-gray-400 text-sm mb-8 text-center">Prihlás sa a získaj svojho osobného bežeckého AI trénera</p>
+        <p className="text-gray-400 text-sm mb-5 text-center leading-relaxed">
+          Osobný AI tréner na polmaratón podľa Hansonovej metódy. Prepojí sa s tvojím
+          Garminom a plán ti zostaví z tvojich reálnych dát.
+        </p>
+        <div className="w-full bg-white/5 border border-white/10 rounded-xl p-3 mb-6 text-[11px] text-gray-400 leading-relaxed">
+          <b className="text-gray-300">Čo potrebuješ:</b> účet Garmin Connect (bežecké hodinky)
+          a to, že už pravidelne behávaš — plán ťa pripraví na polmaratón, nie je to beh od nuly.
+        </div>
 
         <form onSubmit={handleAuth} className="w-full flex flex-col gap-4">
           <div>
