@@ -487,11 +487,12 @@ export default function Settings() {
               ))}
             </div>
             <p className="text-xs text-gray-600 mt-1 ml-1 leading-snug">
-              Beginner/Advanced majú rovnaké kľúčové tréningy (SOS = „Something of Substance" — tvrdé
-              tréningy: intervaly, tempo, dlhý beh), líšia sa len objemom. <b className="text-gray-400">Beginner</b> ak
-              s polmaratónom začínaš, <b className="text-gray-400">Advanced</b> ak už máš odbehnutý a chceš zlepšiť čas.
-              <b className="text-gray-400"> Just Finish</b> = cieľ len dobehnúť, bez tvrdých intervalov. Všetky
-              predpokladajú, že už pravidelne behávaš (nie je to plán od nuly).
+              SOS = „Something of Substance" — 3 tvrdé tréningy týždňa (intervaly, tempo, dlhý beh).
+              <b className="text-gray-400"> Beginner</b> ak s polmaratónom začínaš — má úvodnú <b className="text-gray-400">base
+              fázu</b> (prvých 5 týždňov len ľahké behy a dlhý beh, intervaly a tempo až od T6).
+              <b className="text-gray-400"> Advanced</b> ak už máš polmaratón odbehnutý a chceš zlepšiť čas — kvalita
+              od začiatku. <b className="text-gray-400">Just Finish</b> = cieľ len dobehnúť, bez tvrdých intervalov.
+              Všetky predpokladajú, že už pravidelne behávaš (nie je to plán od nuly).
             </p>
           </div>
           <div>

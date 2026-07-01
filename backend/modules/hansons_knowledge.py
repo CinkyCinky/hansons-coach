@@ -306,6 +306,18 @@ def training_phase(week: int, variant: Optional[str] = "advanced") -> Dict[str, 
                     "note": "JUST FINISH — ŽIADNE intervaly ani tempo. Len Easy behy + nedeľný dlhý beh "
                             "(Easy). Cieľ je v pohode dobehnúť: rozhoduje objem a konzistencia, nie rýchlosť."}
         return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
+    if (variant or "advanced").lower() == "beginner":
+        if week <= 5:
+            return {"key": "base", "label": f"Základná fáza (T{week})",
+                    "note": "BASE (Beginner) — budovanie objemu: len Easy behy + nedeľný dlhý beh. "
+                            "Žiadne intervaly ani tempo, tie začínajú až T6. SOS: Dlhý (ne)."}
+        if week <= 10:
+            return {"key": "speed", "label": f"Speed fáza (T{week})",
+                    "note": "SPEED fáza — krátke intervaly @ aktuálne 5k tempo (z VO2max). SOS: Speed (ut), Tempo (št), Dlhý (ne)."}
+        if week <= 17:
+            return {"key": "strength", "label": f"Strength fáza (T{week})",
+                    "note": "STRENGTH fáza — dlhé intervaly @ HMP − 10 s/míľu. SOS: Strength (ut), Tempo (št), Dlhý (ne)."}
+        return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
     if week <= 10:
         return {"key": "speed", "label": f"Speed fáza (T{week})",
                 "note": "SPEED fáza — krátke intervaly @ aktuálne 5k tempo (z VO2max). SOS: Speed (ut), Tempo (št), Dlhý (ne)."}
@@ -336,6 +348,19 @@ STRENGTH_LADDER = {
 TEMPO_MILES = {2: 3, 3: 3, 4: 3, 5: 4, 6: 4, 7: 4, 8: 5, 9: 5, 10: 5,
                11: 6, 12: 6, 13: 6, 14: 7, 15: 7, 16: 7, 17: 5}
 _MI = 1.609
+
+# ── Beginner (Program pre začiatočníkov) — Tabuľka 4.1 z knihy ────────────────
+# Kľúčový rozdiel oproti Advanced: BASE fáza T1–5 (len Easy + nedeľný dlhý beh),
+# intervaly AJ tempo štartujú až T6 (~13 týždňov pred pretekmi). Overené z knihy aj
+# oficiálnych Hansons zdrojov. Speed rebrík = Advanced T2–6 posunutý na T6–10;
+# Strength je zhodný s Advanced okrem T17 (Beginner 4×1mí, Advanced 6×1mí).
+SPEED_LADDER_BEGINNER = {
+    6: (12, 400, 400), 7: (8, 600, 400), 8: (6, 800, 400),
+    9: (5, 1000, 600), 10: (4, 1200, 600),
+}
+STRENGTH_LADDER_BEGINNER = {**STRENGTH_LADDER, 17: (4, 1609, 400)}
+TEMPO_MILES_BEGINNER = {6: 4, 7: 4, 8: 5, 9: 5, 10: 5,
+                        11: 6, 12: 6, 13: 6, 14: 7, 15: 7, 16: 7, 17: 5}
 
 
 # ── Just Finish (Program pre nenáročných) — VERNÁ tabuľka z knihy ─────────────
@@ -379,7 +404,7 @@ def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
 
 VARIANTS = {
     "advanced": "Advanced — plný objem (~51 mi/týž vo vrchole), 6 dní behu.",
-    "beginner": "Beginner — nižší objem (~48 mi/týž vo vrchole), kratšie Easy behy; rovnaké SOS ako Advanced.",
+    "beginner": "Beginner — nižší objem (~48 mi/týž vo vrchole), kratšie Easy behy. BASE fáza T1–5 (len Easy + nedeľný dlhý beh); intervaly AJ tempo štartujú až T6. Strength ako Advanced okrem T17 (Beginner 4×1mí).",
     "just_finish": "Just Finish — cieľ je dobehnúť (HMP 2:25+): ŽIADNE intervaly ani tempo, len Easy behy + nedeľný dlhý beh (vrchol ~16 km / 10 mí, objem ~53 km vo vrchole).",
 }
 
@@ -418,17 +443,25 @@ def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dic
                              "label": f"Dlhý beh {sun} km @ Easy (Just Finish; vrchol ~16 km / 10 mí)"}
         return out
 
-    if week in SPEED_LADDER:
-        reps, dist_m, rec_m = SPEED_LADDER[week]
+    # Rebríky podľa variantu: Beginner má BASE fázu T1–5 (speed aj tempo až od T6).
+    if v == "beginner":
+        speed_l, strength_l, tempo_m = SPEED_LADDER_BEGINNER, STRENGTH_LADDER_BEGINNER, TEMPO_MILES_BEGINNER
+    else:
+        speed_l, strength_l, tempo_m = SPEED_LADDER, STRENGTH_LADDER, TEMPO_MILES
+
+    if week in speed_l:
+        reps, dist_m, rec_m = speed_l[week]
         out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
                           "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
-    elif week in STRENGTH_LADDER:
-        reps, dist_m, rec_m = STRENGTH_LADDER[week]
+    elif week in strength_l:
+        reps, dist_m, rec_m = strength_l[week]
         out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
                           "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
-    tempo_km = round(TEMPO_MILES.get(week, 4) * _MI, 1)
-    out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
-                       "label": f"Tempo {tempo_km} km @ cieľové HMP"}
+    # Tempo: v Beginner base fáze (T2–5) tempo NIE je — pridá sa až od T6.
+    if week in tempo_m:
+        tempo_km = round(tempo_m[week] * _MI, 1)
+        out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
+                           "label": f"Tempo {tempo_km} km @ cieľové HMP"}
     out["sunday"] = {"kind": "long", "pace": "easy",
                      "label": "Dlhý beh @ Easy (≈8–12 míľ podľa fázy, vrchol ~12 míľ / ~19 km; max ~30 % týždenného objemu)"}
     return out
@@ -471,8 +504,13 @@ def sos_block(week: int, variant: Optional[str] = "advanced") -> str:
     lines = ["\nPREDPÍSANÉ SOS PRE TENTO TÝŽDEŇ (drž sa ich, len ich rozmiestni na dostupné dni):"]
     if "tuesday" in sos:
         lines.append(f"  • Kľúčový intervalový (typicky utorok): {sos['tuesday']['label']}")
-    lines.append(f"  • {'Tempo' if sos['thursday']['kind'] == 'tempo' else 'Stredný beh'} (typicky štvrtok): {sos['thursday']['label']}")
-    lines.append(f"  • Dlhý (typicky nedeľa): {sos['sunday']['label']}")
+    if "thursday" in sos:
+        lines.append(f"  • {'Tempo' if sos['thursday']['kind'] == 'tempo' else 'Stredný beh'} (typicky štvrtok): {sos['thursday']['label']}")
+    if "sunday" in sos:
+        lines.append(f"  • Dlhý (typicky nedeľa): {sos['sunday']['label']}")
+    if "tuesday" not in sos and "thursday" not in sos:
+        lines.append("  • BASE fáza (Beginner) — tento týždeň BEZ intervalov a tempa: len Easy behy "
+                     "a nedeľný dlhý beh. Buduj objem, kvalita príde od T6.")
     if "tuesday" in sos:
         lines.append("  Intervaly zapíš ako JEDEN 'repeat' krok (iterations = počet) s vnorenými krokmi "
                      "[run úsek na danom tempe, recover pauza pomaly]. WU + CD 2–4 km na Easy tempe.")

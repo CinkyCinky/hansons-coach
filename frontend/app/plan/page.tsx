@@ -39,28 +39,66 @@ const ZONE_HR: Record<number, { bg: string; name: string }> = {
   5: { bg: "bg-rose-500/70",    name: "maximálka" },
 };
 
-// Fázy 18-týždňového Hanson plánu (na vzdelávací prehľad oblúka prípravy)
-const PHASES = [
-  { key: "intro", label: "Úvod", start: 1, end: 1, color: "bg-sky-400",
-    desc: "Rozbeh a adaptácia — zatiaľ len ľahké behy." },
-  { key: "speed", label: "Speed", start: 2, end: 10, color: "bg-rose-400",
-    desc: "Krátke rýchle intervaly @ 5K tempo — rozvoj rýchlosti a VO2max." },
-  { key: "strength", label: "Strength", start: 11, end: 17, color: "bg-orange-400",
-    desc: "Dlhšie intervaly tesne pod pretekovým tempom — sila a odolnosť. Objem vrcholí." },
-  { key: "taper", label: "Taper", start: 18, end: 18, color: "bg-emerald-400",
-    desc: "Posledný týždeň — menej behu, aby si na štart prišiel svieži." },
-];
+// Fázy 18-týždňového Hanson plánu (vzdelávací prehľad oblúka prípravy).
+// Kľúče zrkadlia backend training_phase: intro/base/speed/strength/taper/just_finish.
+type PhaseKey = "intro" | "base" | "speed" | "strength" | "taper" | "just_finish";
 
-function phaseForWeek(week: number) {
-  return PHASES.find((p) => week >= p.start && week <= p.end) ?? PHASES[0];
+const PHASE_META: Record<PhaseKey, { label: string; color: string; desc: string }> = {
+  intro:       { label: "Úvod", color: "bg-sky-400",
+                 desc: "Rozbeh a adaptácia — zatiaľ len ľahké behy." },
+  base:        { label: "Base", color: "bg-sky-400",
+                 desc: "Budovanie objemu — len ľahké behy a nedeľný dlhý beh. Intervaly a tempo prídu až od T6." },
+  speed:       { label: "Speed", color: "bg-rose-400",
+                 desc: "Krátke rýchle intervaly @ 5K tempo — rozvoj rýchlosti a VO2max." },
+  strength:    { label: "Strength", color: "bg-orange-400",
+                 desc: "Dlhšie intervaly tesne pod pretekovým tempom — sila a odolnosť. Objem vrcholí." },
+  taper:       { label: "Taper", color: "bg-emerald-400",
+                 desc: "Posledný týždeň — menej behu, aby si na štart prišiel svieži." },
+  just_finish: { label: "Objem", color: "bg-purple-400",
+                 desc: "Len ľahké behy + nedeľný dlhý beh. Cieľ je v pohode dobehnúť — bez intervalov a tempa." },
+};
+
+// Segmenty fáz (start/end týždňa) podľa variantu — pre časovú os v Pláne.
+function phasesForVariant(variant?: string): { key: PhaseKey; start: number; end: number }[] {
+  const v = (variant ?? "advanced").toLowerCase();
+  if (v === "just_finish")
+    return [{ key: "just_finish", start: 1, end: 17 }, { key: "taper", start: 18, end: 18 }];
+  if (v === "beginner")
+    return [
+      { key: "base", start: 1, end: 5 },
+      { key: "speed", start: 6, end: 10 },
+      { key: "strength", start: 11, end: 17 },
+      { key: "taper", start: 18, end: 18 },
+    ];
+  return [
+    { key: "intro", start: 1, end: 1 },
+    { key: "speed", start: 2, end: 10 },
+    { key: "strength", start: 11, end: 17 },
+    { key: "taper", start: 18, end: 18 },
+  ];
 }
 
-// Vzdelávací prehľad celého 18-týždňového oblúka s označením "Tu si"
-function PhaseTimeline({ week }: { week: number | null }) {
+function phaseForWeek(week: number, variant?: string) {
+  const segs = phasesForVariant(variant);
+  const seg = segs.find((p) => week >= p.start && week <= p.end) ?? segs[0];
+  return { ...seg, ...PHASE_META[seg.key] };
+}
+
+// Krátky popis týždňa bez utorkového kľúčového tréningu (base/taper/just_finish)
+function phaseFallback(phase?: string): string {
+  if (phase === "taper") return "taper — zostup objemu";
+  if (phase === "intro") return "len Easy behy (adaptácia)";
+  if (phase === "base" || phase === "just_finish") return "len Easy behy + nedeľný dlhý beh";
+  return "—";
+}
+
+// Vzdelávací prehľad celého 18-týždňového oblúka s označením "Tu si" (variant-aware)
+function PhaseTimeline({ week, variant }: { week: number | null; variant?: string }) {
   const TOTAL = 18;
   const w = week ?? 0;
   const pct = w ? Math.min(100, Math.max(0, ((w - 0.5) / TOTAL) * 100)) : 0;
-  const cur = w ? phaseForWeek(w) : null;
+  const segs = phasesForVariant(variant);
+  const cur = w ? phaseForWeek(w, variant) : null;
   return (
     <div className="glass-card p-4">
       <div className="flex justify-between text-sm mb-3">
@@ -70,15 +108,15 @@ function PhaseTimeline({ week }: { week: number | null }) {
       {/* Segmenty fáz (šírka = počet týždňov fázy) */}
       <div className="relative">
         <div className="flex gap-0.5 h-2.5 rounded-full overflow-hidden">
-          {PHASES.map((p) => {
-            const span = p.end - p.start + 1;
+          {segs.map((p) => {
+            const meta = PHASE_META[p.key];
             const isCur = cur?.key === p.key;
             return (
               <div
                 key={p.key}
-                style={{ flexGrow: span }}
-                className={`${p.color} ${isCur ? "opacity-100" : "opacity-30"} transition-opacity`}
-                title={`${p.label} (T${p.start}${p.end !== p.start ? `–${p.end}` : ""})`}
+                style={{ flexGrow: p.end - p.start + 1 }}
+                className={`${meta.color} ${isCur ? "opacity-100" : "opacity-30"} transition-opacity`}
+                title={`${meta.label} (T${p.start}${p.end !== p.start ? `–${p.end}` : ""})`}
               />
             );
           })}
@@ -92,8 +130,8 @@ function PhaseTimeline({ week }: { week: number | null }) {
       </div>
       {/* Štítky fáz */}
       <div className="flex justify-between mt-2 text-[9px] text-gray-500 uppercase tracking-wide">
-        {PHASES.map((p) => (
-          <span key={p.key} className={cur?.key === p.key ? "text-gray-200 font-bold" : ""}>{p.label}</span>
+        {segs.map((p) => (
+          <span key={p.key} className={cur?.key === p.key ? "text-gray-200 font-bold" : ""}>{PHASE_META[p.key].label}</span>
         ))}
       </div>
       {cur && (
@@ -138,48 +176,58 @@ function FullPlanOverview() {
               <Loader2 className="animate-spin" size={16} /> Načítavam…
             </div>
           )}
-          {!loading && weeks.length > 0 && (
-            <div className="flex flex-col gap-4">
-              <p className="text-[11px] text-gray-500">
-                Variant: {data.variant}. Nedeľa = dlhý beh každý týždeň, štvrtok = tempo.
-              </p>
-              {PHASES.map((ph) => {
-                const wk = weeks.filter((w) => w.phase === ph.key);
-                if (!wk.length) return null;
-                return (
-                  <div key={ph.key}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`w-2 h-2 rounded-full ${ph.color}`} />
-                      <span className="text-xs font-bold text-gray-200">
-                        {ph.label} · T{ph.start}{ph.end !== ph.start ? `–${ph.end}` : ""}
-                      </span>
+          {!loading && weeks.length > 0 && (() => {
+            // Zoskup týždne podľa fázy v poradí (jeden zdroj pravdy = backend, variant-aware)
+            const order: string[] = [];
+            const byPhase: Record<string, any[]> = {};
+            for (const w of weeks) {
+              if (!byPhase[w.phase]) { byPhase[w.phase] = []; order.push(w.phase); }
+              byPhase[w.phase].push(w);
+            }
+            return (
+              <div className="flex flex-col gap-4">
+                <p className="text-[11px] text-gray-500">
+                  Variant: {data.variant}. Nedeľa = dlhý beh; kľúčové tréningy vidíš pri jednotlivých týždňoch.
+                </p>
+                {order.map((pk) => {
+                  const meta = PHASE_META[pk as PhaseKey] ?? { label: pk, color: "bg-gray-400", desc: "" };
+                  const wk = byPhase[pk];
+                  const first = wk[0].week, last = wk[wk.length - 1].week;
+                  return (
+                    <div key={pk}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`w-2 h-2 rounded-full ${meta.color}`} />
+                        <span className="text-xs font-bold text-gray-200">
+                          {meta.label} · T{first}{last !== first ? `–${last}` : ""}
+                        </span>
+                      </div>
+                      {meta.desc && <p className="text-[11px] text-gray-500 mb-2 leading-snug">{meta.desc}</p>}
+                      <div className="flex flex-col gap-1.5">
+                        {wk.map((w) => (
+                          <div
+                            key={w.week}
+                            className={`text-xs rounded-lg px-2 py-1.5 leading-snug ${
+                              w.is_current ? "bg-primary/15 border border-primary/30" : "bg-black/20"
+                            }`}
+                          >
+                            <span className={`font-bold ${w.is_current ? "text-primary" : "text-gray-300"}`}>
+                              T{w.week}{w.is_current ? " · tu si" : ""}
+                            </span>
+                            {w.tuesday ? (
+                              <span className="text-gray-400"> — {w.tuesday}</span>
+                            ) : (
+                              <span className="text-gray-500"> — {phaseFallback(w.phase)}</span>
+                            )}
+                            {w.thursday && <span className="text-gray-500"> · {w.thursday}</span>}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <p className="text-[11px] text-gray-500 mb-2 leading-snug">{ph.desc}</p>
-                    <div className="flex flex-col gap-1.5">
-                      {wk.map((w) => (
-                        <div
-                          key={w.week}
-                          className={`text-xs rounded-lg px-2 py-1.5 leading-snug ${
-                            w.is_current ? "bg-primary/15 border border-primary/30" : "bg-black/20"
-                          }`}
-                        >
-                          <span className={`font-bold ${w.is_current ? "text-primary" : "text-gray-300"}`}>
-                            T{w.week}{w.is_current ? " · tu si" : ""}
-                          </span>
-                          {w.tuesday ? (
-                            <span className="text-gray-400"> — {w.tuesday}</span>
-                          ) : (
-                            <span className="text-gray-500"> — {w.week === 1 ? "len Easy behy (adaptácia)" : "taper — zostup objemu"}</span>
-                          )}
-                          {w.thursday && <span className="text-gray-500"> · {w.thursday}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
           {!loading && data && weeks.length === 0 && (
             <p className="text-xs text-gray-500">Prehľad sa nepodarilo načítať.</p>
           )}
@@ -597,7 +645,7 @@ export default function Plan() {
       </AnimatePresence>
 
       {/* Prehľad 18-týždňového oblúka prípravy (vzdelávací) */}
-      <PhaseTimeline week={trainingWeek} />
+      <PhaseTimeline week={trainingWeek} variant={store.dashboard?.plan_variant} />
 
       {/* Celý 18-týždňový plán (rozbaľovací) */}
       <FullPlanOverview />
