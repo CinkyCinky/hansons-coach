@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Send, Bot, Loader2, Zap, Brain } from "lucide-react";
 import { motion } from "framer-motion";
-import { sendChatMessage, fetchProfile } from "@/lib/api";
+import { sendChatMessage, streamChatMessage, fetchProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 type Model = "flash" | "pro";
@@ -156,31 +156,55 @@ export default function Chat() {
     setMessages(newMessages);
     setIsLoading(true);
 
+    const historyForApi = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    const modelId = (Date.now() + 1).toString();
+    let acc = "";
+    let started = false;
+
+    // Prvá delta vytvorí bublinu odpovede a schová „Píše..."; ďalšie ju dopĺňajú.
+    const onDelta = (t: string) => {
+      acc += t;
+      if (!started) {
+        started = true;
+        setIsLoading(false);
+        setMessages((prev) => [...prev, { id: modelId, role: "model", content: acc }]);
+      } else {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === modelId ? { ...m, content: acc } : m))
+        );
+      }
+    };
+
+    const applyFinal = (text: string) => {
+      if (!started) {
+        started = true;
+        setMessages((prev) => [...prev, { id: modelId, role: "model", content: text }]);
+      } else {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === modelId ? { ...m, content: text } : m))
+        );
+      }
+    };
+
     try {
-      const historyForApi = messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-      const res = await sendChatMessage(userMsg, historyForApi, model);
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: "model",
-          content: res.response,
-        },
-      ]);
+      const result = await streamChatMessage(userMsg, historyForApi, model, onDelta);
+      // Stream nedal text (napr. len tool-call) → dobehni nestreamovaným volaním.
+      if (result.fallback || !started) {
+        const res = await sendChatMessage(userMsg, historyForApi, model);
+        applyFinal(res.response);
+      }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: "model",
-          content: "Prepáč, momentálne sa neviem spojiť so serverom. Skús to prosím neskôr.",
-        },
-      ]);
+      // Stream úplne zlyhal → skús nestreamovaný endpoint, až potom chybová hláška.
+      try {
+        const res = await sendChatMessage(userMsg, historyForApi, model);
+        applyFinal(res.response);
+      } catch {
+        applyFinal("Prepáč, momentálne sa neviem spojiť so serverom. Skús to prosím neskôr.");
+      }
     } finally {
       setIsLoading(false);
     }

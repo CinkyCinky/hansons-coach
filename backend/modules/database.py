@@ -1,4 +1,6 @@
 import os
+import time
+import threading
 import datetime
 from supabase import create_client, Client
 from cryptography.fernet import Fernet
@@ -12,6 +14,21 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     supabase = None
+
+# ── Krátke in-process cache pre auth/profil ───────────────────────────────────
+# verify_token aj get_user_profile sa volajú viackrát na KAŽDÝ request (auth gate +
+# get_client + samotný endpoint). Bez cache to je niekoľko Supabase okružných ciest
+# navyše na každé volanie. JWT je stabilný (~1 h platnosť), profil sa mení zriedka.
+_TOKEN_TTL_SEC = 5 * 60
+_PROFILE_TTL_SEC = 60
+_token_cache: Dict[str, Any] = {}          # token -> (user, timestamp)
+_profile_cache: Dict[str, Any] = {}        # user_id -> (profile, timestamp)
+_cache_lock = threading.Lock()
+
+
+def _invalidate_profile_cache(user_id: str) -> None:
+    with _cache_lock:
+        _profile_cache.pop(user_id, None)
 
 def encrypt_password(password: str) -> str:
     if not ENCRYPTION_KEY:
@@ -28,10 +45,16 @@ def decrypt_password(encrypted_password: str) -> str:
 def get_user_profile(user_id: str) -> Optional[Dict[str, Any]]:
     if not supabase:
         return None
+    now = time.time()
+    with _cache_lock:
+        hit = _profile_cache.get(user_id)
+        if hit and (now - hit[1]) < _PROFILE_TTL_SEC:
+            return hit[0]
     res = supabase.table('profiles').select('*').eq('id', user_id).execute()
-    if len(res.data) > 0:
-        return res.data[0]
-    return None
+    profile = res.data[0] if res.data else None
+    with _cache_lock:
+        _profile_cache[user_id] = (profile, time.time())
+    return profile
 
 def update_user_profile(user_id: str, data: Dict[str, Any]):
     if not supabase:
@@ -39,17 +62,34 @@ def update_user_profile(user_id: str, data: Dict[str, Any]):
     # We use upsert so it creates the profile if it doesn't exist
     data['id'] = user_id
     res = supabase.table('profiles').upsert(data).execute()
+    # Profil sa zmenil → zahoď cache, nech ďalšie čítanie vráti čerstvé dáta
+    _invalidate_profile_cache(user_id)
     return res.data
 
 def verify_token(token: str):
     """
-    Verifies the JWT token from the client by calling Supabase auth.getUser()
+    Verifies the JWT token from the client by calling Supabase auth.getUser().
+    Krátky cache (token -> user) šetrí Supabase auth volanie na každom requeste.
     """
     if not supabase:
         return None
+    now = time.time()
+    with _cache_lock:
+        hit = _token_cache.get(token)
+        if hit and (now - hit[1]) < _TOKEN_TTL_SEC:
+            return hit[0]
     try:
         res = supabase.auth.get_user(token)
-        return res.user
+        user = res.user
+        if user:
+            with _cache_lock:
+                _token_cache[token] = (user, time.time())
+                # Jednoduchá ochrana pred nekonečným rastom (dlho bežiaci proces)
+                if len(_token_cache) > 256:
+                    cutoff = time.time() - _TOKEN_TTL_SEC
+                    for k in [k for k, v in _token_cache.items() if v[1] < cutoff]:
+                        _token_cache.pop(k, None)
+        return user
     except Exception as e:
         print(f"Token verification error: {e}")
         return None

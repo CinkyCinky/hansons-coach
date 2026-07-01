@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
 import datetime
@@ -7,6 +8,8 @@ import json
 import logging
 import os
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from google import genai
 from google.genai import types
@@ -140,13 +143,65 @@ def _is_sos_title(title: str) -> bool:
     return any(k in t for k in ("tempo", "speed", "strength", "sila", "interval", "long", "dlh", "rýchlost", "rychlost"))
 
 
+# ── Krátke read-cache priamo na (per-user) Garmin klientovi ───────────────────
+# Klient sa cachuje v pamäti 10 min (auth.py), takže tieto memo-atribúty naň prežijú
+# celý „burst" (dashboard + advice + plán + report + chat) a dedupujú opakované
+# rovnaké Garmin volania. Krátky TTL = pri evening runnerovi ostávajú dáta živé.
+_ACT_TTL_SEC = 120     # aktivity (nový beh sa prejaví do ~2 min; Refresh button ich obíde)
+_SCHED_TTL_SEC = 300   # naplánované tréningy (menia sa zriedka)
+
+
+def _recent_activities(client, days: int, force: bool = False) -> list:
+    """get_recent_activities s krátkym cache. Ťahá jedno veľké okno (200 najnovších)
+    a krája z neho podľa `days` — jeden Garmin fetch obslúži všetky rôzne okná v burste."""
+    now = time.time()
+    hit = getattr(client, "_hz_acts", None)
+    if force or not (hit and (now - hit[1]) < _ACT_TTL_SEC):
+        data = fetcher.get_recent_activities(client, days=220) or []  # Garmin limit ~200 aktivít
+        try:
+            client._hz_acts = (data, now)
+        except Exception:
+            pass  # keby klient nedovolil atribút — degraduj na necachované správanie
+        hit = (data, now)
+    data = hit[0]
+    cutoff = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+    return [a for a in data if (a.get("startTimeLocal") or "")[:10] >= cutoff]
+
+
+def _cached_scheduled(client, y: int, m: int, force: bool = False):
+    """client.get_scheduled_workouts(y, m) s krátkym cache na (per-user) klientovi."""
+    cache = getattr(client, "_hz_sched", None)
+    if cache is None:
+        try:
+            cache = client._hz_sched = {}
+        except Exception:
+            return client.get_scheduled_workouts(y, m)  # necachovaný fallback
+    now = time.time()
+    hit = cache.get((y, m))
+    if not force and hit and (now - hit[1]) < _SCHED_TTL_SEC:
+        return hit[0]
+    data = client.get_scheduled_workouts(y, m)
+    cache[(y, m)] = (data, now)
+    return data
+
+
+def _bust_client_caches(client) -> None:
+    """Po zápise (upload/delete/reschedule) zahoď krátke read-cache — UI hneď vidí zmenu."""
+    for attr in ("_hz_sched", "_hz_acts"):
+        try:
+            if hasattr(client, attr):
+                delattr(client, attr)
+        except Exception:
+            pass
+
+
 def _get_scheduled_range(client, start: datetime.date, end: datetime.date) -> list:
     """Stiahne a zlúči naplánované tréningy naprieč viacerými mesiacmi (Garmin API vracia 1 mesiac)."""
     items, seen = [], set()
     y, m = start.year, start.month
     while (y, m) <= (end.year, end.month):
         try:
-            for it in _scheduled_items(client.get_scheduled_workouts(y, m)):
+            for it in _scheduled_items(_cached_scheduled(client, y, m)):
                 key = it.get("id") or (it.get("workoutId"), it.get("date"))
                 if key not in seen:
                     seen.add(key)
@@ -231,11 +286,36 @@ def _snapshot_fresh(fetched_at_str, ttl_min: int = SNAPSHOT_TTL_MIN) -> bool:
 
 
 def _build_wellness(client) -> dict:
-    """Pozbiera pomaly sa meniace wellness dáta (drahý fan-out na Garmin)."""
-    lthr_data = fetcher.get_lactate_threshold(client) or {}
-    athlete = fetcher.get_athlete_profile(client) or {}
-    stats = fetcher.get_stats_summary(client) or {}
-    base_max_hr = fetcher.get_max_hr_from_activities(client, days=90)
+    """Pozbiera pomaly sa meniace wellness dáta (drahý fan-out na Garmin).
+    Nezávislé volania bežia PARALELNE (ThreadPoolExecutor) — wall-time sa zráta z
+    ~15 sekvenčných volaní na najpomalšie jedno namiesto ich súčtu."""
+    jobs = {
+        "sleep":        lambda: fetcher.get_sleep_data(client, days=7) or [],
+        "hrv":          lambda: fetcher.get_hrv_data(client) or {},
+        "body_battery": lambda: fetcher.get_body_battery(client) or {},
+        "readiness":    lambda: fetcher.get_training_readiness(client) or {},
+        "stats":        lambda: fetcher.get_stats_summary(client) or {},
+        "training_load": lambda: fetcher.get_training_load(client) or {},
+        "lthr":         lambda: fetcher.get_lactate_threshold(client) or {},
+        "athlete":      lambda: fetcher.get_athlete_profile(client) or {},
+        "base_max_hr":  lambda: fetcher.get_max_hr_from_activities(client, days=90),
+    }
+    results: dict = {}
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {ex.submit(fn): key for key, fn in jobs.items()}
+        for fut in as_completed(futs):
+            key = futs[fut]
+            try:
+                results[key] = fut.result()
+            except Exception:
+                logger.exception("Wellness fetch '%s' zlyhal", key)
+                results[key] = [] if key == "sleep" else (None if key == "base_max_hr" else {})
+
+    stats = results.get("stats") or {}
+    lthr_data = results.get("lthr") or {}
+    athlete = results.get("athlete") or {}
+    base_max_hr = results.get("base_max_hr")
+    # hr_zones závisí od predošlých (LTHR/atléta/stats/maxHR), preto až po fan-oute.
     hr_zones = fetcher.resolve_hr_zones(
         client,
         lthr=lthr_data.get("lthr") or athlete.get("lthr"),
@@ -243,12 +323,12 @@ def _build_wellness(client) -> dict:
         resting_hr=stats.get("resting_hr"),
     )
     return {
-        "sleep": fetcher.get_sleep_data(client, days=7) or [],
-        "hrv": fetcher.get_hrv_data(client) or {},
-        "body_battery": fetcher.get_body_battery(client) or {},
-        "readiness": fetcher.get_training_readiness(client) or {},
+        "sleep": results.get("sleep") or [],
+        "hrv": results.get("hrv") or {},
+        "body_battery": results.get("body_battery") or {},
+        "readiness": results.get("readiness") or {},
         "stats": stats,
-        "training_load": fetcher.get_training_load(client) or {},
+        "training_load": results.get("training_load") or {},
         "lthr": lthr_data,
         "athlete": athlete,
         "hr_zones": hr_zones,
@@ -395,13 +475,13 @@ def get_dashboard_today(
         readiness = snap["readiness"]
         bb = snap["body_battery"]
         training_load = snap["training_load"]
-        activities = fetcher.get_recent_activities(client, days=7)  # čerstvé (odráža nové behy)
+        activities = _recent_activities(client, 7, force=refresh)  # krátky cache (Refresh ho obíde)
 
         # Dnešný naplánovaný tréning
         today_workout = None
         try:
             now = datetime.datetime.now()
-            items = _scheduled_items(client.get_scheduled_workouts(now.year, now.month))
+            items = _scheduled_items(_cached_scheduled(client, now.year, now.month, force=refresh))
             today_str = datetime.date.today().strftime("%Y-%m-%d")
             today_items = [
                 i for i in items
@@ -479,7 +559,7 @@ def _training_context_block(client) -> str:
     # Absolvované behy (date -> aktivita) za posledných 8 dní
     runs_by_date: dict = {}
     try:
-        for a in (fetcher.get_recent_activities(client, days=8) or []):
+        for a in (_recent_activities(client, 8) or []):
             if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types:
                 runs_by_date.setdefault((a.get("startTimeLocal") or "")[:10], a)
     except Exception:
@@ -733,7 +813,7 @@ def get_scheduled_plan(user_id: str = Depends(get_current_user), client=Depends(
             running_types = ("running", "track_running", "treadmill_running", "trail_running")
             # Absolvované behy od začiatku prípravy (nie pevných 40 dní)
             lookback = max(14, (today - start).days + 1)
-            recent_activities = fetcher.get_recent_activities(client, days=lookback) or []
+            recent_activities = _recent_activities(client, lookback) or []
             runs = [
                 a for a in recent_activities
                 if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
@@ -948,11 +1028,12 @@ def api_generate_plan(
     if not profile:
         raise HTTPException(status_code=404, detail="Profil nenájdený")
     try:
-        # client → AI dostane živé dáta (vek/váha/VO2max/LTHR/HR zóny) + plnú metodiku
-        plan_json = workout_generator.generate_weekly_plan(profile, req.constraints, client)
+        # Wellness snapshot (cache) → generátor NEmusí znova ťahať atléta/LTHR/zóny z Garminu
+        snap = _wellness_snapshot(client, user_id)
+        plan_json = workout_generator.generate_weekly_plan(profile, req.constraints, client, wellness=snap)
         # Meta pre "i" panel v UI: z čoho sú tempá počítané (transparentnosť/dôvera)
         try:
-            vo2 = (fetcher.get_athlete_profile(client) or {}).get("vo2max")
+            vo2 = (snap.get("athlete") or {}).get("vo2max")
             paces = hansons_knowledge.compute_training_paces(profile.get("target_time", ""), vo2)
             if paces:
                 plan_json["paces"] = {
@@ -1081,6 +1162,8 @@ def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_u
             if idx < len(built) - 1:
                 time.sleep(0.4)
 
+        if uploaded:
+            _bust_client_caches(client)  # plán sa zmenil → ďalšie čítanie nech je čerstvé
         status = "success" if uploaded and not failed else ("partial" if uploaded else "error")
         return {"status": status, "uploaded": uploaded, "failed": failed}
     except Exception as e:
@@ -1167,6 +1250,7 @@ def generate_daily_update(feeling: str = "", pain: str = "", pain_area: str = ""
         profile = get_user_profile(user_id) or {}
         # Stav dňa → dátovo-riadené zmäkčenie (nie len všeobecná inštrukcia)
         form_context = ""
+        snap = None
         try:
             snap = _wellness_snapshot(client, user_id)
             r, hrv, bb, tl = snap["readiness"], snap["hrv"], snap["body_battery"], snap["training_load"]
@@ -1199,7 +1283,7 @@ def generate_daily_update(feeling: str = "", pain: str = "", pain_area: str = ""
             form_context += ("\nSELF-REPORT: zverenec sa cíti unavený — zváž mierne zmäkčenie "
                              "(pomalší okraj tempa, menej opakovaní/kratší objem).")
 
-        proposal = workout_generator.update_next_workout(client, profile, form_context)
+        proposal = workout_generator.update_next_workout(client, profile, form_context, wellness=snap)
 
         # Deterministická poistka: pri OSTREJ bolesti vždy ľahký beh (nezávisle od LLM)
         if sharp_pain and proposal.get("status") == "success" and proposal.get("proposed_workout"):
@@ -1282,6 +1366,7 @@ def confirm_daily_update(req: WorkoutConfirmRequest, client=Depends(get_garmin_c
                             workout_title=new_name,
                             sos_kind=workout_generator.classify_workout_kind(new_name),
                             reason=new_w_data.get("description", ""))
+            _bust_client_caches(client)  # plán sa zmenil → ďalšie čítanie nech je čerstvé
             return {"status": "success", "message": "Tréning bol úspešne uložený do Garminu."}
         else:
             raise HTTPException(status_code=500, detail="Garmin nevrátil ID nového tréningu.")
@@ -1332,7 +1417,7 @@ def get_weekly_report(
         report_days = min(max(14, (today - start).days + 1), 84)
 
         snap = _wellness_snapshot(client, user_id, force=refresh)
-        activities = fetcher.get_recent_activities(client, days=report_days) or []
+        activities = _recent_activities(client, report_days, force=refresh) or []
         sleep_data = snap["sleep"]
         hrv_data = snap["hrv"]
         bb_data = snap["body_battery"]
@@ -1470,16 +1555,10 @@ def debug_hrv_raw(user_id: str = Depends(get_current_user), client=Depends(get_g
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
-@app.post("/api/chat")
-def chat_with_coach(
-    req: ChatRequest,
-    user_id: str = Depends(get_current_user),
-    client=Depends(get_garmin_client),
-):
-    """AI tréner s výberom modelu (flash/pro) a plným Garmin kontextom."""
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY nie je nastavený")
-
+def _prepare_chat(req: ChatRequest, user_id: str, client):
+    """Zostaví (model_name, contents, config, profile, memory_facts) pre AI trénera.
+    Zdieľané streamovaným aj nestreamovaným chat endpointom — celý drahý kontext
+    (Garmin dáta, metodika, nástroje) sa buduje len raz na jednom mieste."""
     profile = get_user_profile(user_id) or {}
     target_time = profile.get("target_time", "neuvedený")
     training_week = _calculate_training_week(profile)
@@ -1495,7 +1574,7 @@ def chat_with_coach(
     try:
         # Wellness dáta z denného cache (šetrí ~10 Garmin volaní na každú správu).
         snap = _wellness_snapshot(client, user_id)
-        activities = fetcher.get_recent_activities(client, days=14)  # čerstvé (odráža nové behy)
+        activities = _recent_activities(client, 14)  # krátky cache (Refresh ho obíde)
         sleep_data = snap["sleep"]
         hrv = snap["hrv"]
         bb = snap["body_battery"]
@@ -1680,7 +1759,7 @@ Najbližší tréning: {next_w_str}
                 target_date = date[:10]
 
             # Nájdi aktivitu na daný dátum
-            acts = fetcher.get_recent_activities(client, days=14) or []
+            acts = _recent_activities(client, 14) or []
             matching = [
                 a for a in acts
                 if (a.get("startTimeLocal") or "")[:10] == target_date
@@ -1855,6 +1934,7 @@ Najbližší tréning: {next_w_str}
                     pass
             # Naplánuj na nový dátum
             client.schedule_workout(workout_id, new_date)
+            _bust_client_caches(client)
             log_plan_change(user_id, "move", "chat", workout_date=new_date,
                             workout_title=title,
                             sos_kind=workout_generator.classify_workout_kind(title or ""),
@@ -1884,6 +1964,8 @@ Najbližší tréning: {next_w_str}
                                         workout_title=item.get("title"),
                                         sos_kind=workout_generator.classify_workout_kind(item.get("title") or ""),
                                         reason=reason)
+            if deleted:
+                _bust_client_caches(client)
             return f"Úspešne vymazané {deleted} tréning(ov) pre dátum {date}." if deleted > 0 else f"Na dátum {date} nebol nájdený žiadny tréning."
         except Exception as e:
             return f"Chyba pri mazaní: {str(e)}"
@@ -1908,6 +1990,7 @@ Najbližší tréning: {next_w_str}
         new_id = resp.get("workoutId")
         if new_id:
             client.schedule_workout(new_id, date)
+            _bust_client_caches(client)
         return new_id
 
     def _remove_workout_by_id(workout_id) -> bool:
@@ -1924,6 +2007,7 @@ Najbližší tréning: {next_w_str}
                     except Exception:
                         pass
             client.delete_workout(workout_id)
+            _bust_client_caches(client)
             return True
         except Exception:
             return False
@@ -2017,7 +2101,7 @@ Najbližší tréning: {next_w_str}
             if not planned:
                 return f"Za posledných {n} dní nie sú v minulosti žiadne naplánované tréningy."
             running_types = ("running", "track_running", "treadmill_running", "trail_running")
-            acts = fetcher.get_recent_activities(client, days=n + 1) or []
+            acts = _recent_activities(client, n + 1) or []
             done_dates = {
                 (a.get("startTimeLocal") or "")[:10] for a in acts
                 if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
@@ -2038,70 +2122,183 @@ Najbližší tréning: {next_w_str}
         except Exception as e:
             return f"Chyba pri kontrole plnenia: {str(e)}"
 
+    # Nástroje = obyčajné Python funkcie (definované vyššie). Nová google-genai SDK
+    # z nich sama vyrobí schému a cez automatické volanie funkcií (AFC) spustí celú
+    # slučku volaní, kým model nedá finálnu textovú odpoveď.
+    tools = [get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details,
+             reschedule_workout, delete_garmin_workout, create_and_schedule_workout,
+             modify_workout, update_training_goal, check_recent_compliance]
+
+    # História chatu → google-genai formát (role: user/model). Gemini musí začať
+    # userom, preto zahodíme úvodný pozdrav (model) na začiatku.
+    contents = []
+    for msg in req.history:
+        text = (msg.get("content") or "").strip()
+        if not text:
+            continue
+        role = "user" if msg.get("role") == "user" else "model"
+        contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
+    while contents and contents[0].role != "user":
+        contents.pop(0)
+    contents.append(types.Content(role="user", parts=[types.Part(text=req.message)]))
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        tools=tools,
+        # AFC slučka — dosť krokov na reorganizáciu celého týždňa (viac presunov)
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=10),
+    )
+    return model_name, contents, config, profile, memory_facts
+
+
+_CHAT_UNAVAILABLE = ("Prepáč, AI tréner je teraz chvíľu nedostupný 😴. Skús o chvíľu znova — "
+                     "medzitým sa drž svojho naplánovaného tréningu.")
+_CHAT_EMPTY = "Prepáč, túto požiadavku som teraz nezvládol spracovať. Skús ju preformulovať. 🏃"
+
+
+def _persist_chat_memory(user_id: str, profile: dict, memory_facts: list, response_text: str) -> str:
+    """Vytiahne <MEMORY>…</MEMORY> tag z odpovede (ak je), uloží nový fakt (s dedupom)
+    a vráti odpoveď bez tagu. Zdieľané streamom aj nestreamovanou vetvou."""
+    import re
+    match = re.search(r'<MEMORY>(.*?)</MEMORY>', response_text, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return response_text
+    new_fact = match.group(1).strip()
+    existing = (
+        " ".join((f.get("content") or "") for f in memory_facts).lower()
+        + " " + (profile.get("ai_context") or "").lower()
+    )
+    if new_fact and new_fact.lower() not in existing:
+        add_memory_fact(user_id, new_fact, "note")
+    return re.sub(r'<MEMORY>.*?</MEMORY>', '', response_text, flags=re.IGNORECASE | re.DOTALL).strip()
+
+
+@app.post("/api/chat")
+def chat_with_coach(
+    req: ChatRequest,
+    user_id: str = Depends(get_current_user),
+    client=Depends(get_garmin_client),
+):
+    """AI tréner (nestreamovaný) — fallback pre streamovaný endpoint."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY nie je nastavený")
     try:
-        # Nástroje = obyčajné Python funkcie (definované vyššie). Nová google-genai SDK
-        # z nich sama vyrobí schému a cez automatické volanie funkcií (AFC) spustí celú
-        # slučku volaní, kým model nedá finálnu textovú odpoveď.
-        tools = [get_hr_zones, get_activity_laps, list_garmin_workouts, get_workout_details,
-                 reschedule_workout, delete_garmin_workout, create_and_schedule_workout,
-                 modify_workout, update_training_goal, check_recent_compliance]
-
-        # História chatu → google-genai formát (role: user/model). Gemini musí začať
-        # userom, preto zahodíme úvodný pozdrav (model) na začiatku.
-        contents = []
-        for msg in req.history:
-            text = (msg.get("content") or "").strip()
-            if not text:
-                continue
-            role = "user" if msg.get("role") == "user" else "model"
-            contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
-        while contents and contents[0].role != "user":
-            contents.pop(0)
-        contents.append(types.Content(role="user", parts=[types.Part(text=req.message)]))
-
-        config = types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            tools=tools,
-            # AFC slučka — dosť krokov na reorganizáciu celého týždňa (viac presunov)
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=10),
-        )
+        model_name, contents, config, profile, memory_facts = _prepare_chat(req, user_id, client)
         try:
             response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
+                model=model_name, contents=contents, config=config,
             )
             response_text = (response.text or "").strip()
         except Exception:
             # Graceful fallback (200, nie 500), keď Gemini zlyhá/limit — frontend ukáže správu.
             logger.exception("Gemini chat zlyhal")
-            return {
-                "response": "Prepáč, AI tréner je teraz chvíľu nedostupný 😴. Skús o chvíľu znova — "
-                            "medzitým sa drž svojho naplánovaného tréningu.",
-                "model_used": model_name,
-            }
-
+            return {"response": _CHAT_UNAVAILABLE, "model_used": model_name}
         if not response_text:
-            response_text = "Prepáč, túto požiadavku som teraz nezvládol spracovať. Skús ju preformulovať. 🏃"
-        
-        # Spracovanie pamäte — nové fakty ukladáme štruktúrovane (tabuľka athlete_memory)
-        import re
-        match = re.search(r'<MEMORY>(.*?)</MEMORY>', response_text, re.IGNORECASE | re.DOTALL)
-        if match:
-            new_fact = match.group(1).strip()
-            # deduplikácia proti existujúcim faktom aj starým voľným poznámkam
-            existing = (
-                " ".join((f.get("content") or "") for f in memory_facts).lower()
-                + " " + (profile.get("ai_context") or "").lower()
-            )
-            if new_fact and new_fact.lower() not in existing:
-                add_memory_fact(user_id, new_fact, "note")
-            # Odstránenie tagu z odpovede
-            response_text = re.sub(r'<MEMORY>.*?</MEMORY>', '', response_text, flags=re.IGNORECASE | re.DOTALL).strip()
-            
+            response_text = _CHAT_EMPTY
+        response_text = _persist_chat_memory(user_id, profile, memory_facts, response_text)
         return {"response": response_text, "model_used": model_name}
     except Exception as e:
         raise _server_error(e, "Tréner teraz nie je dostupný. Skús to o chvíľu.")
+
+
+class _MemoryTagStripper:
+    """Streamovací filter: potlačí VEDÚCI <MEMORY>…</MEMORY> blok (tréner ho dáva na
+    začiatok odpovede), aby sa v UI nezobrazil. Ostatný text prepúšťa priebežne."""
+    _TAG_OPEN = "<memory>"
+    _TAG_CLOSE = "</memory>"
+
+    def __init__(self):
+        self._buf = ""
+        self._passthrough = False
+
+    def feed(self, text: str) -> str:
+        if self._passthrough:
+            return text
+        self._buf += text
+        stripped = self._buf.lstrip()
+        low = stripped.lower()
+        if low.startswith(self._TAG_OPEN):
+            end = low.find(self._TAG_CLOSE)
+            if end == -1:
+                return ""  # ešte čakáme na uzavretie tagu
+            after = stripped[end + len(self._TAG_CLOSE):].lstrip()
+            self._passthrough = True
+            self._buf = ""
+            return after
+        if self._TAG_OPEN.startswith(low) and len(self._buf) < 2000:
+            return ""  # môže to byť ešte len začiatok "<memory>" (alebo zatiaľ len medzery)
+        # nie je to memory tag → prepúšťaj celý buffer aj ďalšie chunky
+        self._passthrough = True
+        out = self._buf
+        self._buf = ""
+        return out
+
+    def flush(self) -> str:
+        out = self._buf
+        self._buf = ""
+        self._passthrough = True
+        return out
+
+
+def _sse(payload: dict) -> str:
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
+@app.post("/api/chat/stream")
+def chat_with_coach_stream(
+    req: ChatRequest,
+    user_id: str = Depends(get_current_user),
+    client=Depends(get_garmin_client),
+):
+    """Streamovaný AI tréner (SSE) — zverenec vidí odpoveď hneď, namiesto čakania na
+    celý výstup. Nástroje (AFC) fungujú rovnako. `fallback:true` → frontend dobehne cez /api/chat."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY nie je nastavený")
+
+    model_name, contents, config, profile, memory_facts = _prepare_chat(req, user_id, client)
+
+    def generate():
+        stripper = _MemoryTagStripper()
+        raw_parts: list = []
+        got_text = False
+        try:
+            stream = gemini_client.models.generate_content_stream(
+                model=model_name, contents=contents, config=config,
+            )
+            for chunk in stream:
+                piece = getattr(chunk, "text", None)
+                if not piece:
+                    continue
+                got_text = True
+                raw_parts.append(piece)
+                visible = stripper.feed(piece)
+                if visible:
+                    yield _sse({"t": visible})
+            tail = stripper.flush()
+            if tail:
+                yield _sse({"t": tail})
+        except Exception:
+            logger.exception("Gemini stream zlyhal")
+            yield _sse({"done": True, "model_used": model_name, "fallback": not got_text})
+            return
+
+        full = "".join(raw_parts).strip()
+        if full:
+            try:
+                _persist_chat_memory(user_id, profile, memory_facts, full)
+            except Exception:
+                logger.exception("Uloženie pamäte zo streamu zlyhalo")
+        yield _sse({"done": True, "model_used": model_name, "fallback": not got_text})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # vypni buffering na proxy (Render) — delty nech tečú hneď
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Debug ─────────────────────────────────────────────────────────────────────

@@ -165,16 +165,71 @@ export async function deleteMemoryFact(id: string) {
   return fetchWithAuth(`/api/memory/${id}`, { method: 'DELETE' });
 }
 
+function localTimeStr(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
 export async function sendChatMessage(
   message: string,
   history: any[] = [],
   model: 'flash' | 'pro' = 'flash'
 ) {
-  const now = new Date();
-  const local_time = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  
   return fetchWithAuth('/api/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, history, model, local_time }),
+    body: JSON.stringify({ message, history, model, local_time: localTimeStr() }),
   });
+}
+
+// Streamovaný chat (SSE). onDelta dostáva postupné časti odpovede; vráti {model_used, fallback}.
+// fallback=true znamená, že stream nedal text (napr. len tool-call) → volajúci má dobehnúť
+// cez nestreamovaný sendChatMessage.
+export async function streamChatMessage(
+  message: string,
+  history: any[],
+  model: 'flash' | 'pro',
+  onDelta: (text: string) => void
+): Promise<{ model_used?: string; fallback?: boolean }> {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+
+  const res = await fetch(`${API_URL}/api/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    },
+    body: JSON.stringify({ message, history, model, local_time: localTimeStr() }),
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error('Streamovanie zlyhalo');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: { model_used?: string; fallback?: boolean } = {};
+
+  // SSE rámce sú oddelené prázdnym riadkom ("\n\n")
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      const jsonStr = dataLine.slice(5).trim();
+      if (!jsonStr) continue;
+      try {
+        const evt = JSON.parse(jsonStr);
+        if (evt.t) onDelta(evt.t as string);
+        if (evt.done) result = { model_used: evt.model_used, fallback: evt.fallback };
+      } catch { /* ignoruj nekompletný/nevalidný rámec */ }
+    }
+  }
+  return result;
 }

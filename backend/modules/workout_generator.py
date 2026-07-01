@@ -21,8 +21,10 @@ _COND_DISTANCE_ID = 3
 _COND_ITERATIONS_ID = 7
 
 
-# Generovanie plánov a tréningov beží na najsilnejšom modeli (Gemini 3.1 Pro).
-PLAN_MODEL = "gemini-3.1-pro-preview"
+# Generovanie plánov a tréningov beží štandardne na najsilnejšom modeli (Gemini 3.1 Pro).
+# Cez ENV GEMINI_MODEL_PLAN sa dá prepnúť na rýchlejší (napr. gemini-3.5-flash) bez zásahu
+# do kódu — Pro preview je najpomalšia časť generovania; Flash je citeľne svižnejší.
+PLAN_MODEL = os.getenv("GEMINI_MODEL_PLAN", "gemini-3.1-pro-preview")
 _gemini_client: Optional[genai.Client] = None
 
 
@@ -94,9 +96,34 @@ def clean_workout_description(text: Optional[str]) -> str:
     return s
 
 
-def _gather_athlete_context(client, profile: dict) -> str:
+def _athlete_context_from_wellness(profile: dict, wellness: dict) -> str:
+    """Zostaví ten istý AI kontext ako _gather_athlete_context, ale z už načítaného
+    (cachnutého) wellness snapshotu — BEZ ďalších Garmin volaní. Šetrí ~5 sekvenčných
+    volaní pred každým generovaním plánu/tréningu."""
+    blocks = [hansons_knowledge.HANSONS_METHODOLOGY]
+    athlete = wellness.get("athlete") or {}
+    goal = profile.get("target_time")
+    if goal:
+        blocks.append(hansons_knowledge.paces_block(goal, athlete.get("vo2max")))
+    blocks.append(hansons_knowledge.athlete_block(athlete))
+    lthr_data = wellness.get("lthr") or {}
+    zones = wellness.get("hr_zones")
+    blocks.append(hansons_knowledge.hr_zones_block(
+        zones, lthr_data.get("lthr_pace") or athlete.get("lthr_pace")
+    ))
+    return "".join(b for b in blocks if b)
+
+
+def _gather_athlete_context(client, profile: dict, wellness: Optional[dict] = None) -> str:
     """Pozbiera živé dáta z Garminu (osobný profil, LTHR, HR zóny) + vypočítané tempá
-    a vráti hotový textový blok pre AI prompt. Toto robí trénera 'múdrym'."""
+    a vráti hotový textový blok pre AI prompt. Toto robí trénera 'múdrym'.
+    Ak je dodaný `wellness` (cachnutý snapshot), použije ho namiesto živých volaní."""
+    if wellness:
+        try:
+            return _athlete_context_from_wellness(profile, wellness)
+        except Exception:
+            pass  # nekompletný snapshot → degraduj na živé dáta
+
     blocks = [hansons_knowledge.HANSONS_METHODOLOGY]
 
     # Atléta načítaj raz vopred — VO2max potrebujeme pre Speed tempá (aktuálna 5K forma)
@@ -411,12 +438,12 @@ def apply_plan_guardrails(plan: dict, easy_fast: Optional[str] = None,
     return plan
 
 
-def generate_weekly_plan(profile: dict, constraints: str, client=None) -> dict:
+def generate_weekly_plan(profile: dict, constraints: str, client=None, wellness: Optional[dict] = None) -> dict:
     """Vygeneruje plán pre ZVYŠOK aktuálneho týždňa (od dnes po nedeľu) podľa Hanson metódy."""
     target_time = profile.get("target_time", "neuvedený")
     ai_context = profile.get("ai_context", "")
     variant = profile.get("plan_variant", "advanced")
-    athlete_context = _gather_athlete_context(client, profile)
+    athlete_context = _gather_athlete_context(client, profile, wellness)
     week_num = hansons_knowledge.current_training_week(profile)
 
     today = datetime.date.today()
@@ -505,12 +532,12 @@ HR ako cieľ nepoužívaj. Vraciaš LEN platný JSON."""
     return apply_plan_guardrails(plan, _p.get("easy_min"), _p.get("easy_max"), variant)
 
 def generate_single_workout(profile: dict, description: str, client=None,
-                            for_date: Optional[str] = None) -> dict:
+                            for_date: Optional[str] = None, wellness: Optional[dict] = None) -> dict:
     """Vygeneruje JEDEN tréning podľa požiadavky — s plnou Hanson metodikou + živými
     Garmin dátami (zóny, LTHR, tempá). Všetko TEMPOM (pace); intervaly ako repeat-blok.
     Vráti dict: {workout_name, description, steps:[...]}. Zdieľa create aj modify."""
     target_time = profile.get("target_time", "neuvedený")
-    athlete_context = _gather_athlete_context(client, profile)
+    athlete_context = _gather_athlete_context(client, profile, wellness)
     when = f" na dátum {for_date}" if for_date else ""
 
     prompt = f"""Si špičkový tréner Hanson Half-Marathon Method. Cieľový čas: {target_time}.
@@ -646,7 +673,8 @@ def convert_to_garmin_workouts(ai_plan: dict) -> List[tuple[datetime.date, Runni
 
     return garmin_workouts
 
-def update_next_workout(client, profile: dict, form_context: str = "") -> dict:
+def update_next_workout(client, profile: dict, form_context: str = "",
+                        wellness: Optional[dict] = None) -> dict:
     """Prepočíta najbližší tréning podľa aktuálnej formy. form_context = stav dňa
     (pripravenosť/HRV/Body Battery/A:C záťaž) z dashboardu — aby zmäkčenie bolo riadené
     reálnymi dátami, nie len všeobecnou inštrukciou."""
@@ -688,7 +716,7 @@ def update_next_workout(client, profile: dict, form_context: str = "") -> dict:
     old_workout_id = old_workout.get("workoutId")
     
     ai_context = profile.get("ai_context", "")
-    athlete_context = _gather_athlete_context(client, profile)
+    athlete_context = _gather_athlete_context(client, profile, wellness)
 
     system_prompt = f"""Si špičkový tréner Hanson Half-Marathon Method. Prepočítaj JEDEN naplánovaný
 tréning tak, aby presne sedel na AKTUÁLNU fyzičku zverenca (LTHR, HR zóny, VO2max, tempá) a
