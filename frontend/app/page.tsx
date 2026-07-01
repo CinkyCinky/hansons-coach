@@ -188,7 +188,14 @@ export default function Dashboard() {
 
   // Pretekový týždeň + výživa (kontextové karty)
   const weekNum = typeof d.training_week === "number" ? d.training_week : null;
-  const isRaceWeek = weekNum != null && weekNum >= 18;
+  // Po dátume pretekov appka inak „zamrzne" v Taperi (týždeň sa clampuje na 18).
+  const raceIsPast = (() => {
+    if (!profile?.race_date) return false;
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const r = new Date(profile.race_date + "T00:00:00");
+    return !isNaN(r.getTime()) && r < t;
+  })();
+  const isRaceWeek = weekNum != null && weekNum >= 18 && !raceIsPast;
   const splits = isRaceWeek ? goalSplits(profile?.target_time) : null;
   // Odpočítavanie do preteku (počas prípravy; v pretekovom týždni to pokrýva veľká karta)
   const countdown = !isRaceWeek ? raceCountdown(profile?.race_date) : null;
@@ -274,6 +281,30 @@ export default function Dashboard() {
             </p>
             <p className="text-[11px] text-gray-500 capitalize mt-0.5">{countdown.dateLabel}</p>
           </div>
+        </motion.div>
+      )}
+
+      {/* Po pretekoch — gratulácia + výzva nastaviť ďalší cieľ */}
+      {raceIsPast && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4"
+        >
+          <h3 className="text-sm font-bold text-emerald-300 uppercase tracking-wider mb-1 flex items-center gap-2">
+            <Trophy size={16} /> Preteky máš za sebou — gratulujeme! 🎉
+          </h3>
+          <p className="text-xs text-gray-300 leading-relaxed mb-3">
+            Skvelá práca. Dopraj si pár dní aktívnej regenerácie (ľahké behy, spánok, jedlo).
+            Keď budeš mať ďalší cieľ, nastav si <b className="text-gray-100">nový dátum pretekov</b> a
+            cieľový čas — appka ti zostaví novú 18-týždňovú prípravu.
+          </p>
+          <Link
+            href="/settings"
+            className="inline-flex items-center gap-1 text-xs font-bold text-emerald-300 underline underline-offset-2"
+          >
+            Nastaviť ďalšie preteky <ChevronRight size={14} />
+          </Link>
         </motion.div>
       )}
 
@@ -727,6 +758,7 @@ export default function Dashboard() {
             <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms), ukazovateľ regenerácie a stresu. Vyššie a stabilné hodnoty = oddýchnuté telo.</p>
             <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100). Ráno vysoké = si nabitý, nízke = treba oddych.</p>
             <p><b className="text-amber-300">Pokojový tep</b> — tep v pokoji (bpm). Nižší býva znakom lepšej kondície.</p>
+            <p><b className="text-amber-300">Stres</b> — Garmin denný priemer stresu (0–100, z HRV). Do 25 nízky, 26–50 stredný, nad 50 vysoký. Dlhodobo vysoký = telo sa nestíha zotavovať.</p>
             <p><b className="text-sky-300">Pripravenosť</b> — ako je telo pripravené na záťaž (0–100). Nízke = zvoľ ľahší tréning.</p>
           </div>
         )}
@@ -813,6 +845,15 @@ export default function Dashboard() {
               {stats.resting_hr ? `${stats.resting_hr}` : "--"}
             </p>
             <p className="text-xs text-gray-400 mt-1">bpm</p>
+            {stats.avg_stress != null && (
+              <p className="text-[11px] text-gray-500 mt-1.5">
+                Stres{" "}
+                <span className={`font-bold ${stats.avg_stress < 26 ? "text-emerald-400" : stats.avg_stress < 51 ? "text-amber-400" : "text-rose-400"}`}>
+                  {stats.avg_stress}
+                </span>
+                <span className="text-gray-600">/100</span>
+              </p>
+            )}
           </motion.div>
         </div>
 

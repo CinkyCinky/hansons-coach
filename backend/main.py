@@ -426,6 +426,7 @@ def get_dashboard_today(
         return {
             "date": today,
             "training_week": training_week,
+            "race_date": profile.get("race_date"),
             "plan_variant": profile.get("plan_variant", "advanced"),
             "display_name": profile.get("display_name"),
             "garmin_email": profile.get("garmin_email"),

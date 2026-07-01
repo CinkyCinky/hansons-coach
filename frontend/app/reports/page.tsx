@@ -208,7 +208,7 @@ export default function Reports() {
           <p><b className="text-amber-300">Týždenný objem</b> — koľko km nabeháš za týždeň. Pri Hansonovi je postupný nárast objemu najdôležitejší (princíp kumulovanej únavy).</p>
           <p><b className="text-primary">Tempo trend</b> — priemerné tempo behov (min/km, nižšie = rýchlejšie). Zelená prerušovaná čiara je tvoje cieľové polmaratónske tempo.</p>
           <p><b className="text-emerald-300">Kadencia</b> — počet krokov za minútu (spm).</p>
-          <p><b className="text-indigo-300">Spánok</b> — priemerná dĺžka spánku za noc.</p>
+          <p><b className="text-indigo-300">Spánok</b> — priemerná dĺžka spánku za noc + podiel hlbokého a REM spánku (regeneračné fázy; hlboký ~13–23 %, REM ~20–25 % býva zdravé).</p>
           <p><b className="text-rose-300">HRV</b> — variabilita srdcového tepu (ms), ukazovateľ regenerácie. „Priem. noc" je priemer za poslednú noc, „Týž. priemer" za 7 dní. Vyššie a stabilné hodnoty = oddýchnuté telo.</p>
           <p><b className="text-emerald-300">Body Battery</b> — odhad zásob energie tela (0–100). Dôležité na zvládanie únavy počas tvrdého bloku.</p>
         </div>
@@ -294,7 +294,16 @@ export default function Reports() {
               <h3 className="text-2xl font-bold">
                 {data.avg_sleep_hours ? `${data.avg_sleep_hours}h` : "--"}
               </h3>
-              <p className="text-xs text-gray-500 mt-1">posledných 7 dní</p>
+              {(() => {
+                const nights = (data?.sleep ?? []).filter((s: any) => s.deep_pct != null || s.rem_pct != null);
+                if (!nights.length) return <p className="text-xs text-gray-500 mt-1">posledných 7 dní</p>;
+                const avg = (k: string) => Math.round(nights.reduce((a: number, s: any) => a + (s[k] ?? 0), 0) / nights.length);
+                return (
+                  <p className="text-xs text-gray-500 mt-1">
+                    hlboký <span className="text-indigo-300 font-bold">{avg("deep_pct")}%</span> · REM <span className="text-indigo-300 font-bold">{avg("rem_pct")}%</span>
+                  </p>
+                );
+              })()}
             </div>
             <div className="glass-card p-4">
               <p className="text-xs text-gray-400 mb-1 flex items-center gap-1">

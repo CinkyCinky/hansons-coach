@@ -389,6 +389,14 @@ export default function Plan() {
 
   // Aktuálny týždeň z backendu (dashboard)
   const trainingWeek = store.dashboard?.training_week ?? null;
+  // Po dátume pretekov sa týždeň clampuje na 18 — rozlíš „taper" od „už po pretekoch".
+  const raceIsPast = (() => {
+    const rd = store.dashboard?.race_date;
+    if (!rd) return false;
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const r = new Date(rd + "T00:00:00");
+    return !isNaN(r.getTime()) && r < t;
+  })();
 
   // Výpočet rozpätia zobrazeného týždňa
   const weekRange = useMemo(() => {
@@ -693,8 +701,22 @@ export default function Plan() {
       {/* Denník zmien plánu (kto/odkiaľ/prečo menil tréningy) */}
       <PlanChangeLog />
 
+      {/* Po pretekoch — gratulácia + odkaz na nastavenie ďalšieho cieľa */}
+      {raceIsPast && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
+          <h3 className="text-sm font-bold text-emerald-300 flex items-center gap-2 mb-1">
+            <Sparkles size={16} /> Preteky máš za sebou — gratulujeme! 🎉
+          </h3>
+          <p className="text-xs text-gray-300 leading-relaxed">
+            Po pretekoch si daj pár dní aktívnej regenerácie. Keď budeš mať ďalší cieľ, nastav si
+            nový dátum pretekov a cieľový čas — pripravíme novú 18-týždňovú prípravu.{" "}
+            <Link href="/settings" className="text-emerald-300 underline underline-offset-2">Nastaviť ďalšie preteky</Link>.
+          </p>
+        </div>
+      )}
+
       {/* Taper / pretekový týždeň */}
-      {trainingWeek != null && trainingWeek >= 18 && (
+      {trainingWeek != null && trainingWeek >= 18 && !raceIsPast && (
         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
           <h3 className="text-sm font-bold text-emerald-300 flex items-center gap-2 mb-1">
             <Sparkles size={16} /> Pretekový týždeň — taper
