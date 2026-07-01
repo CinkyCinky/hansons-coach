@@ -2150,7 +2150,7 @@ Najbližší tréning: {next_w_str}
         # AFC slučka — dosť krokov na reorganizáciu celého týždňa (viac presunov)
         automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=10),
     )
-    return model_name, contents, config, profile, memory_facts
+    return model_name, contents, config, tools, system_instruction, profile, memory_facts
 
 
 _CHAT_UNAVAILABLE = ("Prepáč, AI tréner je teraz chvíľu nedostupný 😴. Skús o chvíľu znova — "
@@ -2185,7 +2185,7 @@ def chat_with_coach(
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY nie je nastavený")
     try:
-        model_name, contents, config, profile, memory_facts = _prepare_chat(req, user_id, client)
+        model_name, contents, config, _tools, _sys, profile, memory_facts = _prepare_chat(req, user_id, client)
         try:
             response = gemini_client.models.generate_content(
                 model=model_name, contents=contents, config=config,
@@ -2252,39 +2252,73 @@ def chat_with_coach_stream(
     user_id: str = Depends(get_current_user),
     client=Depends(get_garmin_client),
 ):
-    """Streamovaný AI tréner (SSE) — zverenec vidí odpoveď hneď, namiesto čakania na
-    celý výstup. Nástroje (AFC) fungujú rovnako. `fallback:true` → frontend dobehne cez /api/chat."""
+    """Streamovaný AI tréner (SSE) — zverenec vidí odpoveď hneď. Používa MANUÁLNY tool-loop:
+    function calls spracujeme sami a finálnu odpoveď streamujeme. (SDK-ové automatické volanie
+    funkcií pri streame finálny text nevráti a Gemini 3 vyžaduje zachovať thought_signature —
+    preto pôvodné model parts posielame späť 1:1.) `fallback:true` → frontend dobehne cez /api/chat."""
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY nie je nastavený")
 
-    model_name, contents, config, profile, memory_facts = _prepare_chat(req, user_id, client)
+    model_name, contents, _config, tools, system_instruction, profile, memory_facts = _prepare_chat(
+        req, user_id, client
+    )
+    tools_by_name = {getattr(fn, "__name__", ""): fn for fn in tools}
+    # AFC vypnuté — nástroje voláme manuálne, aby sme vedeli streamovať aj finálny text.
+    stream_cfg = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        tools=tools,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
 
     def generate():
         stripper = _MemoryTagStripper()
-        raw_parts: list = []
+        raw_text: list = []
         got_text = False
+        convo = list(contents)
         try:
-            stream = gemini_client.models.generate_content_stream(
-                model=model_name, contents=contents, config=config,
-            )
-            for chunk in stream:
-                piece = getattr(chunk, "text", None)
-                if not piece:
-                    continue
-                got_text = True
-                raw_parts.append(piece)
-                visible = stripper.feed(piece)
-                if visible:
-                    yield _sse({"t": visible})
+            for _round in range(12):  # strop tool-kôl (ako AFC maximum_remote_calls)
+                fcalls = []
+                model_parts = []  # PÔVODNÉ parts vrátane thought_signature (Gemini 3 to vyžaduje)
+                for chunk in gemini_client.models.generate_content_stream(
+                    model=model_name, contents=convo, config=stream_cfg,
+                ):
+                    cand = (chunk.candidates or [None])[0]
+                    if not cand or not cand.content or not cand.content.parts:
+                        continue
+                    for p in cand.content.parts:
+                        model_parts.append(p)
+                        if getattr(p, "text", None):
+                            got_text = True
+                            raw_text.append(p.text)
+                            visible = stripper.feed(p.text)
+                            if visible:
+                                yield _sse({"t": visible})
+                        if getattr(p, "function_call", None):
+                            fcalls.append(p.function_call)
+                if not fcalls:
+                    break  # žiadne nástroje v tomto kole → odpoveď je hotová
+                # Zapíš modelov turn (so signatures) a spusti vyžiadané nástroje
+                convo.append(types.Content(role="model", parts=model_parts))
+                tool_parts = []
+                for fc in fcalls:
+                    fn = tools_by_name.get(fc.name)
+                    try:
+                        result = fn(**dict(fc.args or {})) if fn else f"Neznámy nástroj: {fc.name}"
+                    except Exception as e:
+                        logger.exception("Nástroj %s zlyhal", fc.name)
+                        result = f"Chyba nástroja: {type(e).__name__}: {e}"
+                    tool_parts.append(types.Part(function_response=types.FunctionResponse(
+                        name=fc.name, response={"result": result})))
+                convo.append(types.Content(role="user", parts=tool_parts))
             tail = stripper.flush()
             if tail:
                 yield _sse({"t": tail})
         except Exception:
-            logger.exception("Gemini stream zlyhal")
+            logger.exception("Gemini stream (manual tool-loop) zlyhal")
             yield _sse({"done": True, "model_used": model_name, "fallback": not got_text})
             return
 
-        full = "".join(raw_parts).strip()
+        full = "".join(raw_text).strip()
         if full:
             try:
                 _persist_chat_memory(user_id, profile, memory_facts, full)
