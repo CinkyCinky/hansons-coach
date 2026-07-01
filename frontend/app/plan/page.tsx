@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
   Calendar, CheckCircle2, Circle, Clock, Loader2,
@@ -101,28 +101,48 @@ function phaseFallback(phase?: string): string {
 }
 
 // Tapnuteľná vysvetlivka „i" — funguje na dotyku (mobil), kde title= tooltip nie.
+// FIXNÉ pozicovanie so zarovnaním do viewportu: popover sa NIKDY nevytlačí mimo
+// obrazovku (ani pri kartách pri okraji) a zároveň ho neoreže overflow-hidden panel.
 // stopPropagation, aby tap nezbalil rozkliknutý tréning; tap mimo popover ho zavrie.
 function InfoTip({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (pos) { setPos(null); return; }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const margin = 8;
+    const width = Math.min(260, window.innerWidth - 2 * margin);
+    const left = Math.min(
+      Math.max(margin, r.left + r.width / 2 - width / 2),
+      window.innerWidth - width - margin,
+    );
+    setPos({ top: r.bottom + 6, left, width });
+  };
+
   return (
-    <span className="relative inline-flex align-middle">
+    <span className="inline-flex align-middle" onClick={(e) => e.stopPropagation()}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        onClick={toggle}
         className="text-gray-500 hover:text-gray-200 transition-colors"
         aria-label="Vysvetlenie"
       >
         <Info size={13} />
       </button>
-      {open && (
+      {pos && (
         <>
           <span
             className="fixed inset-0 z-40"
-            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+            onClick={(e) => { e.stopPropagation(); setPos(null); }}
           />
           <span
             onClick={(e) => e.stopPropagation()}
-            className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1.5 w-56 max-w-[72vw] bg-[#1a1a24] border border-white/15 rounded-lg p-2.5 text-[11px] text-gray-300 leading-snug shadow-xl font-normal normal-case tracking-normal whitespace-normal"
+            style={{ top: pos.top, left: pos.left, width: pos.width }}
+            className="fixed z-50 bg-[#1a1a24] border border-white/15 rounded-lg p-2.5 text-[11px] text-gray-300 leading-snug shadow-xl font-normal normal-case tracking-normal whitespace-normal"
           >
             {text}
           </span>
@@ -920,13 +940,13 @@ export default function Plan() {
                               )}
                               {details.stats?.avg_cadence && (
                                 <div className="bg-black/20 p-2 rounded-lg">
-                                  <p className="text-xs text-gray-500">Kadencia</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Kadencia <InfoTip text="Počet krokov za minútu (spm). Vyššia kadencia (~170–180) býva efektívnejšia a šetrnejšia ku kĺbom než dlhé doskakovanie (prešľapovanie)." /></p>
                                   <p className="font-bold text-emerald-400">{details.stats.avg_cadence} spm</p>
                                 </div>
                               )}
                               {(details.stats?.total_ascent != null || details.stats?.total_descent != null) && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Nastúpané a naklesané metre počas behu.">
-                                  <p className="text-xs text-gray-500">Prevýšenie</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Prevýšenie <InfoTip text="Nastúpané (+) a naklesané (−) metre počas behu. Viac stúpania pri rovnakom tempe = väčšia námaha — preto sa oplatí pozerať aj na GAP (tempo na rovine)." /></p>
                                   <p className="font-bold text-sky-400">
                                     +{Math.round(details.stats.total_ascent ?? 0)} / -{Math.round(details.stats.total_descent ?? 0)} m
                                   </p>
@@ -940,7 +960,7 @@ export default function Plan() {
                               )}
                               {(details.stats?.aerobic_te ?? details.stats?.training_effect) != null && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Aeróbny tréningový efekt (0–5): ako tréning rozvinul tvoju vytrvalosť a aeróbnu kondíciu.">
-                                  <p className="text-xs text-gray-500">Aeróbny efekt</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Aeróbny efekt <InfoTip text="Garmin tréningový efekt (0–5): koľko beh rozvinul tvoju vytrvalosť a aeróbnu kondíciu. 1–2 udržiavanie, 3–4 rozvoj, 5 veľmi náročné." /></p>
                                   <p className="font-bold text-purple-400">
                                     {(details.stats.aerobic_te ?? details.stats.training_effect).toFixed(1)}
                                     <span className="text-xs text-gray-500 font-normal"> / 5</span>
@@ -949,7 +969,7 @@ export default function Plan() {
                               )}
                               {details.stats?.anaerobic_te != null && details.stats.anaerobic_te > 0 && (
                                 <div className="bg-black/20 p-2 rounded-lg" title="Anaeróbny tréningový efekt (0–5): ako tréning rozvinul tvoju rýchlosť a výkon (krátke intenzívne úseky nad prahom).">
-                                  <p className="text-xs text-gray-500">Anaeróbny efekt</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Anaeróbny efekt <InfoTip text="Garmin tréningový efekt (0–5) pre rýchlosť a výkon cez krátke intenzívne úseky nad prahom. Pri Easy a dlhých behoch býva 0 — a to je v poriadku. Vyšší pri Speed/Strength." /></p>
                                   <p className="font-bold text-rose-400">
                                     {details.stats.anaerobic_te.toFixed(1)}
                                     <span className="text-xs text-gray-500 font-normal"> / 5</span>
