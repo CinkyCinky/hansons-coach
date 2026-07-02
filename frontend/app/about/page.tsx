@@ -105,6 +105,10 @@ export default function About() {
           <Term name="Tempo">presne cieľové HMP.</Term>
           <Term name="Strength">HMP − 10 s/míľu (o čosi rýchlejšie než Easy, pomalšie než Speed).</Term>
           <Term name="Speed">tvoje aktuálne 5K tempo — odhadnuté z Garmin VO2max alebo posledných pretekov (z reálnej formy, NIE z cieľa).</Term>
+          <p className="text-[13px] text-gray-500 leading-relaxed mt-1">
+            <b className="text-gray-400">Just Finish</b> beží celý v Easy tempe — Tempo, Strength ani Speed sa
+            netrénujú (cieľ je dobehnúť, nie zabehnúť čas). HMP tam slúži len ako orientačné tempo dobehnutia.
+          </p>
         </Item>
 
         <Item q="18 týždňov a 4 fázy">
@@ -178,7 +182,7 @@ export default function About() {
 
         <Item q="Tvoje Garmin metriky — čo znamenajú">
           <Term name="A:C záťaž (akútna : chronická)">pomer záťaže za ~7 dní k ~28-dňovému priemeru. 0,8–1,4 = bezpečné pásmo; nad 1,4 = priveľa priskoro (riziko preťaženia); pod 0,8 = priestor pridať.</Term>
-          <Term name="VO2max">odhad aeróbnej kapacity (koľko kyslíka telo využije). Vyššie = lepšia bežecká kondícia. Appka z neho odhaduje tvoje aktuálne 5K tempo pre Speed intervaly.</Term>
+          <Term name="VO2max">odhad aeróbnej kapacity (koľko kyslíka telo využije). Vyššie = lepšia bežecká kondícia. Appka z neho odhaduje tvoje aktuálne 5K tempo pre Speed intervaly (Advanced/Beginner).</Term>
           <Term name="Pokojový tep (RHR)">tep v úplnom pokoji, meraný cez noc. Nižší a klesajúci = lepšia kondícia a regenerácia. Náhle zvýšenie môže signalizovať únavu alebo nastupujúcu chorobu.</Term>
           <Term name="Laktátový prah (LTHR)">tep na laktátovom prahu. Slúži ako referenčný strop (poistka, aby Easy nebol prirýchly), nie ako cieľ.</Term>
           <Term name="HRV">variabilita srdcového tepu (ms) — ukazovateľ regenerácie a stresu. Vyššie a stabilné hodnoty = oddýchnuté telo.</Term>

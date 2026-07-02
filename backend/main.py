@@ -1610,6 +1610,25 @@ def _prepare_chat(req: ChatRequest, user_id: str, client):
     profile = get_user_profile(user_id) or {}
     target_time = profile.get("target_time", "neuvedený")
     training_week = _calculate_training_week(profile)
+    variant = (profile.get("plan_variant") or "advanced").lower()
+    variant_lbl = hansons_knowledge.variant_label(variant)
+    # Metodika nižšie je plný Advanced plán — pre iné varianty pridáme jasnú „ako to aplikovať" poistku,
+    # aby tréner nenavrhoval intervaly/tempo tam, kde v pláne nie sú.
+    if variant == "just_finish":
+        variant_caveat = (
+            "POZOR — VARIANT JUST FINISH: zverenec NEROBÍ žiadne intervaly (Speed/Strength) ani Tempo behy. "
+            "Jeho plán je LEN Easy behy + nedeľný dlhý beh (Easy tempom). SOS štruktúru z metodiky (utorok Speed, "
+            "štvrtok Tempo) NEAPLIKUJ. Platí filozofia kumulovanej únavy, Easy tempo/HR, dlhý beh, výživa a "
+            "regenerácia. Cieľ je pohodovo dobehnúť, NIE zabehnúť čas — nikdy nenavrhuj tvrdé tréningy.\n"
+        )
+    elif variant == "beginner":
+        variant_caveat = (
+            "POZOR — VARIANT BEGINNER: prvých 5 týždňov je BASE fáza (len Easy + nedeľný dlhý beh); Speed intervaly "
+            "AJ Tempo behy začínajú až od T6. Do T6 nenavrhuj intervaly ani tempo. Objem je o niečo nižší než "
+            "Advanced. Inak platí metodika nižšie.\n"
+        )
+    else:
+        variant_caveat = ""
     ai_context = profile.get("ai_context", "")
     memory_facts = get_memory_facts(user_id)
     memory_block = "\n".join(f"- {f.get('content', '')}" for f in memory_facts) or "(zatiaľ žiadne)"
@@ -1718,7 +1737,7 @@ Posledné behy (14 dní):
 {chr(10).join(runs_summary) if runs_summary else 'Žiadne aktivity.'}
 
 Najbližší tréning: {next_w_str}
-{hansons_knowledge.training_load_block(training_load)}{hansons_knowledge.phase_block(training_week, profile.get('plan_variant'))}
+{hansons_knowledge.training_load_block(training_load)}{hansons_knowledge.phase_block(training_week, variant)}{hansons_knowledge.sos_block(training_week, variant)}
 --- KONIEC ---"""
     except Exception as e:
         garmin_context = f"(Garmin dáta sa nepodarilo načítať: {e})"
@@ -1729,7 +1748,8 @@ Najbližší tréning: {next_w_str}
         today_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         
     system_instruction = (
-        f"Si osobný AI bežecký tréner — špičkový expert na Hansons Half-Marathon Advanced metódu. "
+        f"Si osobný AI bežecký tréner — špičkový expert na Hansons Half-Marathon metódu. "
+        f"Zverenec trénuje podľa variantu: {variant_lbl}. "
         f"Tvoje rady musia vychádzať z metodiky NIŽŠIE a z REÁLNYCH Garmin dát zverenca (vek, váha, "
         f"VO2max, LTHR, HR zóny, tempá, history). Nehovor všeobecne — argumentuj konkrétnymi číslami. "
         f"Dnešný dátum a čas: {today_full}. "
@@ -1774,6 +1794,7 @@ Najbližší tréning: {next_w_str}
         f"začni svoju odpoveď tagom <MEMORY>tu zapíš nový fakt</MEMORY>. "
         f"Príklad: <MEMORY>Bolí ho koleno, stredy chce mať voľné</MEMORY> Dávaj si na to koleno pozor...\n"
         f"\n{hansons_knowledge.HANSONS_METHODOLOGY}\n"
+        f"{hansons_knowledge.variant_note(variant)}{variant_caveat}"
         f"\n{garmin_context}"
     )
 

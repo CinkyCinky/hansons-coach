@@ -182,7 +182,9 @@ export default function Dashboard() {
     return !isNaN(r.getTime()) && r < t;
   })();
   const isRaceWeek = weekNum != null && weekNum >= 18 && !raceIsPast;
-  const splits = isRaceWeek ? goalSplits(profile?.target_time) : null;
+  // Just Finish nemá pretekový cieľový čas — rozpis tempa by protirečil filozofii „len dobehnúť".
+  const isJustFinish = (profile?.plan_variant ?? d.plan_variant) === "just_finish";
+  const splits = isRaceWeek && !isJustFinish ? goalSplits(profile?.target_time) : null;
   // Odpočítavanie do preteku (počas prípravy; v pretekovom týždni to pokrýva veľká karta)
   const countdown = !isRaceWeek ? raceCountdown(profile?.race_date) : null;
   const todayKind = todayWorkout ? classifyWorkout(todayWorkout.title || "").type : null;
@@ -337,6 +339,15 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+          {isJustFinish && (
+            <div className="bg-black/20 rounded-xl p-3 mb-3">
+              <p className="text-xs text-gray-300 leading-relaxed">
+                Tvoj cieľ je <b className="text-emerald-300">v pohode dobehnúť</b> — žiadny pretekový rozpis tempa.
+                Vyštartuj pomaly a pohodlne (Easy tempo), jedz a pi ako na dlhých behoch a nechaj si silu do záveru.
+                Dôjsť do cieľa je úspech. 💪
+              </p>
             </div>
           )}
           <ul className="text-xs text-gray-300 flex flex-col gap-1">
@@ -889,7 +900,7 @@ export default function Dashboard() {
               <Flame className="text-accent" size={18} /> Konzistencia kľúčových tréningov
             </h3>
             <p className="text-[11px] text-gray-500 mb-3">
-              Posledné {weeks_scored} {weeksLabel} · Speed/Strength (ut), Tempo (št), Dlhý beh (ne)
+              Posledné {weeks_scored} {weeksLabel} · {isJustFinish ? "nedeľný dlhý beh" : "Speed/Strength (ut), Tempo (št), Dlhý beh (ne)"}
             </p>
 
             <div className="flex items-end gap-2 mb-2">

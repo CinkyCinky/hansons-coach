@@ -334,7 +334,9 @@ export default function Settings() {
               <p className="text-xs text-rose-400 mt-1 ml-1">Formát musí byť HH:MM:SS (napr. 1:50:00)</p>
             )}
             <p className="text-xs text-gray-500 mt-2 ml-1 leading-snug">
-              💡 Z tohto času sa počítajú <b className="text-gray-300">všetky</b> tréningové tempá —
+              💡 {planVariant === "just_finish"
+                ? <>Z tohto času sa počíta tvoje <b className="text-gray-300">Easy</b> tempo (a slúži ako očakávané tempo dobehnutia)</>
+                : <>Z tohto času sa počítajú <b className="text-gray-300">všetky</b> tréningové tempá</>} —
               zvoľ ho realisticky podľa nedávnej formy (napr. z posledných pretekov), nie ako zbožné
               prianie. Prehnaný cieľ spraví každý tréning prirýchly (najčastejšia chyba). Neistý?{" "}
               <Link href="/about" className="text-primary underline underline-offset-2">Pozri „O metóde"</Link>.
@@ -344,23 +346,35 @@ export default function Settings() {
             {validateTargetTime(targetTime) && (() => {
               const p = computePaces(targetTime);
               if (!p) return null;
+              const isJF = planVariant === "just_finish";
               return (
                 <div className="mt-3 bg-black/20 border border-white/10 rounded-xl p-3">
-                  <p className="text-[11px] font-bold text-gray-300 mb-2">Tvoje tréningové tempá pri tomto cieli</p>
+                  <p className="text-[11px] font-bold text-gray-300 mb-2">
+                    {isJF ? "Tvoje tempo pri tomto cieli" : "Tvoje tréningové tempá pri tomto cieli"}
+                  </p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                    <span className="text-gray-400">Tempo (pretekové, HMP)</span>
-                    <span className="text-right font-mono text-amber-300">{p.tempo}/km</span>
                     <span className="text-gray-400">Easy / Dlhé</span>
                     <span className="text-right font-mono text-emerald-300">{p.easyMin}–{p.easyMax}/km</span>
-                    <span className="text-gray-400">Strength</span>
-                    <span className="text-right font-mono text-orange-300">{p.strength}/km</span>
-                    <span className="text-gray-400">Speed (5K)</span>
-                    <span className="text-right font-mono text-rose-300">~{p.speedApprox}/km</span>
+                    {isJF ? (
+                      <>
+                        <span className="text-gray-400">Tempo dobehnutia (ref.)</span>
+                        <span className="text-right font-mono text-gray-400">~{p.tempo}/km</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-gray-400">Tempo (pretekové, HMP)</span>
+                        <span className="text-right font-mono text-amber-300">{p.tempo}/km</span>
+                        <span className="text-gray-400">Strength</span>
+                        <span className="text-right font-mono text-orange-300">{p.strength}/km</span>
+                        <span className="text-gray-400">Speed (5K)</span>
+                        <span className="text-right font-mono text-rose-300">~{p.speedApprox}/km</span>
+                      </>
+                    )}
                   </div>
                   <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
-                    Tempo, Easy a Strength sa počítajú priamo z cieľa. <b className="text-gray-500">Speed</b> je
-                    len orientačný — reálne sa určí z tvojej aktuálnej formy (Garmin VO2max), preto použi
-                    „Odhadnúť z mojej formy" nižšie.
+                    {isJF
+                      ? "Just Finish sa beží celý v Easy tempe — intervaly ani tempo nie sú. „Tempo dobehnutia“ je len orientačná referencia, ktorá kotví Easy pásmo."
+                      : <>Tempo, Easy a Strength sa počítajú priamo z cieľa. <b className="text-gray-500">Speed</b> je len orientačný — reálne sa určí z tvojej aktuálnej formy (Garmin VO2max), preto použi „Odhadnúť z mojej formy" nižšie.</>}
                   </p>
                 </div>
               );

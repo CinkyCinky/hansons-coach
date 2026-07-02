@@ -296,18 +296,32 @@ export default function Generator() {
               <p className="flex items-center gap-1.5 font-bold text-gray-300 mb-2">
                 <Info size={14} className="text-primary" /> Z čoho sú tempá počítané
               </p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-300">
-                <span>Tempo / HMP (pretekové)</span><span className="text-right font-mono text-amber-300">{generatedPlan.paces.tempo}/km</span>
-                <span>Easy / Dlhé</span><span className="text-right font-mono text-emerald-300">{generatedPlan.paces.easy_min}–{generatedPlan.paces.easy_max}/km</span>
-                <span>Strength</span><span className="text-right font-mono text-orange-300">{generatedPlan.paces.strength}/km</span>
-                <span>Speed</span><span className="text-right font-mono text-rose-300">{generatedPlan.paces.speed}/km</span>
-              </div>
-              <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
-                Variant <b className="text-gray-300">{generatedPlan.paces.variant}</b> · týždeň {generatedPlan.paces.training_week}/18.
-                Tempo/Strength/Easy z cieľa <b className="text-gray-300">{generatedPlan.paces.target_time}</b>;
-                Speed z {generatedPlan.paces.vo2max ? <>VO2max <b className="text-gray-300">{generatedPlan.paces.vo2max}</b></> : "cieľa (VO2max nedostupné)"}.
-                Tep je len referencia — behy riadime tempom.
-              </p>
+              {(() => {
+                const isJF = generatedPlan.paces.variant === "Just Finish";
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-300">
+                      <span>Easy / Dlhé</span><span className="text-right font-mono text-emerald-300">{generatedPlan.paces.easy_min}–{generatedPlan.paces.easy_max}/km</span>
+                      {isJF ? (
+                        <><span>Tempo dobehnutia (ref.)</span><span className="text-right font-mono text-gray-400">~{generatedPlan.paces.tempo}/km</span></>
+                      ) : (
+                        <>
+                          <span>Tempo / HMP (pretekové)</span><span className="text-right font-mono text-amber-300">{generatedPlan.paces.tempo}/km</span>
+                          <span>Strength</span><span className="text-right font-mono text-orange-300">{generatedPlan.paces.strength}/km</span>
+                          <span>Speed</span><span className="text-right font-mono text-rose-300">{generatedPlan.paces.speed}/km</span>
+                        </>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                      Variant <b className="text-gray-300">{generatedPlan.paces.variant}</b> · týždeň {generatedPlan.paces.training_week}/18.
+                      {isJF
+                        ? <> Just Finish sa beží celý v Easy tempe (kotvené cieľom <b className="text-gray-300">{generatedPlan.paces.target_time}</b>) — intervaly ani tempo nie sú.</>
+                        : <> Tempo/Strength/Easy z cieľa <b className="text-gray-300">{generatedPlan.paces.target_time}</b>; Speed z {generatedPlan.paces.vo2max ? <>VO2max <b className="text-gray-300">{generatedPlan.paces.vo2max}</b></> : "cieľa (VO2max nedostupné)"}.</>}
+                      {" "}Tep je len referencia — behy riadime tempom.
+                    </p>
+                  </>
+                );
+              })()}
             </div>
           )}
 
