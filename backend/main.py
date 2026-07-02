@@ -723,40 +723,59 @@ Stav formy dnes: {form_score}/100
 
 # ── Plan ─────────────────────────────────────────────────────────────────────
 
-_HARD_SOS = {"speed", "strength", "tempo"}
-_SOS_KIND_LABEL = {"speed": "Speed intervaly", "strength": "Strength intervaly", "tempo": "Tempo beh"}
+# Kľúčové (SOS) tréningy podľa Hansona: Speed/Strength (utorok), Tempo (štvrtok),
+# Dlhý beh (nedeľa). JEDNA definícia pre celý scorecard (odbehnuté/vynechané/zrušené)
+# — na rozdiel od pôvodného stavu, kde „vynechané“ rátalo aj dlhý beh, ale „zrušené“ nie.
+_KEY_SOS = {"speed", "strength", "tempo", "long"}
+_SOS_KIND_LABEL = {
+    "speed": "Speed intervaly",
+    "strength": "Strength intervaly",
+    "tempo": "Tempo beh",
+    "long": "Dlhý beh",
+}
 
 
-def _dropped_sos(items: list, profile: dict, today: datetime.date) -> list:
-    """Kľúčové (SOS) tréningy, ktoré Hanson PREDPIS na daný UZAVRETÝ týždeň vyžadoval,
-    ale v kalendári pre ten týždeň úplne CHÝBAJÚ → „ZRUŠENÉ“ (odstránené z kalendára).
-    Rozlíšenie troch typov zmeny:
-      • PREPOČÍTANÉ/ZMÄKČENÉ (button „Upraviť“ / odporúčanie trénera): `update_next_workout`
-        ZACHOVÁVA typ tréningu (Tempo ostane Tempo „(Updated)“) → kind je STÁLE prítomný →
-        sem sa NErátá (dátovo-riadená adaptácia, ostáva v pláne).
-      • VYNECHANÉ (no-show): SOS je v kalendári STÁLE, len bez odbehnutej aktivity (iná logika).
-      • ZRUŠENÉ: SOS bol z kalendára ODSTRÁNENÝ (napr. „zruš mi dnešný a prepočítaj zvyšok“) →
-        kind v týždni chýba a nič ho nenahradilo → zachytáva táto funkcia.
-    Meria sa voči predpisu (deterministický `sos_for_week`), preto úpravy kalendára zrušenie
-    nezamaskujú. Posledné 4 uzavreté týždne (~okno konzistencie)."""
+def _sos_consistency(items: list, profile: dict, today: datetime.date) -> dict:
+    """Konzistencia kľúčových (SOS) tréningov za posledné 4 UZAVRETÉ týždne (Po–Ne).
+
+    JEDEN zdroj pravdy, JEDNO okno, JEDNA definícia SOS. Každý predpísaný kľúčový tréning
+    (Speed/Strength ut, Tempo št, Dlhý beh ne — deterministický `sos_for_week`) dostane
+    v danom týždni práve jeden stav:
+      • ODBEHNUTÝ  — v kalendári je tréning toho typu so spárovanou aktivitou (vrátane
+                     zmäkčeného „(Updated)“ rovnakého typu → dátová adaptácia sa ráta ako splnená).
+      • VYNECHANÝ  — tréning toho typu je v kalendári, ale bez odbehnutej aktivity (no-show).
+      • ZRUŠENÝ    — typ v kalendári pre daný týždeň úplne CHÝBA (odstránený tebou/trénerom).
+    Meria sa voči PREDPISU, takže úpravy kalendára zrušenie nezamaskujú. Týždne bez
+    akýchkoľvek dát (chýbajúci Garmin fetch / pred štartom prípravy) sa preskočia, aby
+    dátová medzera nevyzerala ako séria vynechaní."""
     variant = (profile.get("plan_variant") or "advanced").lower()
     cur_week = hansons_knowledge.current_training_week(profile)
     this_monday = today - datetime.timedelta(days=today.weekday())
 
-    # Kindy SOS prítomné v kalendári podľa ISO týždňa (pondelok)
-    kinds_by_week: Dict[datetime.date, set] = {}
+    # Typy tréningov podľa ISO týždňa (pondelok): všetky prítomné vs. odbehnuté (s aktivitou)
+    present_by_week: Dict[datetime.date, set] = {}
+    done_by_week: Dict[datetime.date, set] = {}
+    item_by_week_kind: Dict[tuple, dict] = {}  # reprezentatívna položka (wk, kind) pre detail vynechaných
     for it in items:
         try:
             d = datetime.date.fromisoformat((it.get("date") or "")[:10])
         except Exception:
             continue
         wk = d - datetime.timedelta(days=d.weekday())
-        kinds_by_week.setdefault(wk, set()).add(
-            workout_generator.classify_workout_kind(it.get("title") or "")
-        )
+        kind = workout_generator.classify_workout_kind(it.get("title") or "")
+        present_by_week.setdefault(wk, set()).add(kind)
+        if it.get("activityId"):
+            done_by_week.setdefault(wk, set()).add(kind)
+        # Najnovšia položka daného typu v týždni → reprezentant pre alert „vynechaných"
+        prev = item_by_week_kind.get((wk, kind))
+        if prev is None or (it.get("date") or "") > (prev.get("date") or ""):
+            item_by_week_kind[(wk, kind)] = it
 
-    out = []
-    for back in range(1, 5):  # 4 uzavreté týždne dozadu
+    key_total = key_done = key_missed = key_cancelled = 0
+    weeks_scored = 0
+    missed: list = []
+    cancelled: list = []
+    for back in range(1, 5):  # 4 uzavreté týždne dozadu (bez aktuálneho, prebiehajúceho)
         wk_monday = this_monday - datetime.timedelta(days=7 * back)
         week_num = cur_week - back
         if week_num < 2 or week_num > 17:
@@ -765,25 +784,52 @@ def _dropped_sos(items: list, profile: dict, today: datetime.date) -> list:
         if not sos:
             continue
         prescribed = [
-            sos[day]["kind"] for day in ("tuesday", "thursday")
-            if sos.get(day, {}).get("kind") in _HARD_SOS
+            sos[day]["kind"] for day in ("tuesday", "thursday", "sunday")
+            if sos.get(day, {}).get("kind") in _KEY_SOS
         ]
-        present = kinds_by_week.get(wk_monday, set())
-        # Poistka proti falošným flagom: vyhodnocuj len týždeň, ktorý má aspoň jeden
-        # naplánovaný/odbehnutý beh (dôkaz, že to bol aktívny tréningový týždeň).
-        # Prázdny týždeň = chýbajúce dáta / pred štartom prípravy → preskoč.
+        if not prescribed:
+            continue
+        present = present_by_week.get(wk_monday, set())
+        # Poistka proti dátovej medzere: hodnoť len týždeň s dôkazom aktivity
+        # (aspoň jeden naplánovaný/odbehnutý beh). Prázdny = chýbajúce dáta → preskoč.
         if not present:
             continue
+        done = done_by_week.get(wk_monday, set())
+        weeks_scored += 1
+        key_total += len(prescribed)
         for kind in prescribed:
-            if kind not in present:
-                out.append({
+            if kind in done:
+                key_done += 1
+            elif kind in present:
+                key_missed += 1  # v kalendári, ale bez odbehnutej aktivity (no-show)
+                src = item_by_week_kind.get((wk_monday, kind), {})
+                missed.append({
+                    "week": week_num,
+                    "kind": kind,
+                    "label": _SOS_KIND_LABEL.get(kind, kind),
+                    "date": (src.get("date") or "")[:10],
+                    "title": src.get("title") or _SOS_KIND_LABEL.get(kind, kind),
+                })
+            else:
+                key_cancelled += 1  # typ z kalendára úplne odstránený
+                cancelled.append({
                     "week": week_num,
                     "kind": kind,
                     "label": _SOS_KIND_LABEL.get(kind, kind),
                     "week_start": wk_monday.isoformat(),
                     "week_end": (wk_monday + datetime.timedelta(days=6)).isoformat(),
                 })
-    return out
+
+    missed.sort(key=lambda m: m.get("date") or "", reverse=True)  # najnovšie prvé (pre alert)
+    return {
+        "weeks_scored": weeks_scored,
+        "key_total": key_total,
+        "key_done": key_done,
+        "key_missed": key_missed,
+        "key_cancelled": key_cancelled,
+        "missed": missed,
+        "cancelled": cancelled,
+    }
 
 
 @app.get("/api/plan/scheduled")
@@ -860,14 +906,14 @@ def get_scheduled_plan(user_id: str = Depends(get_current_user), client=Depends(
         except Exception as enrich_err:
             print(f"Activity enrichment failed: {enrich_err}")
 
-        # Zrušené SOS (odstránené z kalendára) — merané voči Hanson predpisu, fail-open
-        cancelled_sos = []
+        # Konzistencia kľúčových (SOS) tréningov za 4 uzavreté týždne — voči Hanson predpisu, fail-open
+        consistency = None
         try:
-            cancelled_sos = _dropped_sos(items, profile, today)
-        except Exception as drop_err:
-            print(f"Cancelled SOS calc failed: {drop_err}")
+            consistency = _sos_consistency(items, profile, today)
+        except Exception as cons_err:
+            print(f"Consistency calc failed: {cons_err}")
 
-        return {"workouts": items, "cancelled_sos": cancelled_sos}
+        return {"workouts": items, "consistency": consistency}
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa načítať tréningový plán.")
 

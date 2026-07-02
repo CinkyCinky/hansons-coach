@@ -45,7 +45,7 @@ interface StoreState {
 
   // Plan
   plan: any[] | null;
-  planCancelledSos: any[] | null;   // SOS zrušené (odstránené z kalendára), z /api/plan/scheduled
+  planConsistency: any | null;   // scorecard kľúčových SOS (odbehnuté/vynechané/zrušené), z /api/plan/scheduled
   planLoadedAt: number | null;
   planLoading: boolean;
   planError: string | null;
@@ -80,7 +80,7 @@ const initialState: StoreState = {
   chatSeed: null,
 
   plan: null,
-  planCancelledSos: null,
+  planConsistency: null,
   planLoadedAt: null,
   planLoading: false,
   planError: null,
@@ -166,7 +166,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       setState((s) => ({
         ...s,
         plan: sorted,
-        planCancelledSos: data?.cancelled_sos ?? [],
+        planConsistency: data?.consistency ?? null,
         planLoadedAt: Date.now(),
         planLoading: false,
       }));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import {
   Moon, Heart, Battery, Activity, Flame, ChevronRight,
   Loader2, Bot, RefreshCcw, Zap, TrendingUp, Info,
@@ -125,27 +125,13 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Konzistencia za posledných 28 dní (z naplánovaného plánu + splnených aktivít)
-  const consistency = useMemo(() => {
-    const plan = store.plan ?? [];
-    if (!plan.length) return null;
-    const now = new Date(); now.setHours(0, 0, 0, 0);
-    const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 28);
-    const SOS = ["speed", "strength", "tempo", "long"];
-    let done = 0, missedSos = 0;
-    for (const w of plan as any[]) {
-      const dt = new Date(w.date + "T00:00:00");
-      if (dt < cutoff || dt >= now) continue; // len minulých 28 dní
-      if (w.activityId) { done++; continue; }
-      if (SOS.includes(classifyWorkout(w.title).type)) missedSos++;
-    }
-    // Zrušené = SOS odstránené z kalendára (merané voči Hanson predpisu, backend).
-    // Líši sa od „vynechaných“ (tie sú v kalendári stále) aj od „zmäkčených/prepočítaných“
-    // (tie ostávajú v pláne ako ten istý typ — preto sa sem nerátajú).
-    const cancelled = (store.planCancelledSos ?? []).length;
-    if (done === 0 && missedSos === 0 && cancelled === 0) return null;
-    return { done, missedSos, cancelled };
-  }, [store.plan, store.planCancelledSos]);
+  // Konzistencia kľúčových (SOS) tréningov — počítaná na backende voči Hanson predpisu:
+  // jedno okno (4 uzavreté týždne), jedna definícia SOS (Speed/Strength ut, Tempo št,
+  // Dlhý beh ne), tri stavy (odbehnutý/vynechaný/zrušený). Viď _sos_consistency v main.py.
+  const consistency = store.planConsistency as {
+    weeks_scored: number; key_total: number; key_done: number;
+    key_missed: number; key_cancelled: number;
+  } | null;
 
   const handleRefresh = async () => {
     store.invalidateAll();
@@ -884,43 +870,58 @@ export default function Dashboard() {
         </motion.div>
       </section>
 
-      {/* Konzistencia (28 dní) — kľúčový pilier Hansonovej metódy */}
-      {consistency && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-card p-4"
-        >
-          <h3 className="text-sm font-bold flex items-center gap-2 mb-3">
-            <Flame className="text-accent" size={18} /> Konzistencia (28 dní)
-          </h3>
-          <div className="flex gap-6">
-            <div>
-              <p className="text-2xl font-bold text-emerald-400">{consistency.done}</p>
-              <p className="text-xs text-gray-500">dokončených behov</p>
+      {/* Konzistencia kľúčových tréningov — jadro Hansonovej metódy (4 uzavreté týždne) */}
+      {consistency && consistency.key_total > 0 && (() => {
+        const { key_total, key_done, key_missed, key_cancelled, weeks_scored } = consistency;
+        const pct = Math.round((key_done / key_total) * 100);
+        const tone =
+          pct >= 90 ? { text: "text-emerald-400", bar: "bg-emerald-400" }
+          : pct >= 70 ? { text: "text-amber-400", bar: "bg-amber-400" }
+          : { text: "text-rose-400", bar: "bg-rose-400" };
+        const weeksLabel = weeks_scored === 1 ? "týždeň" : weeks_scored < 5 ? "týždne" : "týždňov";
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-card p-4"
+          >
+            <h3 className="text-sm font-bold flex items-center gap-2 mb-0.5">
+              <Flame className="text-accent" size={18} /> Konzistencia kľúčových tréningov
+            </h3>
+            <p className="text-[11px] text-gray-500 mb-3">
+              Posledné {weeks_scored} {weeksLabel} · Speed/Strength (ut), Tempo (št), Dlhý beh (ne)
+            </p>
+
+            <div className="flex items-end gap-2 mb-2">
+              <span className={`text-3xl font-bold leading-none ${tone.text}`}>{key_done}</span>
+              <span className="text-lg text-gray-500 leading-none mb-0.5">/ {key_total}</span>
+              <span className="text-xs text-gray-400 mb-1">odbehnutých</span>
+              <span className={`ml-auto text-sm font-semibold ${tone.text}`}>{pct} %</span>
             </div>
-            <div>
-              <p className={`text-2xl font-bold ${consistency.missedSos > 0 ? "text-rose-400" : "text-emerald-400"}`}>
-                {consistency.missedSos}
-              </p>
-              <p className="text-xs text-gray-500">vynechaných kľúčových</p>
+
+            <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden mb-3">
+              <div className={`h-full rounded-full ${tone.bar} transition-all`} style={{ width: `${pct}%` }} />
             </div>
-            {consistency.cancelled > 0 && (
-              <div>
-                <p className="text-2xl font-bold text-amber-400">{consistency.cancelled}</p>
-                <p className="text-xs text-gray-500">zrušených</p>
+
+            {(key_missed > 0 || key_cancelled > 0) && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-3">
+                {key_missed > 0 && (
+                  <span className="text-rose-300"><b className="text-rose-400">{key_missed}</b> vynechaných</span>
+                )}
+                {key_cancelled > 0 && (
+                  <span className="text-amber-300"><b className="text-amber-400">{key_cancelled}</b> zrušených</span>
+                )}
               </div>
             )}
-          </div>
-          <p className="text-xs text-gray-400 mt-3 leading-snug">
-            {consistency.cancelled > 0
-              ? "„Zrušené“ = kľúčový (SOS) tréning, ktorý už nie je v pláne — odstránený alebo nahradený ľahším behom (či už tebou, alebo trénerom). Zmäkčené tréningy, čo ostali rovnakého typu, sa sem nerátajú. Jeden raz nič nepokazí, séria zrušených SOS ale oslabuje prípravu (jadrom Hansona je odbehnúť kľúčové tréningy)."
-              : consistency.missedSos === 0
-              ? "Žiadny vynechaný kľúčový tréning — konzistencia je pilier Hansonovej metódy. 💪"
-              : "Kľúčové (SOS) tréningy nehromaď — radšej pokračuj podľa plánu, nikdy nie 2 tvrdé dni za sebou."}
-          </p>
-        </motion.div>
-      )}
+
+            <p className="text-xs text-gray-400 leading-snug">
+              {key_missed === 0 && key_cancelled === 0
+                ? "Všetky kľúčové tréningy odbehnuté — konzistencia je pilier Hansonovej metódy. 💪"
+                : "Vynechaný = ostal v pláne, ale neodbehol si ho; zrušený = z kalendára úplne odstránený (tebou alebo trénerom). Zmäkčené tréningy rovnakého typu sa rátajú ako odbehnuté. Jeden výpadok nič nepokazí — séria oslabuje prípravu (jadrom Hansona je odbehnúť kľúčové tréningy)."}
+            </p>
+          </motion.div>
+        );
+      })()}
 
       {/* Posledná aktivita */}
       <section className="mb-8">

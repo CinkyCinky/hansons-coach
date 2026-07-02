@@ -458,15 +458,10 @@ export default function Plan() {
     return d < today && SOS_TYPES.includes(classifyWorkout(w.title).type);
   };
 
-  // Vynechané kľúčové (SOS) tréningy — najnovšie prvé (posledných ~14 dní)
-  const missedSos = useMemo(() => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 14);
-    return (workouts as any[])
-      .filter((w) => isMissedSos(w) && new Date(w.date + "T00:00:00") >= cutoff)
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workouts]);
+  // Vynechané kľúčové (SOS) tréningy — z ROVNAKÉHO backendového výpočtu ako scorecard
+  // na Prehľade (store.planConsistency; okno = 4 uzavreté týždne, jedna definícia SOS,
+  // merané voči Hanson predpisu). Backend vracia už zoradené (najnovšie prvé).
+  const missedSos: any[] = store.planConsistency?.missed ?? [];
 
   useEffect(() => {
     store.loadPlan();
@@ -589,7 +584,7 @@ export default function Plan() {
           </h3>
           <p className="text-xs text-gray-300 leading-relaxed mb-3">
             Posledný:{" "}
-            <b>{classifyWorkout(missedSos[0].title).label}</b> — {missedSos[0].title}{" "}
+            <b>{missedSos[0].label}</b> — {missedSos[0].title}{" "}
             ({new Date(missedSos[0].date + "T00:00:00").toLocaleDateString("sk-SK", { day: "numeric", month: "long" })}).
             Podľa Hansona kľúčové tréningy nehromaď — buď ho čo najskôr dobehni, alebo ho vynechaj a
             pokračuj podľa plánu (nikdy nie 2 tvrdé dni za sebou). Jeden vynechaný tréning takmer
