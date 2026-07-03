@@ -93,6 +93,7 @@ class ProfileUpdate(BaseModel):
     ai_context: Optional[str] = None
     display_name: Optional[str] = None
     plan_variant: Optional[str] = None  # "advanced" | "beginner" | "just_finish"
+    daily_feeling: Optional[dict] = None  # dnešný self-report {date, feeling, pain, pain_area} — sync medzi zariadeniami
 
 
 class MemoryFactRequest(BaseModel):
@@ -420,6 +421,8 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
             update_data["display_name"] = req.display_name
         if req.plan_variant is not None:
             update_data["plan_variant"] = req.plan_variant
+        if req.daily_feeling is not None:
+            update_data["daily_feeling"] = req.daily_feeling
 
         updated = update_user_profile(user_id, update_data)
         return {"status": "success", "profile": updated}

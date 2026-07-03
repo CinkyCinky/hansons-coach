@@ -11,7 +11,7 @@ import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
 import { hrvStatusSk, readinessLevelSk } from "@/lib/garminLabels";
-import { fetchProfile, FEELING_KEY } from "@/lib/api";
+import { fetchProfile, updateProfile, FEELING_KEY } from "@/lib/api";
 
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
   const values = [sleepScore, bodyBattery, readiness].filter((v) => v != null) as number[];
@@ -103,18 +103,26 @@ export default function Dashboard() {
   // Merge so nastavovanie časti tela neprepíše intenzitu (a naopak). Explicitné
   // undefined v `next` pole zruší (napr. pri zmene nálady späť na „Dobre").
   const saveFeeling = (next: Partial<{ feeling: string; pain?: string; pain_area?: string }>) => {
-    setFeeling((prev) => {
-      const base = prev && (prev as any).date === todayIso() ? prev : {};
-      const val = { ...base, date: todayIso(), ...next };
-      try { localStorage.setItem(FEELING_KEY, JSON.stringify(val)); } catch { /* ignore */ }
-      return val;
-    });
+    const base = feeling && (feeling as any).date === todayIso() ? feeling : {};
+    const val = { ...base, date: todayIso(), ...next } as any;
+    setFeeling(val);
+    try { localStorage.setItem(FEELING_KEY, JSON.stringify(val)); } catch { /* ignore */ }
+    // Sync medzi zariadeniami — ulož aj do profilu (fire-and-forget, UI nečaká)
+    updateProfile({ daily_feeling: val }).catch(() => {});
   };
 
   useEffect(() => {
     store.loadDashboard();
     store.loadPlan();
-    fetchProfile().then(setProfile).catch(() => {});
+    fetchProfile().then((p) => {
+      setProfile(p);
+      // Synchronizovaný dnešný self-report z profilu má prednosť (naprieč zariadeniami)
+      const df = p?.daily_feeling;
+      if (df?.date === todayIso() && df?.feeling) {
+        setFeeling(df);
+        try { localStorage.setItem(FEELING_KEY, JSON.stringify(df)); } catch { /* ignore */ }
+      }
+    }).catch(() => {});
     try {
       const raw = localStorage.getItem(FEELING_KEY);
       if (raw) {
@@ -516,7 +524,7 @@ export default function Dashboard() {
         </h3>
         <p className="text-[11px] text-gray-500 mb-2 leading-snug">
           Podľa toho ti tréner prispôsobí najbližší tréning (tlačidlo „Prepočítať" v Pláne aj rady trénera).
-          Zaznamenáva sa len v tomto zariadení na dnešný deň.
+          Platí na dnešný deň a synchronizuje sa medzi tvojimi zariadeniami.
         </p>
         <div className="flex gap-2">
           {[
