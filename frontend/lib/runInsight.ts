@@ -53,11 +53,14 @@ interface RunStats {
     wind_kmh?: number | null;
   } | null;
   hr_recovery?: number | null;
+  decoupling_pct?: number | null;
+  avg_cadence?: number | null;
 }
 
 export function runInsight(title: string, stats: RunStats | null | undefined): RunInsight | null {
   const base = baseInsight(title, stats);
   if (!base) return null;
+  const type = classifyWorkout(title).type;
 
   // Terénový doplnok: pri výraznom prevýšení vysvetli rozdiel reálneho tempa a GAP
   // (tempo prepočítané na rovinu), aby kopec nevyzeral ako strata formy.
@@ -111,6 +114,12 @@ export function runInsight(title: string, stats: RunStats | null | undefined): R
     // pod ~24 °C a bez vlhka počasie nekomentujeme — nemá výpovednú hodnotu
   }
 
+  // Vietor: silný protivietor pri rovnakej námahe prirodzene spomaľuje tempo.
+  const wind = wx?.wind_kmh ?? null;
+  if (wind != null && wind >= 20) {
+    base.note += ` Fúkal silný vietor (${wind} km/h) — proti vetru je tempo pri rovnakej námahe pomalšie, neber to ako slabší výkon.`;
+  }
+
   // Tep zotavenia (HRR): vyššie/rýchlejšie klesnutie tepu po behu = lepšia
   // parasympatická regenerácia a kondícia. Meria sa manuálne, takže len občas.
   const hrr = stats?.hr_recovery;
@@ -118,6 +127,20 @@ export function runInsight(title: string, stats: RunStats | null | undefined): R
     if (hrr >= 30) base.note += ` Tep zotavenia −${hrr} bpm za ~2 min — výborná regenerácia (silný parasympatikus).`;
     else if (hrr >= 15) base.note += ` Tep zotavenia −${hrr} bpm za ~2 min — v poriadku.`;
     else base.note += ` Tep zotavenia len −${hrr} bpm za ~2 min — nižší (únava, teplo alebo tvrdý záver); sleduj trend pri podobných behoch.`;
+  }
+
+  // Durabilita (aeróbny decoupling) pri rovnomerných behoch — objektívny signál
+  // aeróbnej vytrvalosti; dopĺňa rozpad formy vyššie.
+  const dc = stats?.decoupling_pct;
+  if (dc != null && (type === "easy" || type === "long" || type === "tempo")) {
+    if (dc < 5) base.note += ` Tep držal krok s tempom celý beh (drift ${dc} %) — výborná aeróbna vytrvalosť.`;
+    else if (dc > 8) base.note += ` V 2. polovici tep driftoval hore voči tempu (drift ${dc} %) — únava, teplo alebo slabšia aeróbna báza.`;
+  }
+
+  // Kadencia: nízka frekvencia krokov = väčší náraz na kolená; jemný tip.
+  const cad = stats?.avg_cadence;
+  if (cad != null && cad > 0 && cad < 163) {
+    base.note += ` Kadencia ${cad} spm je nižšia — skús ju postupne dvíhať k ~170–180 (kratší, svižnejší krok šetrí kolená).`;
   }
   return base;
 }
