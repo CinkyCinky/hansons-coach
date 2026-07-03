@@ -52,6 +52,7 @@ interface RunStats {
     humidity_pct?: number | null;
     wind_kmh?: number | null;
   } | null;
+  hr_recovery?: number | null;
 }
 
 export function runInsight(title: string, stats: RunStats | null | undefined): RunInsight | null {
@@ -92,13 +93,31 @@ export function runInsight(title: string, stats: RunStats | null | undefined): R
     }
   }
 
-  // Počasie: teplo + vlhko zvyšujú tep pri rovnakom tempe (drift z tepla).
+  // Počasie: teplo/vlhko dvíhajú tep pri rovnakom tempe (drift z tepla). Pod ~24 °C
+  // je vplyv malý — komentujeme ho len keď je aj vlhko, aby sme pri príjemných
+  // 20–23 °C nestrašili driftom. Tiery podľa reálneho vplyvu na tep.
   const wx = stats?.weather;
   const feels = wx?.feels_like_c ?? wx?.temp_c;
-  if (feels != null && feels >= 22) {
-    const humid = (wx?.humidity_pct ?? 0) >= 70;
-    base.note += ` Bolo teplo (${feels} °C${humid ? `, vlhko ${wx!.humidity_pct} %` : ""}) — vyšší tep pri rovnakom tempe je čakaný (drift z tepla), neber to ako stratu formy.`;
-    if (base.tone === "warn") base.tone = "info";
+  const humidity = wx?.humidity_pct ?? null;
+  const humid = (humidity ?? 0) >= 70;
+  if (feels != null) {
+    if (feels >= 27) {
+      base.note += ` Bolo horúco (${feels} °C${humid ? `, vlhko ${humidity} %` : ""}) — výrazne vyšší tep pri rovnakom tempe je čakaný (drift z tepla); ber to ako záťaž navyše, nie stratu formy.`;
+      if (base.tone === "warn") base.tone = "info";
+    } else if (feels >= 24 || (feels >= 21 && humid)) {
+      base.note += ` Bolo teplejšie (${feels} °C${humid ? `, vlhko ${humidity} %` : ""}) — mierne vyšší tep pri rovnakom tempe je normálny (drift z tepla).`;
+      if (base.tone === "warn") base.tone = "info";
+    }
+    // pod ~24 °C a bez vlhka počasie nekomentujeme — nemá výpovednú hodnotu
+  }
+
+  // Tep zotavenia (HRR): vyššie/rýchlejšie klesnutie tepu po behu = lepšia
+  // parasympatická regenerácia a kondícia. Meria sa manuálne, takže len občas.
+  const hrr = stats?.hr_recovery;
+  if (hrr != null && hrr > 0) {
+    if (hrr >= 30) base.note += ` Tep zotavenia −${hrr} bpm za ~2 min — výborná regenerácia (silný parasympatikus).`;
+    else if (hrr >= 15) base.note += ` Tep zotavenia −${hrr} bpm za ~2 min — v poriadku.`;
+    else base.note += ` Tep zotavenia len −${hrr} bpm za ~2 min — nižší (únava, teplo alebo tvrdý záver); sleduj trend pri podobných behoch.`;
   }
   return base;
 }

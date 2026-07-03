@@ -45,3 +45,16 @@ body {
   border: 1px solid var(--card-border);
   border-radius: 1rem;
 }
+
+/* Grafy (Recharts): pri klepnutí/kliknutí nechceme biele focus rámčeky okolo
+   jednotlivých segmentov/bodov — zobrazuj len hodnoty (tooltip). */
+.recharts-wrapper :focus,
+.recharts-wrapper :focus-visible,
+.recharts-surface,
+.recharts-surface:focus,
+.recharts-layer:focus,
+.recharts-sector:focus,
+.recharts-rectangle:focus,
+.recharts-dot:focus {
+  outline: none !important;
+}

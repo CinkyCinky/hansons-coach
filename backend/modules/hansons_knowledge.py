@@ -403,7 +403,7 @@ _DAY_SK_FULL = {"mon": "Pondelok", "tue": "Utorok", "wed": "Streda", "thu": "Št
 def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
     def _d(m):
         return f"{m} m" if m < 1000 else f"{round(m/1000, 1)} km"
-    return f"{reps}×{_d(dist_m)} (pauza {_d(rec_m)} jog)"
+    return f"{reps}× {_d(dist_m)}, medzi tým {_d(rec_m)} klus"
 
 
 VARIANTS = {
@@ -471,16 +471,16 @@ def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dic
     if week in speed_l:
         reps, dist_m, rec_m = speed_l[week]
         out["tuesday"] = {"kind": "speed", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                          "pace": "speed", "label": f"Speed {_fmt_reps(reps, dist_m, rec_m)} @ 5k tempo"}
+                          "pace": "speed", "label": f"Speed: {_fmt_reps(reps, dist_m, rec_m)} — tempom z 5 km"}
     elif week in strength_l:
         reps, dist_m, rec_m = strength_l[week]
         out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                          "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−6 s/km"}
+                          "pace": "strength", "label": f"Strength: {_fmt_reps(reps, dist_m, rec_m)} — tesne pod pretekovým (HMP−6 s/km)"}
     # Tempo: v Beginner base fáze (T2–5) tempo NIE je — pridá sa až od T6.
     if week in tempo_m:
         tempo_km = round(tempo_m[week] * _MI, 1)
         out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
-                           "label": f"Tempo {tempo_km} km @ cieľové HMP"}
+                           "label": f"Tempo: {tempo_km} km v cieľovom pretekovom tempe"}
     out["sunday"] = {"kind": "long", "pace": "easy",
                      "label": "Dlhý beh @ Easy (≈13–19 km podľa fázy, vrchol ~19 km; max ~30 % týždenného objemu)"}
     return out

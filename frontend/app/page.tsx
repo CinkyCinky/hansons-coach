@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Moon, Heart, Battery, Activity, Flame, ChevronRight,
   Loader2, Bot, RefreshCcw, Zap, TrendingUp, Info,
-  CheckCircle2, Circle, ListChecks, Trophy, Apple
+  CheckCircle2, Circle, ListChecks, Trophy, Apple, Hand
 } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -214,9 +214,12 @@ export default function Dashboard() {
       <header className="flex justify-between items-end">
         <div>
           <p className="text-gray-400 text-sm font-medium capitalize">{formatDate()}</p>
-          <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-300">
-            Ahoj, {data?.display_name ?? data?.garmin_email?.split("@")[0] ?? "Bežec"} 👋
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-300">
+              Ahoj, {data?.display_name ?? data?.garmin_email?.split("@")[0] ?? "Bežec"}
+            </h1>
+            <Hand className="text-amber-300 shrink-0" size={24} />
+          </div>
         </div>
         <div className="flex gap-2 items-center">
           <button
@@ -508,9 +511,13 @@ export default function Dashboard() {
         animate={{ opacity: 1, y: 0 }}
         className="glass-card p-4"
       >
-        <h3 className="text-sm font-bold mb-2 flex items-center gap-2">
+        <h3 className="text-sm font-bold mb-1 flex items-center gap-2">
           <Heart size={16} className="text-rose-400" /> Ako sa dnes cítiš?
         </h3>
+        <p className="text-[11px] text-gray-500 mb-2 leading-snug">
+          Podľa toho ti tréner prispôsobí najbližší tréning (tlačidlo „Prepočítať" v Pláne aj rady trénera).
+          Zaznamenáva sa len v tomto zariadení na dnešný deň.
+        </p>
         <div className="flex gap-2">
           {[
             { k: "ok", label: "💪 Dobre" },

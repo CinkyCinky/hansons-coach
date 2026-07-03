@@ -255,9 +255,12 @@ function FullPlanOverview() {
             }
             return (
               <div className="flex flex-col gap-4">
-                <p className="text-[11px] text-gray-500">
-                  Variant: {data.variant}. Nedeľa = dlhý beh; kľúčové tréningy vidíš pri jednotlivých týždňoch.
-                </p>
+                <div className="text-[11px] text-gray-500 leading-snug space-y-1">
+                  <p>Variant: <b className="text-gray-400">{data.variant}</b>. Utorok a štvrtok = kľúčové tréningy, nedeľa = dlhý beh; ostatné dni ľahké behy.</p>
+                  <p className="text-gray-600">
+                    <b className="text-gray-500">Vysvetlivky:</b> „tempom z 5 km“ = tempo, akým naplno zabehneš 5 km · „cieľové/pretekové (HMP)“ = tvoje plánované tempo na polmaratón · „klus“ = veľmi pomalý beh na oddych medzi rýchlymi úsekmi.
+                  </p>
+                </div>
                 {order.map((pk) => {
                   const meta = PHASE_META[pk as PhaseKey] ?? { label: pk, color: "bg-gray-400", desc: "" };
                   const wk = byPhase[pk];
@@ -283,11 +286,11 @@ function FullPlanOverview() {
                               T{w.week}{w.is_current ? " · tu si" : ""}
                             </span>
                             {w.tuesday ? (
-                              <span className="text-gray-400"> — {w.tuesday}</span>
+                              <span className="block text-gray-400 mt-0.5"><span className="text-gray-500 font-semibold">Ut·</span> {w.tuesday}</span>
                             ) : (
-                              <span className="text-gray-500"> — {phaseFallback(w.phase)}</span>
+                              <span className="block text-gray-500 mt-0.5">{phaseFallback(w.phase)}</span>
                             )}
-                            {w.thursday && <span className="text-gray-500"> · {w.thursday}</span>}
+                            {w.thursday && <span className="block text-gray-400 mt-0.5"><span className="text-gray-500 font-semibold">Št·</span> {w.thursday}</span>}
                           </div>
                         ))}
                       </div>
