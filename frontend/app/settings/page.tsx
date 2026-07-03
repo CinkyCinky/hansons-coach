@@ -664,7 +664,7 @@ export default function Settings() {
       </button>
 
       <div className="text-center mt-4 text-xs text-gray-600">
-        <p>Hansons Running Coach v2.0.0</p>
+        <p>Hansons Coach v2.0.0</p>
       </div>
     </div>
   );

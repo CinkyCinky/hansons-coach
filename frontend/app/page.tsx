@@ -10,7 +10,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { classifyWorkout } from "@/lib/workoutType";
-import { hrvStatusSk } from "@/lib/garminLabels";
+import { hrvStatusSk, readinessLevelSk } from "@/lib/garminLabels";
 import { fetchProfile, FEELING_KEY } from "@/lib/api";
 
 function getFormStatus(sleepScore?: number, bodyBattery?: number, readiness?: number) {
@@ -876,7 +876,7 @@ export default function Dashboard() {
             />
           </div>
           {readiness.readiness_status && (
-            <p className="text-xs text-gray-400 mt-2 truncate">{readiness.readiness_status}</p>
+            <p className="text-xs text-gray-400 mt-2 truncate">{readinessLevelSk(readiness.readiness_status)}</p>
           )}
         </motion.div>
       </section>

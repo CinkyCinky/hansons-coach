@@ -247,7 +247,7 @@ export default function Chat() {
                 {
                   id: "1",
                   role: "model",
-                  content: `Ahoj ${displayName}! Som tvoj AI bežecký tréner podľa Hansons metódy. Ako ti môžem pomôcť?`,
+                  content: `Ahoj ${displayName}! Som tvoj AI bežecký tréner podľa Hansonovej metódy. Ako ti môžem pomôcť?`,
                   ts: Date.now(),
                 },
               ]
@@ -356,7 +356,7 @@ export default function Chat() {
             </div>
             <div>
               <h1 className="text-lg font-bold leading-tight">AI Tréner</h1>
-              <p className="text-green-400 text-xs">online · Hansons metóda</p>
+              <p className="text-green-400 text-xs">online · Hansonova metóda</p>
             </div>
           </div>
 

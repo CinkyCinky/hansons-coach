@@ -554,7 +554,7 @@ export default function Plan() {
       <header>
         <h1 className="text-3xl font-bold mb-1">Tréningový Plán</h1>
         <p className="text-gray-400 text-sm">
-          Hanson {VARIANT_LABELS[store.dashboard?.plan_variant ?? "advanced"] ?? "Advanced"} Half-Marathon
+          Hansonova metóda · {VARIANT_LABELS[store.dashboard?.plan_variant ?? "advanced"] ?? "Advanced"}
         </p>
       </header>
 

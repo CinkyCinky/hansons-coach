@@ -42,40 +42,40 @@ Pondelok/Streda/Piatok/Sobota = Easy behy alebo Rest/Cross-train.
 • Týždeň 18: TAPER (zostup) — výrazné zníženie objemu, sviežosť na preteky.
 Tempo behy (štvrtok) prebiehajú PARALELNE celý plán a postupne sa predlžujú.
 
-▌OFICIÁLNY PLÁN — UTORKOVÉ INTERVALY (WU + CD 1–3 míle na Easy tempe)
+▌OFICIÁLNY PLÁN — UTORKOVÉ INTERVALY (WU + CD 2–4 km na Easy tempe)
   SPEED fáza (@ AKTUÁLNE 5k tempo — z reálnej formy/VO2max, NIE z cieľa):
    T2:  12 × 400m  (400m jog pauza)
    T3:   8 × 600m  (400m jog pauza)
    T4:   6 × 800m  (400m jog pauza)
    T5:   5 × 1000m (600m jog pauza)
    T6:   4 × 1200m (600m jog pauza)
-   T7:   3 × 1míľa (800m jog pauza)
+   T7:   3 × 1.6 km (800m jog pauza)
    T8:   5 × 1000m (600m jog pauza)
    T9:   6 × 800m  (400m jog pauza)
    T10: 12 × 400m  (400m jog pauza)
-  STRENGTH fáza (@ cieľové HMP − 10 s/míľu, ≈ −6 s/km):
-   T11:  6 × 1míľa  (400m jog pauza)
-   T12:  4 × 1.5míle (800m jog pauza)
-   T13:  3 × 2míle  (800m jog pauza)
-   T14:  2 × 3míle  (1míľa jog pauza)
-   T15:  3 × 2míle  (800m jog pauza)
-   T16:  4 × 1.5míle (800m jog pauza)
-   T17:  6 × 1míľa  (400m jog pauza)
+  STRENGTH fáza (@ cieľové HMP − 6 s/km):
+   T11:  6 × 1.6 km  (400m jog pauza)
+   T12:  4 × 2.4 km  (800m jog pauza)
+   T13:  3 × 3.2 km  (800m jog pauza)
+   T14:  2 × 4.8 km  (1.6 km jog pauza)
+   T15:  3 × 3.2 km  (800m jog pauza)
+   T16:  4 × 2.4 km  (800m jog pauza)
+   T17:  6 × 1.6 km  (400m jog pauza)
 
 ▌OFICIÁLNY PLÁN — ŠTVRTKOVÉ TEMPO BEHY @ HMP (cieľové tempo)
-  3 míle (T2–T4) → 4 míle (T5–T7) → 5 míľ (T8–T10) → 6 míľ (T11–T13)
-  → 7 míľ (T14–T16) → 5 míľ (T17) → taper. Tempo VŽDY presne cieľové HMP.
+  5 km (T2–T4) → 6.5 km (T5–T7) → 8 km (T8–T10) → 10 km (T11–T13)
+  → 11 km (T14–T16) → 8 km (T17) → taper. Tempo VŽDY presne cieľové HMP.
 
 ▌OFICIÁLNY PLÁN — NEDEĽNÉ DLHÉ BEHY
-  Budujú sa ~8 → 10 → 12 míľ (vrchol ~12 míľ / ~19 km; ku koncu striedanie 10/12).
-  Dlhý beh NIKDY nepresiahne ~30 % týždenného objemu. POZOR: 16 míľ je MARATÓNsky
-  strop, NIE polmaratónsky — pri polmaratóne dlhý beh nejde nad ~12 míľ (~19 km).
+  Budujú sa ~13 → 16 → 19 km (vrchol ~19 km; ku koncu striedanie 16/19).
+  Dlhý beh NIKDY nepresiahne ~30 % týždenného objemu. POZOR: ~26 km je MARATÓNsky
+  strop, NIE polmaratónsky — pri polmaratóne dlhý beh nejde nad ~19 km.
   Beží sa Easy tempom (NIE pretekovým) — opäť princíp kumulovanej únavy.
 
 ▌TRÉNINGOVÉ TEMPÁ (Hanson je PACE-FIRST — riadime TEMPOM, nie tepom)
 • Easy:      HMP + 40 až 75 s/km  → REGENERAČNÉ, riadené TEMPOM (tep len referencia).
 • Tempo:     presne cieľové pretekové HMP.
-• Strength:  cieľové HMP − 10 s/míľu (≈ −6 s/km) — dlhé intervaly v 2. polovici plánu.
+• Strength:  cieľové HMP − 6 s/km — dlhé intervaly v 2. polovici plánu.
 • Speed:     AKTUÁLNE 5k tempo z reálnej formy (VO2max / posledné preteky), NIE z cieľa.
 • Jog pauzy: veľmi pomaly, klus na odplavenie laktátu.
 
@@ -98,8 +98,8 @@ nanajvýš ako informáciu v popise kroku, nie ako Garmin target.
 
 ▌DLHÝ BEH — PRAVIDLO OBJEMU (dôležitý guardrail)
 • Dlhý beh NIKDY nepresiahne ~30 % týždenného objemu. Radšej kratší a častejší
-  beh než jeden „hrdinský". Polmaratónsky dlhý beh vrcholí na ~12 míľ (~19 km).
-  (Strop 16 míľ je MARATÓNske pravidlo — na polmaratón sa NEvzťahuje.)
+  beh než jeden „hrdinský". Polmaratónsky dlhý beh vrcholí na ~19 km.
+  (Strop ~26 km je MARATÓNske pravidlo — na polmaratón sa NEvzťahuje.)
 • Dlhý beh sa beží EASY tempom/tepom (nie pretekovým) — opäť kumulovaná únava.
 
 ▌ROZLOŽENIE INTENZITY A OBJEMU
@@ -114,7 +114,7 @@ nanajvýš ako informáciu v popise kroku, nie ako Garmin target.
   regeneráciu). Bežať SOS rýchlejšie než treba tiež škodí — vyčerpá pred ďalším SOS.
 • Speed intervaly kotvi na AKTUÁLNU 5k formu (nie cieľ) — podľa reálnej fyzičky
   (VO2max, posledné preteky/tempá). Strength a Tempo kotvi na CIEĽOVÝ čas (HMP).
-• Quality session (SOS) = warm-up + cool-down v rozsahu 1–3 míle (~2–4 km), na Easy tempe;
+• Quality session (SOS) = warm-up + cool-down v rozsahu 2–4 km, na Easy tempe;
   dlhšie sedenie → dlhší WU/CD. Easy a Dlhé behy WU/CD NEMAJÚ.
 
 ▌ÚPRAVA NA PODMIENKY
@@ -212,7 +212,7 @@ def paces_block(goal_time: str, vo2max: Optional[float] = None) -> str:
         f"\nVYPOČÍTANÉ TEMPÁ (cieľ {goal_time}):\n"
         f"  HMP (pretekové = Tempo beh): {p['hmp']}/km\n"
         f"  Easy/Dlhé: {p['easy_min']}–{p['easy_max']}/km — RIAĎ TEMPOM (tep len ako referencia)\n"
-        f"  Strength intervaly: {p['strength']}/km (cieľ HMP − 10 s/míľu)\n"
+        f"  Strength intervaly: {p['strength']}/km (cieľ HMP − 6 s/km)\n"
         f"  Speed intervaly:    {p['speed']}/km (aktuálna 5K forma; zdroj: {p['speed_source']})\n"
     )
 
@@ -320,14 +320,14 @@ def training_phase(week: int, variant: Optional[str] = "advanced") -> Dict[str, 
                     "note": "SPEED fáza — krátke intervaly @ aktuálne 5k tempo (z VO2max). SOS: Speed (ut), Tempo (št), Dlhý (ne)."}
         if week <= 17:
             return {"key": "strength", "label": f"Strength fáza (T{week})",
-                    "note": "STRENGTH fáza — dlhé intervaly @ HMP − 10 s/míľu. SOS: Strength (ut), Tempo (št), Dlhý (ne)."}
+                    "note": "STRENGTH fáza — dlhé intervaly @ HMP − 6 s/km. SOS: Strength (ut), Tempo (št), Dlhý (ne)."}
         return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
     if week <= 10:
         return {"key": "speed", "label": f"Speed fáza (T{week})",
                 "note": "SPEED fáza — krátke intervaly @ aktuálne 5k tempo (z VO2max). SOS: Speed (ut), Tempo (št), Dlhý (ne)."}
     if week <= 17:
         return {"key": "strength", "label": f"Strength fáza (T{week})",
-                "note": "STRENGTH fáza — dlhé intervaly @ HMP − 10 s/míľu. SOS: Strength (ut), Tempo (št), Dlhý (ne)."}
+                "note": "STRENGTH fáza — dlhé intervaly @ HMP − 6 s/km. SOS: Strength (ut), Tempo (št), Dlhý (ne)."}
     return {"key": "taper", "label": "Taper / pretekový týždeň (T18)", "note": TAPER_GUIDANCE}
 
 
@@ -407,9 +407,9 @@ def _fmt_reps(reps: int, dist_m: int, rec_m: int) -> str:
 
 
 VARIANTS = {
-    "advanced": "Advanced — plný objem (~51 mi/týž vo vrchole), 6 dní behu.",
-    "beginner": "Beginner — nižší objem (~48 mi/týž vo vrchole), kratšie Easy behy. BASE fáza T1–5 (len Easy + nedeľný dlhý beh); intervaly AJ tempo štartujú až T6. Strength ako Advanced okrem T17 (Beginner 4×1mí).",
-    "just_finish": "Just Finish — cieľ je dobehnúť (HMP 2:25+): ŽIADNE intervaly ani tempo, len Easy behy + nedeľný dlhý beh (vrchol ~16 km / 10 mí, objem ~53 km vo vrchole).",
+    "advanced": "Advanced — plný objem (~82 km/týž vo vrchole), 6 dní behu.",
+    "beginner": "Beginner — nižší objem (~77 km/týž vo vrchole), kratšie Easy behy. BASE fáza T1–5 (len Easy + nedeľný dlhý beh); intervaly AJ tempo štartujú až T6. Strength ako Advanced okrem T17 (Beginner 4×1.6 km).",
+    "just_finish": "Just Finish — cieľ je dobehnúť (HMP 2:25+): ŽIADNE intervaly ani tempo, len Easy behy + nedeľný dlhý beh (vrchol ~16 km, objem ~53 km vo vrchole).",
 }
 
 
@@ -421,6 +421,21 @@ def variant_label(variant: Optional[str]) -> str:
 def variant_note(variant: Optional[str]) -> str:
     v = (variant or "advanced").lower()
     return f"\nVARIANT PLÁNU: {VARIANTS.get(v, VARIANTS['advanced'])}\n"
+
+
+# Garmin „Training Readiness" úroveň (HIGH, LOW…) → SK, aby ju AI tréner nezopakoval anglicky.
+_READINESS_LEVEL_SK = {
+    "VERY_LOW": "veľmi nízka", "LOW": "nízka", "MODERATE": "stredná", "HIGH": "vysoká",
+    "VERY_HIGH": "veľmi vysoká", "MAXED": "maximálna", "PRIME": "špičková",
+    "READY": "pripravený", "NONE": "--", "UNKNOWN": "--",
+}
+
+
+def readiness_level_sk(level) -> str:
+    """Garmin readiness level (anglicky) → slovensky. Neznámy necháme tak."""
+    if not level:
+        return ""
+    return _READINESS_LEVEL_SK.get(str(level).strip().upper(), str(level))
 
 
 def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dict]:
@@ -444,7 +459,7 @@ def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dic
         sun = day.get("sun")
         if isinstance(sun, (int, float)):
             out["sunday"] = {"kind": "long", "dist_km": sun, "pace": "easy",
-                             "label": f"Dlhý beh {sun} km @ Easy (Just Finish; vrchol ~16 km / 10 mí)"}
+                             "label": f"Dlhý beh {sun} km @ Easy (Just Finish; vrchol ~16 km)"}
         return out
 
     # Rebríky podľa variantu: Beginner má BASE fázu T1–5 (speed aj tempo až od T6).
@@ -460,14 +475,14 @@ def sos_for_week(week: int, variant: Optional[str] = "advanced") -> Optional[dic
     elif week in strength_l:
         reps, dist_m, rec_m = strength_l[week]
         out["tuesday"] = {"kind": "strength", "reps": reps, "dist_m": dist_m, "recovery_m": rec_m,
-                          "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−10 s/míľu"}
+                          "pace": "strength", "label": f"Strength {_fmt_reps(reps, dist_m, rec_m)} @ HMP−6 s/km"}
     # Tempo: v Beginner base fáze (T2–5) tempo NIE je — pridá sa až od T6.
     if week in tempo_m:
         tempo_km = round(tempo_m[week] * _MI, 1)
         out["thursday"] = {"kind": "tempo", "dist_km": tempo_km, "pace": "tempo",
                            "label": f"Tempo {tempo_km} km @ cieľové HMP"}
     out["sunday"] = {"kind": "long", "pace": "easy",
-                     "label": "Dlhý beh @ Easy (≈8–12 míľ podľa fázy, vrchol ~12 míľ / ~19 km; max ~30 % týždenného objemu)"}
+                     "label": "Dlhý beh @ Easy (≈13–19 km podľa fázy, vrchol ~19 km; max ~30 % týždenného objemu)"}
     return out
 
 

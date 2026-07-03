@@ -1304,7 +1304,7 @@ def generate_daily_update(feeling: str = "", pain: str = "", pain_area: str = ""
             r, hrv, bb, tl = snap["readiness"], snap["hrv"], snap["body_battery"], snap["training_load"]
             form_context = (
                 "STAV DŇA (pre rozhodnutie o zmäkčení):\n"
-                f"- Pripravenosť: {r.get('score', 'N/A')}/100 ({r.get('level', '')})\n"
+                f"- Pripravenosť: {r.get('score', 'N/A')}/100 ({hansons_knowledge.readiness_level_sk(r.get('level'))})\n"
                 f"- HRV: {hrv.get('status', 'N/A')} (last night {hrv.get('last_night', 'N/A')} ms)\n"
                 f"- Body Battery teraz: {bb.get('current', 'N/A')}/100 (aktuálny stav; nízka = únava po dni)\n"
                 + hansons_knowledge.training_load_block(tl)
@@ -1728,7 +1728,7 @@ Body Battery: pri zobudení {bb.get('morning', 'N/A')}/100 (stav zotavenia), ter
 HRV: {hrv.get('status', 'N/A')} (last night: {hrv.get('last_night', 'N/A')} ms, weekly avg: {hrv.get('weekly_avg', 'N/A')} ms)
 Pokojový tep: {resting_hr or 'N/A'} bpm | Max HR (z histórie): {max_hr or 'N/A'} bpm
 LTHR: {lthr_data.get('lthr') or athlete.get('lthr', 'N/A')} bpm | LT tempo: {lthr_data.get('lthr_pace') or athlete.get('lthr_pace', 'N/A')}
-Pripravenosť: {readiness.get('score', 'N/A')}/100 ({readiness.get('level', '')})
+Pripravenosť: {readiness.get('score', 'N/A')}/100 ({hansons_knowledge.readiness_level_sk(readiness.get('level'))})
 Training Load: akútna {training_load.get('acute_load', 'N/A')} | chronická {training_load.get('chronic_load', 'N/A')} | ratio {training_load.get('ratio', 'N/A')} | status: {training_load.get('status', 'N/A')}
 Spánok (posl. 5 dní): {sleep_summary or 'N/A'}
 {zones_str}
@@ -1748,7 +1748,7 @@ Najbližší tréning: {next_w_str}
         today_full = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
         
     system_instruction = (
-        f"Si osobný AI bežecký tréner — špičkový expert na Hansons Half-Marathon metódu. "
+        f"Si osobný AI bežecký tréner — špičkový expert na Hansonovu metódu (polmaratón). "
         f"Zverenec trénuje podľa variantu: {variant_lbl}. "
         f"Tvoje rady musia vychádzať z metodiky NIŽŠIE a z REÁLNYCH Garmin dát zverenca (vek, váha, "
         f"VO2max, LTHR, HR zóny, tempá, history). Nehovor všeobecne — argumentuj konkrétnymi číslami. "

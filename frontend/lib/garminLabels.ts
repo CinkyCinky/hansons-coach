@@ -14,3 +14,22 @@ export function hrvStatusSk(s?: string | null): string {
   if (!s) return "--";
   return HRV_STATUS_SK[s.toUpperCase()] ?? s;
 }
+
+// Garmin „Training Readiness" vracia úroveň v angličtine (HIGH, LOW…) — prekladáme na SK.
+const READINESS_LEVEL_SK: Record<string, string> = {
+  VERY_LOW: "Veľmi nízka",
+  LOW: "Nízka",
+  MODERATE: "Stredná",
+  HIGH: "Vysoká",
+  VERY_HIGH: "Veľmi vysoká",
+  MAXED: "Maximálna",
+  PRIME: "Špičková",
+  READY: "Pripravený",
+  NONE: "--",
+  UNKNOWN: "--",
+};
+
+export function readinessLevelSk(s?: string | null): string {
+  if (!s) return "";
+  return READINESS_LEVEL_SK[s.toUpperCase()] ?? s;
+}

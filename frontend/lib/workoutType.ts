@@ -18,7 +18,7 @@ const STYLES: Record<WorkoutType, TypeStyle> = {
   strength: {
     label: "Strength",
     badge: "bg-orange-500/15 text-orange-300 border-orange-500/30",
-    why: "Dlhé intervaly @ HMP − 10 s/míľu — sila a odolnosť na pretekové tempo.",
+    why: "Dlhé intervaly @ HMP − 6 s/km — sila a odolnosť na pretekové tempo.",
   },
   tempo: {
     label: "Tempo",

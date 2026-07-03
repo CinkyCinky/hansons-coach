@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Footprints, BrainCircuit, Repeat, Gauge, CalendarRange, Rocket, ChevronRight, X,
+  Footprints, BrainCircuit, Repeat, Gauge, CalendarRange, Rocket, ChevronRight, X, Layers,
 } from "lucide-react";
 
 // localStorage kľúč — pri zmene obsahu úvodu zvýš verziu, aby sa zobrazil znova.
-const SEEN_KEY = "hansons_onboarding_v1";
+const SEEN_KEY = "hansons_onboarding_v2";
 // Event, ktorým sa dá úvod znova otvoriť (napr. z obrazovky "O metóde").
 export const OPEN_ONBOARDING_EVENT = "hansons:open-onboarding";
 
@@ -41,12 +41,22 @@ const CARDS: Card[] = [
       "pravidelnosť — nie jeden hrdinský tréning. Cítiť sa trochu unavený je zámer, nie chyba.",
   },
   {
-    icon: <Repeat size={32} />,
-    title: "3 kľúčové tréningy (SOS)",
+    icon: <Layers size={32} />,
+    title: "Tri varianty — vyber si svoj",
     body:
-      "Iba 3 dni v týždni sú náročné — Hanson ich volá SOS („Something of Substance“): " +
-      "intervaly (utorok), tempo na pretekovom tempe (štvrtok) a dlhý beh (nedeľa). " +
-      "Medzi nimi sú vždy ľahké behy alebo voľno — nikdy nie 2 tvrdé dni za sebou.",
+      "Nie je to jeden plán pre všetkých. Vyberieš si jeden z troch: Beginner (prvý polmaratón, " +
+      "pokojnejší nábeh), Advanced (už si polmaratón bežal a chceš zrýchliť) a Just Finish (cieľ je " +
+      "pohodovo dobehnúť — bez intervalov a tempa, len ľahké behy a dlhý beh). Variant zvolíš v " +
+      "Nastaveniach a plán aj rady trénera sa mu prispôsobia.",
+  },
+  {
+    icon: <Repeat size={32} />,
+    title: "Kľúčové tréningy (SOS)",
+    body:
+      "Väčšina variantov stavia na 3 kľúčových tréningoch týždňa — Hanson ich volá SOS " +
+      "(„Something of Substance“): intervaly (utorok), tempo na pretekovom tempe (štvrtok) a dlhý beh " +
+      "(nedeľa). Medzi nimi sú vždy ľahké behy alebo voľno (nikdy nie 2 tvrdé dni za sebou). Odľahčený " +
+      "Just Finish intervaly ani tempo nemá — len ľahké behy a dlhý beh.",
   },
   {
     icon: <Gauge size={32} />,
@@ -58,19 +68,20 @@ const CARDS: Card[] = [
   },
   {
     icon: <CalendarRange size={32} />,
-    title: "18 týždňov v 4 fázach",
+    title: "18 týždňov, postupné fázy",
     body:
-      "Plán má 18 týždňov: úvod (rozbeh) → Speed (rýchlosť) → Strength (sila na pretekové " +
-      "tempo) → Taper (posledný týždeň oddych, aby si prišiel svieži). Appka vie, v ktorej " +
-      "fáze si, a tréningy tomu prispôsobí.",
+      "Plán trvá 18 týždňov a stupňuje sa: úvod (rozbeh) → budovanie → vrchol objemu → taper " +
+      "(posledný týždeň oddych, aby si prišiel svieži). Advanced a Beginner pridávajú fázy Speed a " +
+      "Strength (Beginner o niečo neskôr); Just Finish drží celý čas ľahké behy a rastúci dlhý beh. " +
+      "Appka vie, v ktorej fáze si.",
   },
   {
     icon: <Rocket size={32} />,
     title: "Ako začať",
     body:
-      "Tento plán predpokladá, že už nejaký čas pravidelne behávaš (nie je to plán od nuly). " +
-      "Začni takto: 1) prepoj Garmin v Nastaveniach, 2) nastav cieľový čas a dátum pretekov, " +
-      "3) v Pláne si nechaj vygenerovať týždeň. Kedykoľvek si tento úvod otvoríš znova v sekcii „Metóda“.",
+      "Začni takto: 1) prepoj Garmin v Nastaveniach, 2) vyber si variant plánu a nastav cieľový čas + " +
+      "dátum pretekov, 3) v Pláne si nechaj vygenerovať týždeň. Väčšina variantov ráta s tým, že už " +
+      "nejaký čas behávaš (nie je to plán od nuly). Tento úvod si kedykoľvek otvoríš znova v sekcii „Metóda“.",
   },
 ];
 

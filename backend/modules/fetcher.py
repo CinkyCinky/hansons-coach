@@ -78,6 +78,34 @@ def _deg_to_compass(deg) -> Optional[str]:
     return dirs[int((deg / 45) + 0.5) % 8]
 
 
+# Garmin vracia stav oblohy anglicky (weatherTypeDTO.desc) — preložíme na SK,
+# aby sa „Cloudy" nezobrazilo v UI ani nešlo do AI trénera. Neznáme necháme tak.
+_WEATHER_SK = {
+    "clear": "jasno", "clear sky": "jasno", "mostly clear": "prevažne jasno",
+    "sunny": "slnečno", "mostly sunny": "prevažne slnečno", "fair": "pekne",
+    "partly cloudy": "polojasno", "partly sunny": "polojasno",
+    "mostly cloudy": "prevažne zamračené", "cloudy": "zamračené", "overcast": "zamračené",
+    "fog": "hmla", "foggy": "hmla", "mist": "hmlisto", "misty": "hmlisto",
+    "haze": "opar", "hazy": "opar", "smoke": "dym",
+    "rain": "dážď", "light rain": "slabý dážď", "heavy rain": "silný dážď",
+    "showers": "prehánky", "rain showers": "dažďové prehánky",
+    "scattered showers": "ojedinelé prehánky", "drizzle": "mrholenie",
+    "snow": "sneženie", "light snow": "slabé sneženie", "heavy snow": "silné sneženie",
+    "snow showers": "snehové prehánky", "flurries": "snehové vločky",
+    "sleet": "plieskanica", "freezing rain": "mrznúci dážď",
+    "thunderstorm": "búrka", "thunderstorms": "búrky", "thundershowers": "búrkové prehánky",
+    "windy": "veterno", "breezy": "vetríno", "hot": "horúco", "cold": "chladno",
+    "dust": "prach", "hail": "krupobitie",
+}
+
+
+def _condition_sk(desc):
+    """Stav oblohy z Garminu (anglicky) → slovensky. Neznámy reťazec necháme (radšej než prázdny)."""
+    if not desc:
+        return desc
+    return _WEATHER_SK.get(str(desc).strip().lower(), desc)
+
+
 def get_activity_weather(client, activity_id) -> Optional[dict]:
     """Stiahne počasie zaznamenané k aktivite (Garmin /activity/{id}/weather).
     Bez externého API — Garmin si ukladá podmienky z najbližšej meteostanice
@@ -91,7 +119,7 @@ def get_activity_weather(client, activity_id) -> Optional[dict]:
         humidity = w.get("relativeHumidity")
         wind_speed = w.get("windSpeed")
         wind_dir = _deg_to_compass(w.get("windDirection")) or w.get("windDirectionCompassPoint")
-        cond = (w.get("weatherTypeDTO") or {}).get("desc") if isinstance(w.get("weatherTypeDTO"), dict) else None
+        cond = _condition_sk((w.get("weatherTypeDTO") or {}).get("desc")) if isinstance(w.get("weatherTypeDTO"), dict) else None
         if temp is None and humidity is None and wind_speed is None and not cond:
             return None
         return {

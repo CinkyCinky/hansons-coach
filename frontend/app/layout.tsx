@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Hansons Coach | AI Bežecký Tréner",
-  description: "Osobný AI bežecký tréner podľa Hansons Half-Marathon metódy. Prepojený s Garmin Connect.",
+  description: "Osobný AI bežecký tréner podľa Hansonovej metódy. Prepojený s Garmin Connect.",
   manifest: "/manifest.json",
 };
 

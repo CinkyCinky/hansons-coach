@@ -36,7 +36,7 @@ export default function About() {
         </div>
         <div>
           <h1 className="text-2xl font-bold">O metóde</h1>
-          <p className="text-gray-400 text-sm">Hansonova polmaratónová metóda — vysvetlená</p>
+          <p className="text-gray-400 text-sm">Hansonova metóda — polmaratónová príprava, vysvetlená</p>
         </div>
       </header>
 
@@ -52,9 +52,29 @@ export default function About() {
           <p>
             Tréningový systém manželov Hansonovcov (a trénera Luka Humphreyho) na prípravu na
             polmaratón. Stavia na <b className="text-gray-100">objeme a pravidelnosti</b> namiesto
-            jedného extrémne dlhého behu. Beháš 6 dní v týždni, z toho 3 sú kľúčové („tvrdé")
-            tréningy a zvyšok ľahké behy. Plán trvá 18 týždňov.
+            jedného extrémne dlhého behu. Beháš zvyčajne 6 dní v týždni, z toho spravidla 3 sú kľúčové („tvrdé")
+            tréningy a zvyšok ľahké behy. Plán trvá 18 týždňov. (Odľahčený variant Just Finish je celý
+            v ľahkom tempe — podrobnosti nižšie.)
           </p>
+        </Item>
+
+        <Item q="Ktorý plán je pre teba? (3 varianty)">
+          <p>
+            Metóda má tri varianty — vyber si podľa cieľa a skúseností. Variant nastavíš v{" "}
+            <Link href="/settings" className="text-primary underline underline-offset-2">Nastaveniach</Link>;
+            plán aj rady trénera sa mu potom prispôsobia.
+          </p>
+          <Term name="Beginner">
+            prvý polmaratón alebo návrat po pauze. Prvých 5 týždňov je base fáza (len ľahké behy a dlhý
+            beh), intervaly a tempo prídu až od T6. O niečo nižší objem.
+          </Term>
+          <Term name="Advanced">
+            už si polmaratón bežal a chceš zlepšiť čas. Plný objem, fázy Speed aj Strength (po úvodnom týždni).
+          </Term>
+          <Term name="Just Finish">
+            cieľ je pohodovo dobehnúť, nie zabehnúť čas. Žiadne intervaly ani tempo — len ľahké behy a
+            nedeľný dlhý beh (vrchol ~16 km). Ideálne, keď ti ide o dokončenie bez tlaku na tempo.
+          </Term>
         </Item>
 
         <Item q="Kumulovaná únava — prečo sa cítim unavený?">
@@ -80,7 +100,7 @@ export default function About() {
             krátke intervaly na tvojom aktuálnom 5K tempe — rozvíja VO2max a bežeckú ekonomiku.
           </Term>
           <Term name="Strength (sila, utorky T11–17)">
-            dlhšie intervaly tesne pod pretekovým tempom (HMP − 10 s/míľu) — naučí ťa držať tempo
+            dlhšie intervaly tesne pod pretekovým tempom (HMP − 6 s/km) — naučí ťa držať tempo
             na unavených nohách.
           </Term>
           <Term name="Tempo (štvrtky)">
@@ -88,7 +108,7 @@ export default function About() {
           </Term>
           <Term name="Dlhý beh (nedele)">
             najdlhší beh týždňa, ale v <b className="text-gray-100">ľahkom (Easy) tempe</b>, nie
-            pretekovom. Na polmaratón vrcholí okolo 12 míľ (~19 km).
+            pretekovom. Na polmaratón vrcholí okolo ~19 km.
           </Term>
           <p className="text-[13px] text-gray-500 leading-relaxed mt-1">
             Časovanie utorkov platí pre <b className="text-gray-400">Advanced</b>.
@@ -101,9 +121,9 @@ export default function About() {
         <Item q="Tréningové tempá — z čoho sa počítajú?">
           <p>Hanson sa riadi <b className="text-gray-100">tempom, nie tepom</b>. Tep je len doplnková referencia.</p>
           <Term name="HMP">Half-Marathon Pace — tvoje cieľové pretekové tempo. Z neho sa počíta väčšina ostatných temp.</Term>
-          <Term name="Easy / Dlhé">pohodlné, o ~1–2 min/míľu pomalšie než cieľ. Musí byť naozaj ľahké.</Term>
+          <Term name="Easy / Dlhé">pohodlné, o ~40–75 s/km pomalšie než cieľ. Musí byť naozaj ľahké.</Term>
           <Term name="Tempo">presne cieľové HMP.</Term>
-          <Term name="Strength">HMP − 10 s/míľu (o čosi rýchlejšie než Easy, pomalšie než Speed).</Term>
+          <Term name="Strength">HMP − 6 s/km (o čosi rýchlejšie než Easy, pomalšie než Speed).</Term>
           <Term name="Speed">tvoje aktuálne 5K tempo — odhadnuté z Garmin VO2max alebo posledných pretekov (z reálnej formy, NIE z cieľa).</Term>
           <p className="text-[13px] text-gray-500 leading-relaxed mt-1">
             <b className="text-gray-400">Just Finish</b> beží celý v Easy tempe — Tempo, Strength ani Speed sa

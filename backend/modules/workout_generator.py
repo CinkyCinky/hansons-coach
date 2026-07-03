@@ -388,8 +388,8 @@ def _enforce_long_run_cap(workouts: list, notes: list, variant: str = "advanced"
             if main.get("pace_max"):
                 new_step["pace_max"] = main["pace_max"]
             w["steps"] = [new_step]
-            reason = ("vrchol dlhého behu v Just Finish je ~16 km (10 mí)" if jf else
-                      "podľa Hansona dlhý beh nejde nad ~30 % týždenného objemu a na polmaratón nad ~12 míľ")
+            reason = ("vrchol dlhého behu v Just Finish je ~16 km" if jf else
+                      "podľa Hansona dlhý beh nejde nad ~30 % týždenného objemu a na polmaratón nad ~19 km")
             notes.append(f"Dlhý beh som skrátil na ~{round(cap, 1)} km — {reason}.")
 
 
@@ -487,7 +487,7 @@ KĽÚČOVÉ PRAVIDLÁ PRE VÝSTUP:
 • EASY a DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
 • SOS tréningy (Speed/Strength/Tempo) VŽDY začínaj krokom 'warmup' a ukonči 'cooldown',
   každý v rozsahu ~2–4 km (dlhšie sedenie → dlhší WU/CD), na Easy tempe. Hlavná časť medzi nimi.
-• TEMPO: hlavná časť na cieľové HMP tempo. STRENGTH: úseky na HMP − 10 s/míľu.
+• TEMPO: hlavná časť na cieľové HMP tempo. STRENGTH: úseky na HMP − 6 s/km.
   SPEED: úseky na aktuálne 5k tempo (z VO2max). Pauzy medzi úsekmi = 'recover' pomaly (jog).
 
 Vygeneruj odpoveď VÝLUČNE vo formáte JSON:
@@ -553,7 +553,7 @@ PRAVIDLÁ:
   orientačný tep daj nanajvýš do 'description'.
 • EASY a DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
 • SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' a ukonči 'cooldown', každý ~2–4 km na Easy tempe.
-• TEMPO → hlavná časť na cieľové HMP. STRENGTH → HMP − 10 s/míľu. SPEED → aktuálne 5k tempo.
+• TEMPO → hlavná časť na cieľové HMP. STRENGTH → HMP − 6 s/km. SPEED → aktuálne 5k tempo.
   Pauzy medzi úsekmi = 'recover' pomaly (jog).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
@@ -739,7 +739,7 @@ PRAVIDLÁ:
   orientačný tep daj nanajvýš do 'description'.
 • EASY/DLHÉ behy = JEDEN súvislý beh na Easy tempe, BEZ warmup/cooldown.
 • SOS (Speed/Strength/Tempo) VŽDY začni 'warmup' a ukonči 'cooldown', každý ~2–4 km.
-• TEMPO → cieľové HMP. STRENGTH → HMP − 10 s/míľu. SPEED → aktuálne 5k tempo. Pauzy 'recover' pomaly.
+• TEMPO → cieľové HMP. STRENGTH → HMP − 6 s/km. SPEED → aktuálne 5k tempo. Pauzy 'recover' pomaly.
 • Ak je forma slabá (nízka pripravenosť/HRV), tréning rozumne zmäkči (pomalší okraj, kratšie).
 
 Vráť odpoveď VÝLUČNE vo formáte JSON:
