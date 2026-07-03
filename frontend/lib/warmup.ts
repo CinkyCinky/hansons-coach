@@ -5,7 +5,7 @@
 // Dáta žijú čisto na frontende (žiadny backend) a sú v slovenčine, vrátane krokov a
 // vysvetlenia účelu, aby cvik zvládol aj úplný začiatočník.
 
-export type WarmupPhase = "before" | "after";
+export type WarmupPhase = "before" | "after" | "strength";
 
 export interface Exercise {
   id: string;
@@ -13,9 +13,17 @@ export interface Exercise {
   name: string;
   muscles: string;       // cieľové svaly (krátky štítok)
   dose: string;          // dávka, napr. "10 opakovaní na nohu"
-  durationSec?: number;  // ak ide o statický strečing → spustí sa časovač
+  durationSec?: number;  // ak ide o statický strečing/výdrž → spustí sa časovač
   steps: string[];       // 2–3 konkrétne kroky „čo presne robiť"
   why: string;           // na čo je cvik a prečo pomáha
+  mistake?: string;      // najčastejšia chyba — na čo si dať pozor
+  videoQuery?: string;   // ak je uvedené, UI ukáže odkaz na referenčné video
+}
+
+// Odkaz na referenčné video — YouTube vyhľadávanie podľa (anglického) názvu cviku.
+// Zámerne vyhľadávanie, nie konkrétne video ID: nikdy sa nerozbije na „video zmazané".
+export function videoUrl(query: string): string {
+  return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
 }
 
 // ── Dynamická rozcvička PRED behom (10 cvikov, ~8 min) ────────────────────────
@@ -58,6 +66,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Pohyb veď plynulo z bedrového kĺbu, koleno nechaj uvoľnené.",
     ],
     why: "Rozhýbe bedrový kĺb a zahreje hamstringy — kľúčové svaly, ktoré ťa pri behu poháňajú.",
+    mistake: "Nešvihaj silou ani cez bolesť — pohyb veď plynulo z bedra, trup nechaj vzpriamený a nehojdaj sa.",
+    videoQuery: "leg swings front to back running drill",
   },
   {
     id: "leg-swings-side",
@@ -84,6 +94,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Odtlač sa prednou nohou a plynulo vykroč ďalej. Trup drž vzpriamený.",
     ],
     why: "Naraz zahreje celé dolné telo — najdôležitejší cvik rozcvičky. Dbaj na správnu os kolena.",
+    mistake: "Predné koleno nesmie prejsť za špičku ani padať dovnútra — smeruje presne nad chodidlo.",
+    videoQuery: "walking lunges exercise proper form",
   },
   {
     id: "slow-skip",
@@ -97,6 +109,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Pažami pracuj synchrónne: ľavá ruka — pravá noha a naopak.",
     ],
     why: "Naladí pohybové vzorce behu a zahreje lýtka — príprava na správnu bežeckú techniku.",
+    mistake: "Nerob to rýchlo ani nízko — koleno hore, odraz z prednej časti chodidla, nedopadaj na pätu.",
+    videoQuery: "A skip running drill technique",
   },
   {
     id: "high-knees",
@@ -110,6 +124,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Trup drž vzpriamený, nenakláňaj sa dozadu.",
     ],
     why: "Prebudí bedrové ohýbače a nervovo-svalový systém pri vyššej intenzite behu.",
+    mistake: "Nenakláňaj sa dozadu — trup drž vzpriamený, koleno vystreľ hore a aktívne pracuj rukami.",
+    videoQuery: "high knees running drill technique",
   },
   {
     id: "butt-kicks",
@@ -123,6 +139,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Trup drž vzpriamený a aktívne pracuj pažami.",
     ],
     why: "Zvýši frekvenciu krokov a zahreje hamstringy — vhodná protiváha k vysokým kolenám.",
+    mistake: "Kolená smerujú dolu, nie dopredu — inak z toho je len kopanie a hamstringy sa nezahrejú.",
+    videoQuery: "butt kicks running drill technique",
   },
   {
     id: "bounders",
@@ -136,6 +154,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Tempo nechaj pomalšie ako pri iných cvikoch — dôležitá je kvalita pohybu.",
     ],
     why: "Trénuje výbušnú silu odrazu — základ ekonomického a pružného behu.",
+    mistake: "Nejde o rýchlosť ani maximálnu výšku — dôraz daj na kvalitný odraz a mäkké, tiché dopadnutie.",
+    videoQuery: "bounding running drill technique",
   },
   {
     id: "strides",
@@ -149,6 +169,8 @@ export const WARMUP_BEFORE: Exercise[] = [
       "Medzi rovinkami daj 30–60 s pokojnej chôdze na zotavenie.",
     ],
     why: "Naštartuje nervový systém a doladí techniku. Mimoriadne dôležité pred Speed a Strength tréningom.",
+    mistake: "Nezačínaj naplno a nie je to šprint — plynulo zrýchľuj do svižného, ale uvoľneného behu.",
+    videoQuery: "running strides technique how to",
   },
 ];
 
@@ -167,6 +189,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Drž bez hojdania. Potom vymeň nohy.",
     ],
     why: "Lýtka sú pri behu mimoriadne zaťažené — pravidelný strečing predchádza zápalu Achillovej šľachy.",
+    videoQuery: "standing calf stretch against wall",
   },
   {
     id: "hamstring-stretch",
@@ -181,6 +204,8 @@ export const STRETCH_AFTER: Exercise[] = [
       "Zastav sa tam, kde cítiš ťah, a drž bez hojdania.",
     ],
     why: "Skrátené hamstringy skracujú krok a zaťažujú driek — jeden z najdôležitejších strečingov pre bežca.",
+    mistake: "Nezaguľacuj chrbát pri predklone — vychádzaj z bedier a chrbát drž rovný, inak ťah cítiš v drieku, nie v hamstringu.",
+    videoQuery: "seated hamstring stretch proper form",
   },
   {
     id: "quad-stretch",
@@ -195,6 +220,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Ťah cítiš vpredu na stehne. Telo nepredkláňaj.",
     ],
     why: "Štvorhlavý sval tlmí nárazy pri behu a býva u väčšiny bežcov chronicky napätý.",
+    videoQuery: "standing quad stretch technique",
   },
   {
     id: "hip-flexor-stretch",
@@ -209,6 +235,8 @@ export const STRETCH_AFTER: Exercise[] = [
       "Pre väčší ťah zdvihni ruku nad hlavu.",
     ],
     why: "Sedenie cez deň skracuje bedrové ohýbače — skrátené znamenajú kratší krok a bolesť drieku.",
+    mistake: "Nepreháňaj predklon panvy do bolesti drieku — panvu podsaď (zadok zovri) a posúvaj sa vpred jemne.",
+    videoQuery: "kneeling hip flexor stretch",
   },
   {
     id: "it-band-stretch",
@@ -223,6 +251,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Ťah cítiš na vonkajšej strane stehna.",
     ],
     why: "Syndróm IT pásu patrí k najčastejším zraneniam bežcov — pravidelný strečing je najlepšia prevencia.",
+    videoQuery: "standing IT band stretch",
   },
   {
     id: "glute-stretch",
@@ -237,9 +266,142 @@ export const STRETCH_AFTER: Exercise[] = [
       "Ťah cítiš hlboko v zadku. Potom vymeň strany.",
     ],
     why: "Sedacie svaly stabilizujú beh. Napätý piriformis môže tlačiť na sedací nerv — strečing predchádza bolesti zadku a nohy.",
+    videoQuery: "figure 4 glute stretch lying down",
+  },
+];
+
+// ── Silový / voľný deň (voliteľné, ~15–20 min) ────────────────────────────────
+// Hanson odporúča doplnkovú silovú a mobilizačnú prácu 1–2× týždenne na ľahký/voľný
+// deň (NIE pred kľúčovým behom). Bez náradia, s vlastnou váhou. Cieľ: silnejší core,
+// zadok a jednonohá stabilita = ekonomickejší beh a menej zranení. Rob to pokojne —
+// nemá to byť ďalší tvrdý tréning.
+export const STRENGTH_OPTIONAL: Exercise[] = [
+  {
+    id: "plank",
+    icon: "🪵",
+    name: "Doska (plank)",
+    muscles: "Core · brucho",
+    dose: "3× 30–45 s",
+    durationSec: 40,
+    steps: [
+      "Opri sa o predlaktia a špičky nôh, telo drž v jednej priamke od hlavy po päty.",
+      "Spevni brucho a zovri zadok (akoby ťa mal niekto štuchnúť do brucha), panvu podsaď.",
+      "Dýchaj plynulo a drž. Potom si daj ~30 s pauzu a zopakuj.",
+    ],
+    why: "Silný stred tela drží pri behu stabilnú panvu a chrbticu — menej rozpadu formy v závere a menej bolesti drieku.",
+    mistake: "Neprepadávaj sa v drieku ani nedvíhaj zadok hore — telo je rovná doska, nie „véčko“ ani hojdačka.",
+    videoQuery: "forearm plank proper form",
+  },
+  {
+    id: "side-plank",
+    icon: "🧱",
+    name: "Bočná doska",
+    muscles: "Boky · šikmé brušné",
+    dose: "3× 30 s / stranu",
+    durationSec: 30,
+    steps: [
+      "Ľahni si na bok, opri sa o predlaktie (lakeť pod ramenom), nohy vystri na seba.",
+      "Zdvihni boky, kým telo nie je rovná priamka — panvu tlač hore a vpred.",
+      "Drž bez klesania, potom vymeň stranu.",
+    ],
+    why: "Posilní bočné stabilizátory panvy — tie držia koleno v osi a bránia „prepadávaniu“ bedra pri každom kroku.",
+    mistake: "Neklesaj bokmi k zemi a nepadaj dopredu/dozadu — telo drž v jednej rovine.",
+    videoQuery: "side plank exercise proper form",
+  },
+  {
+    id: "glute-bridge",
+    icon: "🌉",
+    name: "Mostík (glute bridge)",
+    muscles: "Zadok · hamstringy",
+    dose: "3× 12–15",
+    steps: [
+      "Ľahni si na chrbát, kolená pokrč, chodidlá na šírku bokov opri o zem.",
+      "Zovri zadok a zdvihni panvu, kým telo od kolien po ramená nie je priamka.",
+      "Hore na chvíľu zadrž, potom sa pomaly spusti. Dole úplne neodpočívaj.",
+    ],
+    why: "Aktivuje a posilní zadok — najsilnejší „motor“ behu. Slabý zadok preťažuje hamstringy a driek.",
+    mistake: "Nedvíhaj sa cez driek (neprehýbaj chrbticu) — pohyb vedie zovretie zadku, nie prehnutie drieku.",
+    videoQuery: "glute bridge exercise proper form",
+  },
+  {
+    id: "clamshell",
+    icon: "🐚",
+    name: "Mušľa (clamshell)",
+    muscles: "Bočný zadok · bedro",
+    dose: "3× 15 / stranu",
+    steps: [
+      "Ľahni si na bok, kolená pokrč do ~90°, jedno na druhom, päty spolu.",
+      "Bez otáčania panvy roztvor horné koleno nahor (ako mušľa) — päty ostávajú spolu.",
+      "Pomaly spusti späť. Pohyb rob kontrolovane, nie švihom.",
+    ],
+    why: "Cieli malý sval na boku zadku (gluteus medius), ktorý drží koleno v osi — prevencia bolesti kolena a IT pásu.",
+    mistake: "Nepreklápaj panvu dozadu, len aby si zdvihol koleno vyššie — radšej menší, ale čistý pohyb.",
+    videoQuery: "clamshell exercise glute medius",
+  },
+  {
+    id: "bird-dog",
+    icon: "🐦",
+    name: "Vták-pes (bird-dog)",
+    muscles: "Core · chrbát · zadok",
+    dose: "3× 10 / stranu",
+    steps: [
+      "Kľakni si na štyri (ruky pod ramenami, kolená pod bedrami), chrbát rovný.",
+      "Súčasne vystri opačnú ruku dopredu a nohu dozadu do priamky s telom.",
+      "Na chvíľu zadrž, vráť sa a vymeň strany. Panvu drž stabilnú (nekrúť ňou).",
+    ],
+    why: "Učí telo držať stabilný trup, kým sa končatiny hýbu — presne to, čo beh vyžaduje. Skvelé pre driek.",
+    mistake: "Neprehýbaj sa v drieku a nekrúť panvou — predstav si pohár vody na drieku, ktorý nesmie spadnúť.",
+    videoQuery: "bird dog exercise proper form",
+  },
+  {
+    id: "dead-bug",
+    icon: "🐛",
+    name: "Mŕtvy chrobák (dead bug)",
+    muscles: "Hlboký core",
+    dose: "3× 10 / stranu",
+    steps: [
+      "Ľahni si na chrbát, ruky vystri kolmo hore, kolená a bedrá pokrč do ~90°.",
+      "Driek pritlač do zeme a pomaly spusti opačnú ruku a nohu k zemi.",
+      "Vráť sa a vymeň strany. Pomaly, s výdychom pri spúšťaní.",
+    ],
+    why: "Posilní hlboký stred tela bez zaťaženia chrbtice — bezpečný základ stability pre bežca.",
+    mistake: "Driek sa nesmie odlepiť od zeme — ak sa dvíha, spúšťaj končatiny menej, kým to zvládneš čisto.",
+    videoQuery: "dead bug core exercise proper form",
+  },
+  {
+    id: "split-squat",
+    icon: "🏋️",
+    name: "Bulharský drep (na jednej nohe)",
+    muscles: "Stehná · zadok",
+    dose: "3× 8–10 / nohu",
+    steps: [
+      "Stoj chrbtom ku gauču/stoličke, priehlavok zadnej nohy polož na sedadlo za sebou.",
+      "Pokrč prednú nohu a spúšťaj sa rovno dole, kým predné stehno nie je ~vodorovne.",
+      "Odtlač sa cez pätu prednej nohy hore. Trup drž vzpriamený.",
+    ],
+    why: "Jednonohá sila je behu bližšie než obojnožný drep — vyrovná rozdiely medzi nohami a spevní koleno.",
+    mistake: "Predné koleno nesmie padať dovnútra ani ísť ďaleko za špičku — váhu drž na päte prednej nohy.",
+    videoQuery: "bulgarian split squat proper form",
+  },
+  {
+    id: "single-leg-calf-raise",
+    icon: "🦵",
+    name: "Výpony na jednej nohe",
+    muscles: "Lýtko · Achillovka",
+    dose: "3× 12–15 / nohu",
+    steps: [
+      "Postav sa na jednu nohu (druhú zohni), zľahka sa pridrž steny pre rovnováhu.",
+      "Pomaly sa vytiahni čo najvyššie na špičku, na vrchu na chvíľu zadrž.",
+      "Ešte pomalšie sa spusti dole — pomalé spúšťanie je kľúč.",
+    ],
+    why: "Silné lýtka a Achillovka absorbujú náraz pri každom kroku — najlepšia prevencia najčastejších zranení lýtka a šľachy.",
+    mistake: "Nespúšťaj sa rýchlo/padaním — väčšinu efektu robí pomalé, kontrolované spúšťanie.",
+    videoQuery: "single leg calf raise exercise",
   },
 ];
 
 export function exercisesFor(phase: WarmupPhase): Exercise[] {
-  return phase === "before" ? WARMUP_BEFORE : STRETCH_AFTER;
+  if (phase === "before") return WARMUP_BEFORE;
+  if (phase === "after") return STRETCH_AFTER;
+  return STRENGTH_OPTIONAL;
 }

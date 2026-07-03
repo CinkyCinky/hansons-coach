@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, BookOpen, RotateCcw, ChevronRight } from "lucide-react";
+import { ChevronDown, BookOpen, RotateCcw } from "lucide-react";
 import { openOnboarding } from "@/components/Onboarding";
 
 // Tap-prístupná „rozbaľovačka" (natívny <details> — funguje aj bez JS, ideálne na mobil).
@@ -182,20 +182,27 @@ export default function About() {
             <b className="text-gray-100">Po behu</b>, keď sú svaly teplé, príde na rad statický strečing —
             podporí regeneráciu a je lacnou prevenciou zranení.
           </p>
-          <div className="flex gap-2 mt-1">
+          <div className="grid grid-cols-3 gap-2 mt-1">
             <Link
               href="/warmup?type=before"
-              className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center justify-between transition-colors"
+              className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-2 py-2.5 flex flex-col items-center gap-1 text-center transition-colors"
             >
-              <span className="text-sm font-bold text-gray-200">🏃 Rozcvička</span>
-              <ChevronRight size={16} className="text-gray-500" />
+              <span className="text-lg leading-none">🏃</span>
+              <span className="text-xs font-bold text-gray-200">Rozcvička</span>
             </Link>
             <Link
               href="/warmup?type=after"
-              className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center justify-between transition-colors"
+              className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-2 py-2.5 flex flex-col items-center gap-1 text-center transition-colors"
             >
-              <span className="text-sm font-bold text-gray-200">🧘 Strečing</span>
-              <ChevronRight size={16} className="text-gray-500" />
+              <span className="text-lg leading-none">🧘</span>
+              <span className="text-xs font-bold text-gray-200">Strečing</span>
+            </Link>
+            <Link
+              href="/warmup?type=strength"
+              className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-2 py-2.5 flex flex-col items-center gap-1 text-center transition-colors"
+            >
+              <span className="text-lg leading-none">💪</span>
+              <span className="text-xs font-bold text-gray-200">Silový deň</span>
             </Link>
           </div>
         </Item>

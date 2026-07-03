@@ -7,11 +7,12 @@ import {
   Check, Timer, Pause, ListChecks, Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { exercisesFor, type WarmupPhase, type Exercise } from "@/lib/warmup";
+import { exercisesFor, videoUrl, type WarmupPhase, type Exercise } from "@/lib/warmup";
 
 const PHASE_META: Record<WarmupPhase, { title: string; subtitle: string; mins: string }> = {
-  before: { title: "Dynamická rozcvička", subtitle: "Pripravíš telo na beh", mins: "~8 min" },
-  after:  { title: "Strečing po behu",    subtitle: "Podporíš regeneráciu",  mins: "~7 min" },
+  before:   { title: "Dynamická rozcvička", subtitle: "Pripravíš telo na beh",        mins: "~8 min" },
+  after:    { title: "Strečing po behu",    subtitle: "Podporíš regeneráciu",          mins: "~7 min" },
+  strength: { title: "Silový / voľný deň",  subtitle: "Doplnková sila a stabilita",    mins: "~15–20 min" },
 };
 
 // Jedna „dlaždica" cviku v režime prehliadania
@@ -48,12 +49,31 @@ function ExerciseCard({ ex, idx }: { ex: Exercise; idx: number }) {
         ))}
       </ol>
 
-      <button
-        onClick={() => setShowWhy((v) => !v)}
-        className="text-[11px] text-gray-500 hover:text-gray-300 flex items-center gap-1 transition-colors"
-      >
-        <Info size={13} /> Prečo tento cvik?
-      </button>
+      {ex.mistake && (
+        <p className="text-[11px] text-amber-300/90 leading-snug mb-2 flex gap-1.5">
+          <span className="shrink-0">⚠️</span>
+          <span><b className="text-amber-300">Častá chyba:</b> {ex.mistake}</span>
+        </p>
+      )}
+
+      <div className="flex items-center gap-4">
+        <button
+          onClick={() => setShowWhy((v) => !v)}
+          className="text-[11px] text-gray-500 hover:text-gray-300 flex items-center gap-1 transition-colors"
+        >
+          <Info size={13} /> Prečo tento cvik?
+        </button>
+        {ex.videoQuery && (
+          <a
+            href={videoUrl(ex.videoQuery)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-primary hover:underline flex items-center gap-1"
+          >
+            <Play size={12} /> Ukázať video
+          </a>
+        )}
+      </div>
       <AnimatePresence>
         {showWhy && (
           <motion.p
@@ -84,7 +104,7 @@ export default function Warmup() {
   // Deep-link: /warmup?type=after otvorí rovno strečing po behu
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("type");
-    if (t === "after") setPhase("after");
+    if (t === "after" || t === "strength") setPhase(t);
   }, []);
 
   // Pri zmene cviku (alebo vstupe do vedeného režimu) priprav časovač
@@ -131,12 +151,14 @@ export default function Warmup() {
           <Check size={44} strokeWidth={3} />
         </motion.div>
         <h1 className="text-2xl font-bold">
-          {phase === "before" ? "Rozcvička hotová! 💪" : "Strečing hotový! 🧘"}
+          {phase === "before" ? "Rozcvička hotová! 💪" : phase === "after" ? "Strečing hotový! 🧘" : "Silový tréning hotový! 💪"}
         </h1>
         <p className="text-gray-400 text-sm max-w-xs leading-relaxed">
           {phase === "before"
             ? "Telo máš rozohriate a pripravené. Uži si beh a drž sa svojich temp!"
-            : "Super práca. Pravidelný strečing po behu je najlacnejšia prevencia zranení."}
+            : phase === "after"
+            ? "Super práca. Pravidelný strečing po behu je najlacnejšia prevencia zranení."
+            : "Super práca. Doplnková sila a stabilita ťa spravia odolnejším a ekonomickejším bežcom."}
         </p>
         <div className="flex flex-col gap-2 w-full max-w-xs mt-2">
           <button
@@ -237,6 +259,22 @@ export default function Warmup() {
               <Info size={13} className="text-gray-500 shrink-0 mt-0.5" />
               <span>{ex.why}</span>
             </p>
+            {ex.mistake && (
+              <p className="text-[11px] text-amber-300/90 leading-relaxed mt-2 flex gap-1.5 text-left">
+                <span className="shrink-0">⚠️</span>
+                <span><b className="text-amber-300">Častá chyba:</b> {ex.mistake}</span>
+              </p>
+            )}
+            {ex.videoQuery && (
+              <a
+                href={videoUrl(ex.videoQuery)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline mt-3"
+              >
+                <Play size={13} /> Ukázať referenčné video
+              </a>
+            )}
           </motion.div>
         </AnimatePresence>
 
@@ -289,15 +327,15 @@ export default function Warmup() {
 
       {/* Prepínač fáz */}
       <div className="flex bg-white/5 rounded-xl p-1 gap-1">
-        {(["before", "after"] as WarmupPhase[]).map((p) => (
+        {(["before", "after", "strength"] as WarmupPhase[]).map((p) => (
           <button
             key={p}
             onClick={() => switchPhase(p)}
-            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${
+            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${
               phase === p ? "bg-primary/20 text-primary" : "text-gray-500 hover:text-gray-300"
             }`}
           >
-            {p === "before" ? "Pred behom" : "Po behu"}
+            {p === "before" ? "Pred behom" : p === "after" ? "Po behu" : "Silový deň"}
           </button>
         ))}
       </div>
@@ -311,10 +349,14 @@ export default function Warmup() {
             na rozdiel od statického naťahovania pred behom nezníži výkon. Prvé cviky rob na mieste;
             druhú polovicu (skiping, vysoké kolená, rovinky…) rob v pohybe na ~30 m úseku
             (ideálne pred Speed a Strength tréningom).</>
-          ) : (
+          ) : phase === "after" ? (
             <>Po behu sú svaly teplé — ideálny čas na <b className="text-gray-100">statický strečing</b>.
             Každý ťah drž <b className="text-gray-100">plynule bez hojdania</b> a nikdy nenaťahuj
             do ostrej bolesti. Hanson strečing po behu odporúča, ale konkrétne cviky nepredpisuje.</>
+          ) : (
+            <>Doplnková <b className="text-gray-100">sila a stabilita</b> (core, zadok, jednonohé cviky) —
+            rob ju na <b className="text-gray-100">ľahký alebo voľný deň</b>, nie pred kľúčovým behom.
+            Nemá byť tvrdá; cieľom je odolnejšie telo, lepšia technika a menej zranení. Pokojne 1–2× týždenne.</>
           )}
         </p>
       </div>
