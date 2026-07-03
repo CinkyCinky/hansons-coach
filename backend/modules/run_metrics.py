@@ -254,3 +254,52 @@ def decoupling_label(pct: Optional[float]) -> Optional[str]:
     if pct < 8:
         return "mierny drift"
     return "výrazný drift (únava/teplo/slabšia báza)"
+
+
+# ── Vlna 5: HRR (Heart Rate Recovery — tep zotavenia po behu) ─────────────────
+# HRR = o koľko klesne tep v ~2 min po dobehnutí. Vyššie/rýchlejšie klesnutie =
+# lepšia parasympatická regenerácia a kondícia. Na Garmine sa meria MANUÁLNE po
+# tréningu, takže je len pri NIEKTORÝCH behoch. Názov poľa nie je stabilný naprieč
+# zariadeniami → hľadáme defenzívne (známe kľúče + širší sken).
+
+_HRR_MIN_BPM, _HRR_MAX_BPM = 5, 120  # plauzibilný pokles tepu za 2 min
+
+
+def _as_hrr_bpm(v) -> Optional[int]:
+    try:
+        iv = round(float(v))
+    except (TypeError, ValueError):
+        return None
+    return iv if _HRR_MIN_BPM <= iv <= _HRR_MAX_BPM else None
+
+
+def hr_recovery(details: Optional[dict]) -> Optional[int]:
+    """Tep zotavenia (HRR) z Garmin detailu aktivity — pokles tepu za ~2 min po behu.
+    None ak nezmeraný/nedostupný (meria sa manuálne, nie je pri každom behu)."""
+    if not isinstance(details, dict):
+        return None
+    summary = details.get("summaryDTO") if isinstance(details.get("summaryDTO"), dict) else {}
+    # 1) Známe/pravdepodobné kľúče
+    for src in (summary, details):
+        for k in ("hrRecovery", "heartRateRecovery", "recoveryHeartRate", "hrrValue", "hrr"):
+            iv = _as_hrr_bpm(src.get(k))
+            if iv is not None:
+                return iv
+    # 2) Širší sken — ľubovoľný kľúč s 'hrr' alebo ('recovery' + 'hr'/'heart')
+    for src in (summary, details):
+        if not isinstance(src, dict):
+            continue
+        for k, v in src.items():
+            kl = str(k).lower()
+            if "hrr" in kl or ("recovery" in kl and ("hr" in kl or "heart" in kl)):
+                iv = _as_hrr_bpm(v)
+                if iv is not None:
+                    return iv
+    return None
+
+
+def hr_recovery_str(hrr: Optional[int]) -> str:
+    """Ľudsky čitateľný HRR pre AI/zobrazenie. Prázdny reťazec ak None."""
+    if not hrr:
+        return ""
+    return f"tep zotavenia {hrr} bpm (pokles za ~2 min po behu; vyššie = lepšia regenerácia)"

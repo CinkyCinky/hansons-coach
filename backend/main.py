@@ -1029,6 +1029,7 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
         avg_hr_val = round(summary["averageHR"]) if summary.get("averageHR") else None
         efficiency_factor = run_metrics.efficiency_factor(gap_pace_sec_km or avg_pace_sec, avg_hr_val)
         decoupling_pct = run_metrics.decoupling(lap_list)
+        hr_recovery = run_metrics.hr_recovery(details)  # tep zotavenia (ak zmeraný)
 
         stats = {
             "distance_km": round((summary.get("distance") or 0) / 1000, 2) or None,
@@ -1055,6 +1056,7 @@ def get_activity_stats(activity_id: str, client=Depends(get_garmin_client)):
             "weather": weather,
             "efficiency_factor": efficiency_factor,
             "decoupling_pct": decoupling_pct,
+            "hr_recovery": hr_recovery,
             "splits": lap_list,
             "hr_zones": hr_zones,
         }
@@ -1770,7 +1772,10 @@ Najbližší tréning: {next_w_str}
         f"KONDÍCIA: EF (efektivita = rýchlosť na rovine/tep) je v zozname behov — porovnateľné Easy behy s RASTÚCIM EF "
         f"v čase = objektívne stúpajúca kondícia (nezávisle od pocitu); klesajúci EF pri rovnakom počasí signalizuje "
         f"únavu/preťaženie. Decoupling (z get_activity_laps) <5 % = výborná aeróbna báza, >8 % = slabšia durability. "
-        f"Pri otázkach na kondíciu/napredovanie argumentuj práve trendom EF a decouplingom, nie len tempom. "
+        f"TEP ZOTAVENIA (HRR, z get_activity_laps ak bol zmeraný): o koľko klesol tep za ~2 min po dobehnutí — vyššie/rýchlejšie "
+        f"klesnutie = lepšia parasympatická regenerácia a kondícia. Meria sa MANUÁLNE, takže nie je pri každom behu; keď je, ber ho "
+        f"ako doplnkový signál a sleduj TREND pri podobných behoch (rastúci HRR = zlepšovanie, náhly pokles = únava/nedoregenerovanie). "
+        f"Pri otázkach na kondíciu/napredovanie argumentuj práve trendom EF, decouplingu a HRR, nie len tempom. "
         f"BODY BATTERY: máš DVE hodnoty — rannú (pri zobudení = ako sa telo cez noc zotavilo) a aktuálnu "
         f"(teraz = koľko energie ostáva práve teraz; cez deň prirodzene klesá, večer býva nízka aj po dobrom zotavení). "
         f"SÁM vyber tú, ktorá sa hodí k otázke: na 'ako som zregeneroval / aký mám základ' použi rannú; na 'vládzem dnes / "
@@ -1859,9 +1864,19 @@ Najbližší tréning: {next_w_str}
             weather_line = run_metrics.weather_str(fetcher.get_activity_weather(client, act_id))
             weather_part = f"Počasie: {weather_line}\n" if weather_line else ""
 
+            # Tep zotavenia (HRR) — meria sa manuálne po behu, preto len občas
+            hrr_part = ""
+            try:
+                hrr_val = run_metrics.hr_recovery(client.get_activity(act_id))
+                if hrr_val:
+                    hrr_part = (f"Tep zotavenia (HRR): {hrr_val} bpm pokles za ~2 min "
+                                f"(vyššie = lepšia regenerácia/kondícia; sleduj TREND pri podobných behoch)\n")
+            except Exception:
+                pass
+
             result = (
                 f"Aktivita: {act_name} ({target_date})\n"
-                f"{weather_part}"
+                f"{weather_part}{hrr_part}"
                 f"Celková vzdialenosť: {d_km} km, priemerné tempo: {avg_pace_str}{gap_str}{elev_str}, "
                 f"avg HR: {round(act.get('averageHR') or 0)} bpm, "
                 f"avg kadencia: {round(act.get('averageRunningCadenceInStepsPerMinute') or 0)} spm\n\n"

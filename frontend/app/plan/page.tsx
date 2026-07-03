@@ -942,6 +942,12 @@ export default function Plan() {
                                   <p className="font-bold text-rose-400">{details.stats.avg_hr} bpm</p>
                                 </div>
                               )}
+                              {details.stats?.hr_recovery && (
+                                <div className="bg-black/20 p-2 rounded-lg" title="Tep zotavenia (HRR): o koľko klesol tep za ~2 min po behu.">
+                                  <p className="text-xs text-gray-500 flex items-center gap-1">Tep zotavenia <InfoTip text="HRR — o koľko klesol tvoj tep za ~2 min po dobehnutí. Vyššie číslo = lepšia regenerácia a kondícia. Meria sa manuálne po behu, preto nie je pri každom tréningu." /></p>
+                                  <p className="font-bold text-teal-400">−{details.stats.hr_recovery} bpm</p>
+                                </div>
+                              )}
                               {details.stats?.avg_cadence && (
                                 <div className="bg-black/20 p-2 rounded-lg">
                                   <p className="text-xs text-gray-500 flex items-center gap-1">Kadencia <InfoTip text="Počet krokov za minútu (spm). Vyššia kadencia (~170–180) býva efektívnejšia a šetrnejšia ku kĺbom než dlhé doskakovanie (prešľapovanie)." /></p>
