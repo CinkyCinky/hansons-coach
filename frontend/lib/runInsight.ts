@@ -26,6 +26,17 @@ export function teLabelSk(label?: string | null): string | null {
   return TE_LABEL_SK[label.toUpperCase()] ?? null;
 }
 
+// Skratka svetovej strany, odkiaľ vietor fúka (S/SV/…/SZ z Garminu), → prídavné
+// meno pre plynulú vetu („severný vietor"). Neznámy smer → null (vetu vynecháme).
+const WIND_DIR_ADJ: Record<string, string> = {
+  S: "severný", SV: "severovýchodný", V: "východný", JV: "juhovýchodný",
+  J: "južný", JZ: "juhozápadný", Z: "západný", SZ: "severozápadný",
+};
+function windDirAdj(dir?: string | null): string | null {
+  if (!dir) return null;
+  return WIND_DIR_ADJ[dir.trim().toUpperCase()] ?? null;
+}
+
 export interface RunInsight {
   note: string;
   tone: "good" | "warn" | "info";
@@ -51,6 +62,7 @@ interface RunStats {
     feels_like_c?: number | null;
     humidity_pct?: number | null;
     wind_kmh?: number | null;
+    wind_dir?: string | null;
   } | null;
   hr_recovery?: number | null;
   decoupling_pct?: number | null;
@@ -103,21 +115,37 @@ export function runInsight(title: string, stats: RunStats | null | undefined): R
   const feels = wx?.feels_like_c ?? wx?.temp_c;
   const humidity = wx?.humidity_pct ?? null;
   const humid = (humidity ?? 0) >= 70;
+  let weatherNoted = false;
   if (feels != null) {
     if (feels >= 27) {
       base.note += ` Bolo horúco (${feels} °C${humid ? `, vlhko ${humidity} %` : ""}) — výrazne vyšší tep pri rovnakom tempe je čakaný (drift z tepla); ber to ako záťaž navyše, nie stratu formy.`;
       if (base.tone === "warn") base.tone = "info";
+      weatherNoted = true;
     } else if (feels >= 24 || (feels >= 21 && humid)) {
       base.note += ` Bolo teplejšie (${feels} °C${humid ? `, vlhko ${humidity} %` : ""}) — mierne vyšší tep pri rovnakom tempe je normálny (drift z tepla).`;
       if (base.tone === "warn") base.tone = "info";
+      weatherNoted = true;
     }
     // pod ~24 °C a bez vlhka počasie nekomentujeme — nemá výpovednú hodnotu
   }
 
-  // Vietor: silný protivietor pri rovnakej námahe prirodzene spomaľuje tempo.
+  // Vysoká vlhkosť aj bez tepla: pot sa horšie odparuje → telo sa ťažšie chladí →
+  // pri rovnakom tempe vyšší tep a namáhavejší beh. Komentujeme len keď sme počasie
+  // nespomenuli už cez teplotu (nech sa neopakujeme) a vlhkosť je naozaj vysoká.
+  if (!weatherNoted && humidity != null && humidity >= 85) {
+    base.note += ` Bolo veľmi vlhko (${humidity} %) — pot sa horšie odparuje a telo sa ťažšie chladí, takže aj bez tepla ide tep vyššie a beh je namáhavejší. Viac sa potíš, tak nezabúdaj dopĺňať tekutiny.`;
+    if (base.tone === "warn") base.tone = "info";
+  }
+
+  // Vietor: proti vetru je pri rovnakej námahe tempo pomalšie. Poznáme smer, odkiaľ
+  // fúkal, ale nie orientáciu celej trasy — na okruhu sa protivietor a zadný vietor
+  // čiastočne vyrušia, preto hovoríme len o vplyve, nie o „strate výkonu".
   const wind = wx?.wind_kmh ?? null;
-  if (wind != null && wind >= 20) {
-    base.note += ` Fúkal silný vietor (${wind} km/h) — proti vetru je tempo pri rovnakej námahe pomalšie, neber to ako slabší výkon.`;
+  const windAdj = windDirAdj(wx?.wind_dir);
+  if (wind != null && wind >= 25) {
+    base.note += ` Fúkal silný${windAdj ? ` ${windAdj}` : ""} vietor (${wind} km/h) — proti vetru je tempo pri rovnakej námahe citeľne pomalšie, neber to ako slabší výkon.`;
+  } else if (wind != null && wind >= 15) {
+    base.note += ` Fúkal citeľný${windAdj ? ` ${windAdj}` : ""} vietor (${wind} km/h) — na úsekoch proti vetru ťa pri rovnakej námahe trochu pribrzdil.`;
   }
 
   // Tep zotavenia (HRR): vyššie/rýchlejšie klesnutie tepu po behu = lepšia

@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
-  Calendar, CheckCircle2, Circle, Clock, Loader2,
+  Calendar, CheckCircle2, Circle, Clock, Loader2, XCircle, X,
   Activity, Flame, ChevronRight, BarChart2, ChevronLeft, Sparkles, AlertTriangle,
   ChevronDown, CalendarRange, History, Info
 } from "lucide-react";
@@ -19,6 +19,10 @@ import { runInsight, teLabelSk } from "@/lib/runInsight";
 const VARIANT_LABELS: Record<string, string> = {
   advanced: "Advanced", beginner: "Beginner", just_finish: "Just Finish",
 };
+
+// localStorage: potvrdené (skryté) vynechané kľúčové tréningy — kľúč = „dátum|typ".
+// Nech starý výpadok nezostane svietiť naveky, keď ho zverenec vedome nechal tak.
+const DISMISSED_MISSED_KEY = "hansons_dismissed_missed_v1";
 
 // HR zóna farby pre tréningové kroky
 
@@ -418,6 +422,8 @@ export default function Plan() {
   const [isConfirming, setIsConfirming] = useState(false);
   // Týždeňová navigácia: 0 = aktuálny týždeň, -1 = pred., 1 = budc.
   const [weekOffset, setWeekOffset] = useState(0);
+  // Potvrdené (skryté) vynechané tréningy — načítané z localStorage
+  const [dismissedMissed, setDismissedMissed] = useState<string[]>([]);
 
   // Aktuálny týždeň z backendu (dashboard)
   const trainingWeek = store.dashboard?.training_week ?? null;
@@ -461,13 +467,52 @@ export default function Plan() {
     return d < today && SOS_TYPES.includes(classifyWorkout(w.title).type);
   };
 
-  // Vynechané kľúčové (SOS) tréningy — z ROVNAKÉHO backendového výpočtu ako scorecard
-  // na Prehľade (store.planConsistency; okno = 4 uzavreté týždne, jedna definícia SOS,
-  // merané voči Hanson predpisu). Backend vracia už zoradené (najnovšie prvé).
-  const missedSos: any[] = store.planConsistency?.missed ?? [];
+  const missedKey = (w: any) => `${w.date}|${classifyWorkout(w.title).type}`;
+
+  // Vynechané kľúčové (SOS) tréningy za posledné ~3 týždne — počítané z aktuálneho
+  // plánu vrátane PREBIEHAJÚCEHO týždňa (ktorý backendový scorecard zámerne vynecháva),
+  // takže alert ukazuje NAJNOVŠÍ výpadok, nie starý z uzavretého týždňa.
+  const recentMissed = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() - 21);
+    return (workouts as any[])
+      .filter((w) => {
+        if (!w?.date || w.activityId) return false;
+        const d = new Date(w.date + "T00:00:00");
+        return d >= cutoff && d < today && SOS_TYPES.includes(classifyWorkout(w.title).type);
+      })
+      .sort((a, b) => (a.date < b.date ? 1 : -1)); // najnovšie prvé
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workouts]);
+
+  // Aktívne = ešte nepotvrdené (nezakryté) výpadky
+  const activeMissed = recentMissed.filter((w) => !dismissedMissed.includes(missedKey(w)));
+
+  const dismissMissed = () => {
+    const keys = activeMissed.map(missedKey);
+    if (!keys.length) return;
+    const next = Array.from(new Set([...dismissedMissed, ...keys]));
+    setDismissedMissed(next);
+    try { localStorage.setItem(DISMISSED_MISSED_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     store.loadPlan();
+    // Načítaj potvrdené výpadky; preruš staré (>60 dní) nech zoznam nerastie donekonečna
+    try {
+      const raw = localStorage.getItem(DISMISSED_MISSED_KEY);
+      if (raw) {
+        const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60);
+        const cut = cutoff.toISOString().slice(0, 10);
+        const arr: string[] = (JSON.parse(raw) || []).filter(
+          (k: string) => typeof k === "string" && (k.split("|")[0] || "") >= cut
+        );
+        setDismissedMissed(arr);
+        if (arr.length !== (JSON.parse(raw) || []).length) {
+          try { localStorage.setItem(DISMISSED_MISSED_KEY, JSON.stringify(arr)); } catch { /* ignore */ }
+        }
+      }
+    } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -579,29 +624,45 @@ export default function Plan() {
         </div>
       )}
 
-      {/* Vynechané kľúčové (SOS) tréningy */}
-      {!proposal && missedSos.length > 0 && (
-        <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4">
-          <h3 className="text-sm font-bold text-rose-300 flex items-center gap-2 mb-1">
-            <AlertTriangle size={16} /> Vynechané kľúčové tréningy ({missedSos.length})
+      {/* Vynechané kľúčové (SOS) tréningy — dá sa potvrdiť (skryť) */}
+      {!proposal && activeMissed.length > 0 && (
+        <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 relative">
+          <button
+            onClick={dismissMissed}
+            className="absolute top-3 right-3 text-rose-300/70 hover:text-rose-200 p-1"
+            aria-label="Rozumiem — skryť upozornenie"
+            title="Rozumiem — skryť upozornenie"
+          >
+            <X size={16} />
+          </button>
+          <h3 className="text-sm font-bold text-rose-300 flex items-center gap-2 mb-1 pr-7">
+            <AlertTriangle size={16} /> Vynechané kľúčové tréningy ({activeMissed.length})
           </h3>
           <p className="text-xs text-gray-300 leading-relaxed mb-3">
             Posledný:{" "}
-            <b>{missedSos[0].label}</b> — {missedSos[0].title}{" "}
-            ({new Date(missedSos[0].date + "T00:00:00").toLocaleDateString("sk-SK", { day: "numeric", month: "long" })}).
-            Podľa Hansona kľúčové tréningy nehromaď — buď ho čo najskôr dobehni, alebo ho vynechaj a
+            <b>{classifyWorkout(activeMissed[0].title).label}</b> — {activeMissed[0].title}{" "}
+            ({new Date(activeMissed[0].date + "T00:00:00").toLocaleDateString("sk-SK", { day: "numeric", month: "long" })}).
+            Podľa Hansona kľúčové tréningy nehromaď — buď ho čo najskôr dobehni, alebo ho nechaj tak a
             pokračuj podľa plánu (nikdy nie 2 tvrdé dni za sebou). Jeden vynechaný tréning takmer
             neublíži — problém je až séria. Po dlhšej pauze (1–2+ týždne) nabiehaj postupne: najprv
             Easy, potom tempo, až potom plné úseky.
           </p>
-          <button
-            onClick={handleDailyUpdate}
-            disabled={isUpdating}
-            className="inline-flex items-center gap-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-200 text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-60"
-          >
-            {isUpdating ? <Loader2 className="animate-spin" size={14} /> : <Activity size={14} />}
-            Prepočítať najbližší tréning
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleDailyUpdate}
+              disabled={isUpdating}
+              className="inline-flex items-center gap-2 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-200 text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-60"
+            >
+              {isUpdating ? <Loader2 className="animate-spin" size={14} /> : <Activity size={14} />}
+              Upraviť nadchádzajúci tréning
+            </button>
+            <button
+              onClick={dismissMissed}
+              className="inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 text-xs font-bold px-3 py-2 rounded-xl transition-colors"
+            >
+              Rozumiem, pokračujem
+            </button>
+          </div>
         </div>
       )}
 
@@ -856,6 +917,13 @@ export default function Plan() {
                           <AlertTriangle size={10} /> Vynechané
                         </span>
                       )}
+                      {/* Nekľúčový (Easy) minulý beh bez aktivity — neutrálny štítok, nech
+                          nie je „ticho" (Easy výpadok nie je alarm, ale nech je viditeľný). */}
+                      {isPast && !workout.activityId && !isMissedSos(workout) && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-gray-500/15 text-gray-400 border-gray-500/30 flex items-center gap-1">
+                          <XCircle size={10} /> Neabsolvované
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400">{workout.sportType?.typeKey || "Beh"}</p>
                     {!workout.activityId && (() => {
@@ -869,8 +937,11 @@ export default function Plan() {
                   <div className="shrink-0">
                     {/* Zelená fajka IBA ak existuje activityId (reálne absolvovaný) */}
                     {workout.activityId && <CheckCircle2 className="text-emerald-400" size={22} />}
-                    {/* Šedé koláč = minulý, ale bez activity */}
-                    {isPast && !workout.activityId && <CheckCircle2 className="text-gray-600" size={22} />}
+                    {/* Minulý bez aktivity = NEABSOLVOVANÝ → jasné X (nie vyblednutá fajka,
+                        ktorá vyzerá ako splnené). Kľúčový (SOS) tréning zvýrazni ružovo. */}
+                    {isPast && !workout.activityId && (
+                      <XCircle className={isMissedSos(workout) ? "text-rose-400" : "text-gray-500"} size={22} />
+                    )}
                     {isToday && !workout.activityId && <Clock className="text-primary" size={22} />}
                     {!isPast && !isToday && <Circle className="text-gray-600" size={22} />}
                   </div>
