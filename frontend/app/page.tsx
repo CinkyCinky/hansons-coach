@@ -899,6 +899,10 @@ export default function Dashboard() {
       {/* Konzistencia kľúčových tréningov — jadro Hansonovej metódy (4 uzavreté týždne) */}
       {consistency && consistency.key_total > 0 && (() => {
         const { key_total, key_done, key_missed, key_cancelled, weeks_scored } = consistency;
+        // Vynechané (no-show) aj zrušené/zmäkčené = jeden úprimný počet „nevykonaných".
+        // Rozlišovanie intentu z kalendára bolo krehké — zmäkčenia a presuny padali do
+        // „zrušených", hoci to boli rozumné úpravy. Prečo sa čo menilo → Denník zmien (/plan).
+        const notDone = (key_missed ?? 0) + (key_cancelled ?? 0);
         const pct = Math.round((key_done / key_total) * 100);
         const tone =
           pct >= 90 ? { text: "text-emerald-400", bar: "bg-emerald-400" }
@@ -929,21 +933,24 @@ export default function Dashboard() {
               <div className={`h-full rounded-full ${tone.bar} transition-all`} style={{ width: `${pct}%` }} />
             </div>
 
-            {(key_missed > 0 || key_cancelled > 0) && (
+            {notDone > 0 && (
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-3">
-                {key_missed > 0 && (
-                  <span className="text-rose-300"><b className="text-rose-400">{key_missed}</b> vynechaných</span>
-                )}
-                {key_cancelled > 0 && (
-                  <span className="text-amber-300"><b className="text-amber-400">{key_cancelled}</b> zrušených</span>
-                )}
+                <span className="text-rose-300"><b className="text-rose-400">{notDone}</b> nevykonaných</span>
               </div>
             )}
 
             <p className="text-xs text-gray-400 leading-snug">
-              {key_missed === 0 && key_cancelled === 0
-                ? "Všetky kľúčové tréningy odbehnuté — konzistencia je pilier Hansonovej metódy. 💪"
-                : "Vynechaný = ostal v pláne, ale neodbehol si ho; zrušený = z kalendára úplne odstránený (tebou alebo trénerom). Zmäkčené tréningy rovnakého typu sa rátajú ako odbehnuté. Jeden výpadok nič nepokazí — séria oslabuje prípravu (jadrom Hansona je odbehnúť kľúčové tréningy)."}
+              {notDone === 0 ? (
+                "Všetky kľúčové tréningy odbehnuté — konzistencia je pilier Hansonovej metódy. 💪"
+              ) : (
+                <>
+                  Nevykonaný = kľúčový tréning, ktorý si neodbehol — či už si ho vynechal, zrušil,
+                  alebo zmäkčil na ľahší (ty alebo tréner). Zmäkčené tréningy rovnakého typu sa rátajú
+                  ako odbehnuté. Jeden výpadok nič nepokazí — problém je až séria (jadrom Hansona je
+                  odbehnúť kľúčové tréningy). Čo a prečo sa v pláne menilo, nájdeš v{" "}
+                  <Link href="/plan" className="text-primary underline underline-offset-2">Denníku zmien</Link>.
+                </>
+              )}
             </p>
           </motion.div>
         );

@@ -35,11 +35,13 @@ export const WARMUP_BEFORE: Exercise[] = [
     muscles: "Ramená",
     dose: "10 opak. / smer",
     steps: [
-      "Postav sa vzpriamene a rozpaž ruky do strán do výšky ramien.",
+      "Postav sa vzpriamene, nohy na šírku bokov, a rozpaž vystreté ruky do strán do výšky ramien.",
       "Krúž pažami dopredu — 10 plynulých kruhov, potom 10 dozadu.",
-      "Pohyb veď pomaly, akoby si vo vzduchu kreslil veľké kruhy.",
+      "Začni menšími kruhmi a postupne ich zväčšuj, akoby si vo vzduchu kreslil veľké kolesá.",
     ],
-    why: "Zahreje ramenné kĺby a uvoľní horný chrbát — pomáha držať uvoľnený bežecký postoj a prácu paží.",
+    why: "Zahreje a prekrví ramenné kĺby a uvoľní horný chrbát. Pri behu ruky udávajú rytmus a rovnováhu — uvoľnené ramená znamenajú menej zbytočného napätia a ekonomickejší beh.",
+    mistake: "Nehrb ramená k ušiam a nezadržiavaj dych — ramená nechaj stiahnuté dole, pohyb veď plynulo, nie trhane.",
+    videoQuery: "arm circles warm up exercise how to",
   },
   {
     id: "trunk-rotations",
@@ -48,11 +50,13 @@ export const WARMUP_BEFORE: Exercise[] = [
     muscles: "Driek · bedrá",
     dose: "10 opak. / smer",
     steps: [
-      "Stoj na šírku ramien a polož si ruky na boky.",
+      "Stoj na šírku ramien, mierne pokrč kolená a polož si ruky na boky.",
       "Krúž bokmi do veľkého kruhu — 10× v smere hodinových ručičiek.",
-      "Zopakuj 10× opačným smerom. Trup drž vzpriamený, pohyb veď z bedier.",
+      "Zopakuj 10× opačným smerom. Hrudník a hlavu drž vzpriamené, pohyb veď z bedier.",
     ],
-    why: "Uvoľní driek a bedrové kĺby a predíde stuhnutiu počas dlhšieho behu.",
+    why: "Rozhýbe a prekrví driek a bedrové kĺby. Uvoľnená panva dovolí plynulejší a dlhší krok a predíde stuhnutiu a bolesti chrbta počas dlhšieho behu.",
+    mistake: "Nekrúž celým trupom ani ramenami — hýbu sa boky, hrudník ostáva relatívne na mieste. Rob to pomaly, bez švihu.",
+    videoQuery: "standing hip trunk rotations warm up",
   },
   {
     id: "leg-swings-front",
@@ -76,11 +80,13 @@ export const WARMUP_BEFORE: Exercise[] = [
     muscles: "Stehná · bedro",
     dose: "10 opak. / nohu",
     steps: [
-      "Pridrž sa steny a jednu nohu zdvihni mierne nad zem.",
-      "Švihaj ňou nabok a späť cez os tela — ako metronóm.",
-      "Trup drž stabilný, nenakláňaj sa do strany.",
+      "Postav sa čelom k stene a oboma rukami sa zľahka pridrž.",
+      "Jednou nohou švihaj nabok od tela a späť pred druhú nohu — plynule ako metronóm.",
+      "Trup drž vzpriamený a stabilný, nenakláňaj sa do strany. Potom vymeň nohy.",
     ],
-    why: "Aktivuje stabilizátory bedra, ktoré pri behu udržiavajú koleno v správnej osi.",
+    why: "Rozhýbe bedro do strán a aktivuje bočné stabilizátory panvy (gluteus medius), ktoré pri každom kroku držia koleno v správnej osi — dôležitá prevencia bolesti kolena a IT pásu.",
+    mistake: "Nešvihaj silou do krajnej polohy ani cez bolesť — pohyb veď kontrolovane z bedra a nehojdaj celým telom.",
+    videoQuery: "lateral leg swings running drill",
   },
   {
     id: "walking-lunges",
@@ -189,6 +195,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Drž bez hojdania. Potom vymeň nohy.",
     ],
     why: "Lýtka sú pri behu mimoriadne zaťažené — pravidelný strečing predchádza zápalu Achillovej šľachy.",
+    mistake: "Pätu zadnej nohy nedvíhaj a nehojdaj sa — pätu drž pevne pri zemi a do ťahu sa opieraj plynulo, bez pruženia.",
     videoQuery: "standing calf stretch against wall",
   },
   {
@@ -220,6 +227,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Ťah cítiš vpredu na stehne. Telo nepredkláňaj.",
     ],
     why: "Štvorhlavý sval tlmí nárazy pri behu a býva u väčšiny bežcov chronicky napätý.",
+    mistake: "Neprehýbaj sa v drieku a nerozťahuj kolená od seba — kolená drž vedľa seba, zadok jemne podsaď a telo drž vzpriamené.",
     videoQuery: "standing quad stretch technique",
   },
   {
@@ -251,6 +259,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Ťah cítiš na vonkajšej strane stehna.",
     ],
     why: "Syndróm IT pásu patrí k najčastejším zraneniam bežcov — pravidelný strečing je najlepšia prevencia.",
+    mistake: "Nepredkláňaj sa dopredu — nakláňaj sa čisto do strany (bok tlač von) a nepruž; ťah má byť na vonkajšej strane stehna a bedra.",
     videoQuery: "standing IT band stretch",
   },
   {
@@ -266,6 +275,7 @@ export const STRETCH_AFTER: Exercise[] = [
       "Ťah cítiš hlboko v zadku. Potom vymeň strany.",
     ],
     why: "Sedacie svaly stabilizujú beh. Napätý piriformis môže tlačiť na sedací nerv — strečing predchádza bolesti zadku a nohy.",
+    mistake: "Nedvíhaj hlavu ani ramená k nohe — hlavu nechaj ležať, ťah vytváraš priťahovaním stehna k hrudi, nie zdvíhaním trupu.",
     videoQuery: "figure 4 glute stretch lying down",
   },
 ];
