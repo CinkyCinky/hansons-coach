@@ -609,7 +609,7 @@ export default function Generator() {
           <div>
             <h3 className="font-bold mb-1 text-lg">
               Návrh plánu ({generatedPlan.workouts?.length ?? 0}{" "}
-              {generatedPlan.workouts?.length === 1 ? "tréning" : "tréningy/-ov"} • tento týždeň)
+              {plural(generatedPlan.workouts?.length ?? 0, "tréning", "tréningy", "tréningov")} • tento týždeň)
             </h3>
             <p className="text-xs text-gray-400 mb-3">
               Pred zápisom do Garminu môžeš upraviť názvy, vzdialenosti, tempá aj tepy.

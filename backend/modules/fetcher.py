@@ -425,6 +425,45 @@ def get_lactate_threshold(client) -> Optional[dict]:
     return None
 
 
+def _resolve_vo2max(client, user_data: dict) -> tuple:
+    """Nájde aktuálny bežecký VO2max. Vracia (hodnota, odkiaľ).
+
+    Prečo reťaz a nie jedno pole: `userSettings.userData.vo2MaxRunning` býva u časti účtov
+    prázdne, hoci Garmin VO2max pozná — drží ho v „max metrics". Bez tejto zálohy sa Speed
+    intervaly nekotvia na AKTUÁLNU formu, ale spadnú na odhad z cieľového času, čo je presne
+    to, čo metodika (kap. 1.4) zakazuje.
+    """
+    # 1) Profilové nastavenia — najlacnejšie, netreba ďalšie volanie.
+    v = user_data.get("vo2MaxRunning")
+    if v:
+        return v, "userSettings"
+
+    # 2) Max metrics — Garmin ich vracia po dni; pri dňoch bez merania je pole prázdne,
+    #    preto skúsime aj pár dní dozadu.
+    for back in range(0, 8):
+        cdate = (date.today() - timedelta(days=back)).isoformat()
+        try:
+            mm = _garmin_call(client.get_max_metrics, cdate)
+        except Exception:
+            continue
+        v = _deep_find(mm, ("vo2MaxPreciseValue", "vo2MaxValue"))
+        if v:
+            return v, f"maxMetrics({cdate})"
+
+    # 3) Posledná záchrana — hodnota zapísaná pri niektorom z posledných behov.
+    try:
+        acts = _garmin_call(client.get_activities, 0, 30) or []
+        for a in acts:
+            v = a.get("vO2MaxValue")
+            if v:
+                return v, "aktivita"
+    except Exception:
+        pass
+
+    logger.warning("VO2max sa nepodarilo zistiť zo žiadneho zdroja — Speed spadne na odhad z cieľa.")
+    return None, None
+
+
 def get_athlete_profile(client) -> Optional[dict]:
     """Stiahne osobné údaje športovca z Garmin účtu:
     vek, váha, výška, pohlavie, VO2max, LTHR. Toto sú dáta, ktoré tréner potrebuje
@@ -447,12 +486,15 @@ def get_athlete_profile(client) -> Optional[dict]:
         weight_g = ud.get("weight")
         weight_kg = round(weight_g / 1000, 1) if weight_g else None
 
+        vo2, vo2_src = _resolve_vo2max(client, ud)
+
         return {
             "age": age,
             "gender": ud.get("gender"),
             "weight_kg": weight_kg,
             "height_cm": round(ud.get("height")) if ud.get("height") else None,
-            "vo2max": ud.get("vo2MaxRunning"),
+            "vo2max": vo2,
+            "vo2max_source": vo2_src,   # diagnostika: odkiaľ hodnota prišla
             "lthr": ud.get("lactateThresholdHeartRate"),
             "lthr_pace": _speed_to_pace_str(ud.get("lactateThresholdSpeed")),
         }

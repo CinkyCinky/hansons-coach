@@ -28,7 +28,10 @@ const DISMISSED_MISSED_KEY = "hansons_dismissed_missed_v1";
 
 const STEP_COLORS: Record<string, { border: string; text: string; label: string }> = {
   warmup:   { border: "border-l-orange-400", text: "text-orange-400",  label: "Rozcvička" },
-  interval: { border: "border-l-rose-400",   text: "text-rose-400",    label: "Intervalový beh" },
+  // Garmin nemá typ „bežecký úsek" — KAŽDÝ hlavný krok je `interval`, aj súvislý Easy beh.
+  // Štítok „Intervalový beh" preto klamal pri behoch bez intervalov; navyše generátor ten
+  // istý krok volá „Beh". Držíme jedno slovo — štruktúru intervalov aj tak nesie blok „Opakovanie".
+  interval: { border: "border-l-rose-400",   text: "text-rose-400",    label: "Beh" },
   run:      { border: "border-l-blue-400",   text: "text-blue-400",    label: "Beh" },
   recovery: { border: "border-l-emerald-400",text: "text-emerald-400", label: "Zotavenie" },
   cooldown: { border: "border-l-green-400",  text: "text-green-400",   label: "Vychladenie" },
@@ -38,7 +41,7 @@ const STEP_COLORS: Record<string, { border: string; text: string; label: string 
 // používa sa v návrhu úpravy tréningu (pôvodné aj navrhované kroky).
 const STEP_TYPE_SK: Record<string, string> = {
   warmup: "Rozcvička", run: "Beh", recover: "Zotavenie", recovery: "Zotavenie",
-  cooldown: "Vychladenie", interval: "Intervalový beh", repeat: "Opakovanie",
+  cooldown: "Vychladenie", interval: "Beh", repeat: "Opakovanie",
 };
 const stepTypeSk = (t?: string) => (t ? STEP_TYPE_SK[t] ?? t : "");
 
