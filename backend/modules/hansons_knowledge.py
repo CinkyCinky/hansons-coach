@@ -188,6 +188,11 @@ def compute_training_paces(goal_time: str, vo2max: Optional[float] = None) -> Op
     if not speed:
         speed = hmp - 22
         speed_source = "cieľ (fallback)"
+    # Poistka proti nadhodnotenému VO2max. Garmin ho vie nadstreliť (napr. z krátkych
+    # rýchlych behov) a ACSM inverz potom vyrobí tempo, ktoré sa nedá odbehnúť: pri
+    # VO2max 60 vyjde 3:32/km. Strop je zámerne voľný (HMP − 60 s/km), aby nebrzdil
+    # bežca, ktorý si dal konzervatívny cieľ — má odrezať len nezmysly.
+    speed = max(speed, hmp - 60)
     # Sanity: Speed musí byť rýchlejší než Strength (a ten než Tempo/HMP)
     speed = min(speed, strength - 5)
 
