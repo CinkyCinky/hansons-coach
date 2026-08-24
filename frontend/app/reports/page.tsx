@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine
 } from "recharts";
-import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, RefreshCcw, Info } from "lucide-react";
+import { Activity, Moon, Battery, Heart, TrendingUp, Loader2, Bot, RefreshCcw, Info } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "@/lib/store";
 import { hrvStatusSk } from "@/lib/garminLabels";
 import { classifyWorkout } from "@/lib/workoutType";
+import { errorStatus, fetchWeeklySummary } from "@/lib/api";
 
 // Backend väčšinu chýb hlási už po slovensky a zrozumiteľne („Neplatný token. Prosím
 // prihláste sa znova.", „Profil nenájdený") — takú hlášku NEZAHADZUJEME, len k nej
@@ -103,6 +104,35 @@ function reportErrorSk(raw: string | null, status: number | null = null): string
   }
 
   return "Report sa nepodarilo načítať. Skús to znova cez ikonu obnovenia hore vpravo; ak to potrvá, skontroluj pripojenie účtu Garmin v Nastaveniach.";
+}
+
+// Zhrnutie má vlastné znenie chýb: reportErrorSk() posiela zverenca na ikonu obnovenia
+// hore vpravo, no karta zhrnutia má vlastné tlačidlo „Skúsiť znova" priamo v sebe.
+// Zároveň musí byť jasné, že výpadok sa týka LEN komentára — čísla a grafy nižšie stoja.
+function summaryErrorSk(raw: string | null, status: number | null = null): string {
+  const t = (raw || "").toLowerCase();
+
+  if (status === 401 || status === 403) {
+    return "Prihlásenie vypršalo. Odhlás sa v Nastaveniach a prihlás sa znova — potom ti tréner týždeň zhodnotí.";
+  }
+  if (
+    t.includes("failed to fetch") ||
+    t.includes("fetch failed") ||
+    t.includes("networkerror") ||
+    t.includes("network request failed") ||
+    t.includes("load failed")
+  ) {
+    return "Nepodarilo sa spojiť so serverom. Skontroluj internet a ťukni na tlačidlo „Skúsiť znova“ nižšie.";
+  }
+  if (
+    t.includes("timeout") ||
+    t.includes("timed out") ||
+    t.includes("504") ||
+    t.includes("gateway")
+  ) {
+    return "Tréner odpovedal príliš pomaly — napísať zhrnutie chvíľu trvá. Skús to o minútu znova.";
+  }
+  return "Zhrnutie týždňa sa teraz nepodarilo načítať. Čísel a grafov nižšie sa to netýka — tie máš v poriadku.";
 }
 
 // V slovenčine sa desatinné miesta oddeľujú čiarkou. Čísla z backendu prídu s bodkou
@@ -226,13 +256,64 @@ export default function Reports() {
   // Vysvetlenie A:C musí byť rozbaliteľné — HTML `title` sa na dotykovom displeji nikdy nezobrazí.
   const [showLoadInfo, setShowLoadInfo] = useState(false);
 
+  // ── AI zhrnutie týždňa ──────────────────────────────────────────────────────
+  // Držíme ho v lokálnom stave (nie v store-e), aby jeho výpadok nezhodil report:
+  // grafy a čísla musia byť čitateľné aj vtedy, keď tréner nič nenapíše.
+  const [summary, setSummary] = useState<string | null>(null);
+  // Štartuje sa rovno v stave „načítava sa" — načítanie spúšťame hneď pri otvorení
+  // stránky a bez toho by na jeden render prebliklo hlásenie o nedostatku dát.
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryErrorStatus, setSummaryErrorStatus] = useState<number | null>(null);
+  // Novšia požiadavka prebíja staršiu: keď zverenec ťukne na obnovenie skôr, než dobehne
+  // prvé volanie, stará odpoveď by inak prepísala čerstvé zhrnutie.
+  const summarySeqRef = useRef(0);
+
+  const loadSummary = useCallback(async (force = false) => {
+    const seq = ++summarySeqRef.current;
+    setSummaryLoading(true);
+    setSummaryError(null);
+    setSummaryErrorStatus(null);
+    try {
+      const res = await fetchWeeklySummary(force);
+      if (seq !== summarySeqRef.current) return; // dobehla stará požiadavka → zahoď
+      // {"summary": null} je PLATNÁ odpoveď (zatiaľ málo dát), nie chyba — preto z nej
+      // nerobíme červenú hlášku, ale zmysluplný prázdny stav. Prázdny reťazec z modelu
+      // berieme rovnako, inak by karta ostala vizuálne prázdna bez vysvetlenia.
+      const text = typeof res?.summary === "string" ? res.summary.trim() : "";
+      setSummary(text || null);
+      setSummaryLoading(false);
+    } catch (err) {
+      if (seq !== summarySeqRef.current) return;
+      // Chyba sa NESMIE ticho prehltnúť — inak sa spinner točí donekonečna.
+      const msg = err instanceof Error ? err.message : "";
+      setSummaryError(msg || "Nepodarilo sa načítať zhrnutie týždňa.");
+      setSummaryErrorStatus(errorStatus(err));
+      setSummaryLoading(false);
+    }
+    // `finally` tu zámerne nie je: príznak načítavania smie zhasnúť len najnovšia
+    // požiadavka, inak by dobiehajúca stará označila za hotové aj to, čo ešte beží.
+  }, []);
+
+  // Zhrnutie sa načíta LEN raz pri otvorení stránky. Prepnutie záložky Zdravie/Behy je
+  // iba zmena stavu v tomto komponente, takže efekt s prázdnymi závislosťami sa
+  // neopakuje; ref navyše bráni druhému volaniu pri dvojitom mounte v dev režime.
+  const summaryStartedRef = useRef(false);
+
   useEffect(() => {
     store.loadReport();
+    if (!summaryStartedRef.current) {
+      summaryStartedRef.current = true;
+      loadSummary();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRefresh = () => {
     store.loadReport(true);
+    // Obnovenie hore vpravo si pýta aj čerstvé zhrnutie (refresh=true obíde denný cache
+    // na backende) — inak by nad novými číslami ostal visieť komentár k starým.
+    loadSummary(true);
   };
 
   const { report: data, reportLoading: loading, reportError: error } = store;
@@ -325,10 +406,13 @@ export default function Reports() {
           >
             <Info size={16} />
           </button>
+          {/* Tlačidlo obnovuje report AJ zhrnutie, preto sa točí a blokuje, kým beží
+              čokoľvek z toho — inak by sa dalo ťukať do práve prebiehajúceho zhrnutia. */}
           <button
             onClick={handleRefresh}
             disabled={loading}
             className="bg-gray-800 p-2 rounded-full text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+            aria-label="Obnoviť report a zhrnutie týždňa"
           >
             <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
           </button>
@@ -349,6 +433,74 @@ export default function Reports() {
           <p><b className="text-indigo-300">EF (efektivita behu)</b> — koľko rýchlosti „vyťažíš" z jedného úderu srdca (rýchlosť prepočítaná na rovinu / tep). Vyššie = ekonomickejší beh. Najvýpovednejšie pri Easy behoch (pomalé regeneračné behy), kde je intenzita porovnateľná.</p>
         </div>
       )}
+
+      {/* ── AI zhrnutie týždňa ──
+          Je zámerne NAD záložkami: čísla a grafy sami nepovedia, či bol týždeň dobrý,
+          takže veta od trénera musí padnúť do oka ako prvá. Mimo záložiek je aj preto,
+          že prepínanie Zdravie/Behy tak kartu neodmountuje a nespustí načítanie znova. */}
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 relative overflow-hidden"
+      >
+        <div className="absolute -right-6 -bottom-6 opacity-5">
+          <Bot size={100} />
+        </div>
+        <div className="flex gap-3 relative z-10">
+          <div className="mt-1 bg-blue-500/20 p-2 rounded-xl text-primary flex-shrink-0 h-min">
+            <Bot size={20} />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-1">
+              Zhrnutie týždňa
+            </h3>
+
+            {/* Poradie vetiev: DÁTA majú prednosť pred spinnerom — pri obnovovaní tak
+                existujúce zhrnutie nezmizne a nenahradí ho prázdny spinner (rovnako to robí
+                karta „Tréner radí" na Prehľade). */}
+            {summary && !summaryError ? (
+              <p className="text-sm text-gray-200 leading-relaxed whitespace-pre-line">{summary}</p>
+            ) : summaryLoading ? (
+              <div className="flex items-center gap-2 text-sm text-gray-400 mt-1">
+                <Loader2 size={14} className="animate-spin" /> Tréner hodnotí tvoj týždeň…
+              </div>
+            ) : summaryError ? (
+              /* Bez tejto vetvy by sa pri chybe točil spinner donekonečna a nedalo by sa
+                 opakovať. Surovú hlášku zverencovi neukazujeme — nemusí byť po slovensky. */
+              <div>
+                <p className="text-sm text-gray-300 leading-relaxed">
+                  {summaryErrorSk(summaryError, summaryErrorStatus)}
+                </p>
+                {/* Opakovanie zámerne BEZ refresh=true: keď má backend zhrnutie z dneška
+                    v cache, vráti ho hneď; ak nemá, vygeneruje ho aj tak. */}
+                <button
+                  onClick={() => loadSummary()}
+                  className="mt-2 inline-flex items-center gap-1.5 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <RefreshCcw size={13} /> Skúsiť znova
+                </button>
+              </div>
+            ) : summary ? (
+              /* Model píše vo viacerých odstavcoch — `whitespace-pre-line` zachová
+                 zalomenia, inak by sa zliali do jedného bloku textu. */
+              <p className="text-sm text-gray-200 leading-relaxed font-medium whitespace-pre-line">
+                {summary}
+              </p>
+            ) : (
+              <p className="text-sm text-gray-300 leading-relaxed">
+                Na zhrnutie je zatiaľ málo dát — tréner potrebuje aspoň pár odbehaných
+                tréningov a prespaných nocí načítaných z Garmin Connect (appka Garminu,
+                odkiaľ sem chodia dáta z hodiniek).
+                <span className="block text-xs text-gray-400 mt-0.5">
+                  Odtrénuj pár dní a zhrnutie sa tu objaví samo. Dovtedy si čísla a grafy
+                  nižšie prejdi cez ikonu <b className="text-gray-300">i</b> hore vpravo —
+                  vysvetlí, čo ktorý údaj znamená.
+                </span>
+              </p>
+            )}
+          </div>
+        </div>
+      </motion.section>
 
       {/* Tabs */}
       <div className="bg-[#1a1a24] p-1 rounded-full flex relative">

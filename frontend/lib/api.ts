@@ -86,6 +86,25 @@ export async function fetchWeeklyReport(forceRefresh = false) {
   return fetchWithAuth('/api/reports/weekly' + (forceRefresh ? '?refresh=true' : ''));
 }
 
+/** AI zhrnutie týždňa — interpretuje čísla z reportu. Backend odpoveď cachuje na deň. */
+export async function fetchWeeklySummary(forceRefresh = false): Promise<{ summary: string | null }> {
+  return fetchWithAuth('/api/reports/summary' + (forceRefresh ? '?refresh=true' : ''));
+}
+
+/**
+ * Overí, či sa appka vie prihlásiť do Garminu uloženými údajmi.
+ * Vracia VŽDY HTTP 200 — neúspech je normálny stav, nie chyba servera, aby ho
+ * Nastavenia vedeli zobraziť ako zrozumiteľnú radu namiesto červenej výnimky.
+ */
+export async function checkGarminConnection(): Promise<{
+  ok: boolean;
+  name?: string | null;
+  reason?: 'credentials' | 'mfa' | 'rate_limit' | 'missing' | 'network' | 'unknown';
+  message: string;
+}> {
+  return fetchWithAuth('/api/garmin/check', { method: 'POST' });
+}
+
 export async function generatePlan(constraints: string) {
   return fetchWithAuth('/api/plan/generate', {
     method: 'POST',

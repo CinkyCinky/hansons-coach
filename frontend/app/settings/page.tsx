@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X, Sparkles, CheckCircle2, Circle, RefreshCw, ShieldAlert } from "lucide-react";
+import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X, Sparkles, CheckCircle2, Circle, RefreshCw, ShieldAlert, HelpCircle } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact, estimateGoal } from "@/lib/api";
+import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFact, estimateGoal, checkGarminConnection, errorStatus } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { computePaces } from "@/lib/paces";
 
@@ -25,6 +25,76 @@ const VARIANT_LABELS: Record<string, string> = {
   beginner: "Beginner",
   advanced: "Advanced",
   just_finish: "Just Finish",
+};
+
+// ── Sprievodca výberom variantu ───────────────────────────────────────────────
+// Variant je rozhodnutie na celých 18 týždňov, ale zverenec pri ňom vidí len dve
+// anglické slová a číslo objemu. Tri otázky ho k variantu dovedú podľa metodiky
+// (docs kap. 1.2 a hansons_knowledge.VARIANTS), nie podľa toho, čo znie lepšie.
+type WizardAnswers = {
+  ranHalf: "yes" | "no" | null;   // 1. Bežal si už polmaratón?
+  days: "0-2" | "3-4" | "5+" | null; // 2. Koľko dní v týždni teraz behávaš?
+  goal: "time" | "finish" | null;  // 3. Čo je tvoj cieľ?
+};
+
+const EMPTY_WIZARD: WizardAnswers = { ranHalf: null, days: null, goal: null };
+
+// Odpovede vyzerajú rovnako ako dlaždice výberu variantu, nech je jasné, že sa klikajú.
+// Na mobile (~375 px) musia zniesť aj dva riadky textu, preto žiadna pevná výška.
+const wizardBtn = (active: boolean) =>
+  `rounded-xl px-2 py-2.5 text-center text-[11px] font-bold border transition-colors leading-snug ${
+    active
+      ? "bg-primary/20 border-primary text-white"
+      : "bg-[#1a1a24] border-white/10 text-gray-400 hover:text-white"
+  }`;
+
+// Poradie podmienok je dôležité: najprv vyradíme prípady, kde by 6 behov týždenne
+// a tvrdé intervaly boli priveľký skok (Just Finish), potom prípady bez skúsenosti
+// alebo bez návyku 5+ behov (Beginner) a až zvyšok je Advanced.
+function recommendVariant(a: WizardAnswers): { key: string; why: string } | null {
+  if (!a.ranHalf || !a.days || !a.goal) return null; // kým nie sú všetky tri odpovede, neradíme
+  if (a.goal === "finish") {
+    return {
+      key: "just_finish",
+      why: "Ideš si po dobehnutie, nie po konkrétny čas — a Just Finish je celý v ľahkom (Easy) tempe bez tvrdých intervalov, takže ťa do cieľa dovedie s najmenším rizikom zranenia.",
+    };
+  }
+  if (a.days === "0-2") {
+    return {
+      key: "just_finish",
+      why: "Teraz behávaš 0 – 2 dni v týždni, no Hanson plány počítajú so šiestimi behmi týždenne, takže skočiť rovno do tvrdých tréningov by bolo priveľa — Just Finish (len ľahké behy a dlhý beh) ťa najprv bezpečne rozbehá.",
+    };
+  }
+  if (a.ranHalf === "no") {
+    return {
+      key: "beginner",
+      why: "Prvý polmaratón ťa ešte len čaká, a Beginner s tým ráta — prvých 5 týždňov je len rozbehanie (tzv. base fáza: ľahké behy a nedeľný dlhý beh) a tvrdé tréningy sa pridajú až od 6. týždňa.",
+    };
+  }
+  if (a.days === "3-4") {
+    return {
+      key: "beginner",
+      why: "Behávaš 3 – 4 dni v týždni, takže Beginner s nižším vrcholom objemu (~77 km za týždeň) je z tvojho terajšieho objemu podstatne bezpečnejší skok než Advanced (~82 km za týždeň).",
+    };
+  }
+  return {
+    key: "advanced",
+    why: "Polmaratón už máš odbehnutý, behávaš 5 a viac dní v týždni a ideš si po konkrétny čas — Advanced ti preto dá kvalitné tréningy (intervaly aj tempové behy) hneď od 1. týždňa a najvyšší objem (~82 km za týždeň).",
+  };
+}
+
+// ── Overenie prepojenia s Garminom ────────────────────────────────────────────
+// Typ berieme priamo z api.ts, nech sa zoznam dôvodov nerozíde s tým, čo posiela backend.
+type GarminCheckResult = Awaited<ReturnType<typeof checkGarminConnection>>;
+
+// Hláška zo servera povie, ČO sa stalo. Tu dopĺňame, ČO S TÝM ROBIŤ — samotné
+// „nesprávne heslo“ nováčikovi nepovie, že ho treba prepísať a znova uložiť.
+const GARMIN_ADVICE: Record<string, string> = {
+  credentials: "Skontroluj prihlasovací e-mail vyššie a heslo napíš nanovo do políčka „Heslo“ (appka si uložené heslo nevie prečítať, takže ho treba zadať celé). Potom klikni „Uložiť profil“ dole a over prepojenie znova.",
+  mfa: "Na Garmin účte máš zapnuté dvojfaktorové overenie (2FA — okrem hesla pýta ešte jednorazový kód). Appka nemá kam ten kód zadať, takže ho treba v nastaveniach Garmin účtu (Account Settings → Sign-in & Security) dočasne vypnúť a overiť znova.",
+  rate_limit: "Garmin dočasne odmieta ďalšie prihlásenia, lebo ich za sebou bolo priveľa. Počkaj asi 15 minút a skús to znova — na tvojich údajoch pravdepodobne nie je nič zlé.",
+  missing: "Vyplň prihlasovací e-mail aj heslo vyššie a ulož ich tlačidlom „Uložiť profil“ dole — až potom má appka čím sa prihlásiť.",
+  network: "Vyzerá to na výpadok na strane Garminu — appka sa k nemu teraz nedostala. Skús to o chvíľu znova.",
 };
 
 function parseTimeSec(t: string): number | null {
@@ -79,6 +149,49 @@ export default function Settings() {
   const [autoEst, setAutoEst] = useState<string | null>(null);
   // Vysvetlivky k anglickým názvom temp — nový zverenec netuší, čo je Strength či Speed
   const [showPaceLegend, setShowPaceLegend] = useState(false);
+
+  // Sprievodca výberom variantu (3 otázky). Odpovede držíme aj po zavretí, nech sa
+  // zverenec k odporúčaniu vie vrátiť bez toho, aby klikal všetko odznova.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizard, setWizard] = useState<WizardAnswers>(EMPTY_WIZARD);
+
+  // Overenie prepojenia s Garminom — tri stavy: prebieha / výsledok zo servera /
+  // volanie samotné zlyhalo (sieť). Bez tretieho stavu by po výpadku ostalo
+  // tlačidlo bez akejkoľvek odozvy a vyzeralo by to ako pokazená appka.
+  const [garminChecking, setGarminChecking] = useState(false);
+  const [garminCheck, setGarminCheck] = useState<GarminCheckResult | null>(null);
+  const [garminCheckError, setGarminCheckError] = useState<string | null>(null);
+
+  const handleGarminCheck = async () => {
+    if (garminChecking) return;
+    setGarminChecking(true);
+    setGarminCheck(null);
+    setGarminCheckError(null);
+    try {
+      const r = await checkGarminConnection();
+      // Endpoint má vracať vždy HTTP 200 s `ok`. Keby prišlo niečo iné (proxy, stará
+      // verzia backendu), nesmieme to ticho vyhodnotiť ako neúspešné prihlásenie.
+      if (!r || typeof r.ok !== "boolean") throw new Error("Server vrátil odpoveď, ktorej appka nerozumie.");
+      setGarminCheck(r);
+    } catch (e: any) {
+      // Surová výnimka („Failed to fetch“) zverencovi nepovie nič — preložíme ju.
+      // Podľa HTTP stavu vieme rozlíšiť, či sme sa na server VÔBEC nedostali (žiadny stav),
+      // alebo odpovedal chybou — rada „skontroluj internet“ by v druhom prípade bola nezmysel.
+      const status = errorStatus(e);
+      const detail = e?.message ? ` (detail: ${e.message})` : "";
+      if (status === 401 || status === 403) {
+        setGarminCheckError("Tvoje prihlásenie do appky vypršalo. Odhlás sa dole a prihlás sa znova, potom overenie zopakuj.");
+      } else if (status) {
+        setGarminCheckError(`Server odpovedal chybou (${status}), overenie sa nedokončilo. Skús to o chvíľu znova.${detail}`);
+      } else {
+        setGarminCheckError(
+          `Overenie sa nepodarilo spustiť — appka sa nedostala na vlastný server. Skontroluj pripojenie na internet a skús to znova.${detail}`
+        );
+      }
+    } finally {
+      setGarminChecking(false);
+    }
+  };
 
   const handleEstimate = async (useRace: boolean) => {
     setEstimating(true);
@@ -344,6 +457,10 @@ export default function Settings() {
         plan_variant: planVariant,
         ai_context: aiContext,
       }));
+      // Výsledok overenia sa týkal PREDOŠLÝCH uložených údajov — po uložení nových by
+      // červený panel „nesprávne heslo" klamal. Zahodíme ho a necháme overiť nanovo.
+      setGarminCheck(null);
+      setGarminCheckError(null);
       setMessage("Profil úspešne uložený! 🎉");
       setPassword("");
     } catch (err: any) {
@@ -368,6 +485,11 @@ export default function Settings() {
   const isDirty =
     !!savedProfile &&
     (password.length > 0 || JSON.stringify(currentForm) !== JSON.stringify(formFromProfile(savedProfile)));
+
+  // Overenie beží na serveri s ULOŽENÝMI údajmi. Keď má zverenec e-mail či heslo len
+  // rozpísané, výsledok sa týka starých údajov — treba ho na to upozorniť, inak by
+  // z červeného výsledku usúdil, že jeho nové heslo je zlé.
+  const garminCredsDirty = password.length > 0 || email !== (savedProfile?.garmin_email || "");
 
   // Kontrolný zoznam sa počíta z ULOŽENÉHO profilu — nesmie odškrtnúť cieľ,
   // ktorý je zatiaľ len rozpísaný vo formulári.
@@ -525,6 +647,115 @@ export default function Settings() {
               placeholder="••••••••"
             />
           </div>
+
+          {/* Overenie prepojenia — bez neho sa zverenec o zlom hesle dozvie až tým,
+              že mu appka celé dni nesťahuje behy a netuší prečo. */}
+          <div>
+            <button
+              type="button"
+              onClick={handleGarminCheck}
+              disabled={garminChecking}
+              className="inline-flex items-center gap-1.5 bg-primary/15 hover:bg-primary/25 border border-primary/30 text-primary text-xs font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-60"
+            >
+              {garminChecking ? <Loader2 size={14} className="animate-spin" /> : <Wifi size={14} />}
+              {garminChecking ? "Overujem prepojenie…" : "Overiť prepojenie s Garminom"}
+            </button>
+            <p className="text-[11px] text-gray-600 mt-1.5 ml-1 leading-snug">
+              Appka sa skúsi prihlásiť do Garmin Connect <b className="text-gray-500">naposledy uloženými</b> údajmi.
+              Nič sa tým nemení ani neukladá — len sa zistí, či prepojenie funguje.
+            </p>
+            {garminCredsDirty && (
+              <p className="text-[11px] text-amber-300 mt-1 ml-1 leading-snug">
+                E-mail alebo heslo máš rozpísané, ale ešte neuložené. Over až po kliknutí na „Uložiť profil“
+                dole — inak sa overia staré údaje a výsledok ťa pomýli.
+              </p>
+            )}
+
+            {/* Prebieha */}
+            {garminChecking && (
+              <p className="mt-2 flex items-start gap-2 text-xs text-gray-400 leading-relaxed">
+                <Loader2 size={14} className="animate-spin text-primary shrink-0 mt-0.5" />
+                Prihlasujem sa do Garmin Connect… môže to trvať aj pár sekúnd.
+              </p>
+            )}
+
+            {/* Volanie zlyhalo (sieť, server nedostupný) — vlastná hláška + nový pokus */}
+            {!garminChecking && garminCheckError && (
+              <div className="mt-2 flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+                <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-300 leading-relaxed">
+                  <p>{garminCheckError}</p>
+                  <button
+                    type="button"
+                    onClick={handleGarminCheck}
+                    className="mt-2 inline-flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 font-bold px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <RefreshCw size={12} /> Skúsiť znova
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Odpoveď servera: úspech alebo zrozumiteľne vysvetlený neúspech */}
+            {!garminChecking && !garminCheckError && garminCheck && (
+              garminCheck.ok ? (
+                <div className="mt-2 flex items-start gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="text-xs leading-relaxed">
+                    <p className="text-emerald-300 font-bold">
+                      Prepojenie funguje{garminCheck.name ? ` — prihlásený ako ${garminCheck.name}` : ""}.
+                    </p>
+                    {/* Hlášku zo servera pri úspechu NEopakujeme — nesie to isté meno aj tú istú
+                        vetu, takže by sa celé zdvojila. Pri neúspechu je naopak kľúčová. */}
+                    <p className="text-gray-400 mt-0.5">Nemusíš nič robiť.</p>
+                  </div>
+                </div>
+              ) : (() => {
+                // Chyba na strane zverenca (heslo, 2FA, chýbajúce údaje) = červená, treba
+                // niečo urobiť. Dočasný problém (limit, výpadok) = žltá, stačí počkať.
+                const needsAction =
+                  garminCheck.reason === "credentials" ||
+                  garminCheck.reason === "mfa" ||
+                  garminCheck.reason === "missing";
+                const advice = garminCheck.reason ? GARMIN_ADVICE[garminCheck.reason] : undefined;
+                return (
+                  <div
+                    className={`mt-2 flex items-start gap-2 rounded-xl p-3 border ${
+                      needsAction
+                        ? "bg-rose-500/10 border-rose-500/20"
+                        : "bg-amber-500/10 border-amber-500/20"
+                    }`}
+                  >
+                    <ShieldAlert
+                      size={14}
+                      className={`shrink-0 mt-0.5 ${needsAction ? "text-rose-400" : "text-amber-400"}`}
+                    />
+                    <div className="text-xs leading-relaxed">
+                      <p className={needsAction ? "text-rose-300 font-bold" : "text-amber-300 font-bold"}>
+                        Prepojenie zatiaľ nefunguje
+                      </p>
+                      <p className="text-gray-300 mt-0.5">
+                        {garminCheck.message || "Server nepovedal dôvod."}
+                      </p>
+                      {advice && <p className="text-gray-400 mt-1.5">{advice}</p>}
+                      <button
+                        type="button"
+                        onClick={handleGarminCheck}
+                        className={`mt-2 inline-flex items-center gap-1.5 font-bold px-3 py-1.5 rounded-lg transition-colors border ${
+                          needsAction
+                            ? "bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/30 text-rose-200"
+                            : "bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/30 text-amber-200"
+                        }`}
+                      >
+                        <RefreshCw size={12} /> Overiť znova
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()
+            )}
+          </div>
+
           <div className="flex items-start gap-2 text-xs text-gray-500 bg-black/20 p-3 rounded-xl">
             <Wifi size={14} className="text-emerald-400 shrink-0 mt-0.5" />
             <span className="leading-relaxed">
@@ -796,6 +1027,148 @@ export default function Settings() {
                 </button>
               ))}
             </div>
+
+            {/* Nenápadná pomôcka pre toho, komu tri anglické slová nič nehovoria */}
+            <button
+              type="button"
+              onClick={() => setWizardOpen((v) => !v)}
+              className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-primary underline underline-offset-2"
+              aria-expanded={wizardOpen}
+            >
+              <HelpCircle size={13} />
+              {wizardOpen ? "Zavrieť sprievodcu" : "Neviem si vybrať — poradiť s výberom"}
+            </button>
+
+            {wizardOpen && (
+              <div className="mt-2 bg-black/20 border border-white/10 rounded-xl p-3 flex flex-col gap-3">
+                <p className="text-[11px] text-gray-400 leading-relaxed">
+                  Odpovedz na tri otázky a odporučím ti variant. Nič sa tým nemení — výber si potom
+                  potvrdíš sám.
+                </p>
+
+                <div>
+                  <p className="text-xs text-gray-300 mb-1.5">1. Bežal si už polmaratón?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { v: "yes", l: "Áno" },
+                      { v: "no", l: "Nie" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        aria-pressed={wizard.ranHalf === o.v}
+                        onClick={() => setWizard((w) => ({ ...w, ranHalf: o.v }))}
+                        className={wizardBtn(wizard.ranHalf === o.v)}
+                      >
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-300 mb-1.5">2. Koľko dní v týždni teraz pravidelne behávaš?</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      { v: "0-2", l: "0 – 2 dni" },
+                      { v: "3-4", l: "3 – 4 dni" },
+                      { v: "5+", l: "5 a viac" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        aria-pressed={wizard.days === o.v}
+                        onClick={() => setWizard((w) => ({ ...w, days: o.v }))}
+                        className={wizardBtn(wizard.days === o.v)}
+                      >
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-300 mb-1.5">3. Čo je tvoj cieľ?</p>
+                  {/* Tieto dve odpovede sú dlhé — na mobile musia byť pod sebou, nie v dvoch stĺpcoch */}
+                  <div className="grid grid-cols-1 gap-2">
+                    {([
+                      { v: "time", l: "Zabehnúť konkrétny čas" },
+                      { v: "finish", l: "Pohodovo dobehnúť" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.v}
+                        type="button"
+                        aria-pressed={wizard.goal === o.v}
+                        onClick={() => setWizard((w) => ({ ...w, goal: o.v }))}
+                        className={wizardBtn(wizard.goal === o.v)}
+                      >
+                        {o.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {(() => {
+                  const rec = recommendVariant(wizard);
+                  if (!rec) {
+                    return (
+                      <p className="text-[11px] text-gray-600 border-t border-white/10 pt-3 leading-relaxed">
+                        Odpovedz na všetky tri otázky — odporúčanie sa ukáže tu.{" "}
+                        <button
+                          type="button"
+                          onClick={() => setWizardOpen(false)}
+                          className="text-gray-500 hover:text-gray-300 underline underline-offset-2"
+                        >
+                          Zavrieť bez zmeny
+                        </button>
+                      </p>
+                    );
+                  }
+                  const label = VARIANT_LABELS[rec.key] || rec.key;
+                  const already = planVariant === rec.key;
+                  return (
+                    <div className="border-t border-white/10 pt-3">
+                      <p className="text-[11px] font-bold text-emerald-300 mb-1">
+                        Odporúčam ti variant {label}
+                      </p>
+                      <p className="text-xs text-gray-300 leading-relaxed">{rec.why}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPlanVariant(rec.key); // len predvyplní výber vyššie
+                            setWizardOpen(false);
+                          }}
+                          className="bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                        >
+                          Nastaviť {label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWizard(EMPTY_WIZARD)}
+                          className="text-[11px] text-gray-500 hover:text-gray-300 underline underline-offset-2"
+                        >
+                          Odpovedať znova
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWizardOpen(false)}
+                          className="text-[11px] text-gray-500 hover:text-gray-300 underline underline-offset-2"
+                        >
+                          Zavrieť bez zmeny
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
+                        {already ? `Variant ${label} máš vo výbere vyššie zvolený už teraz. ` : ""}
+                        Tlačidlo iba predvyplní výber vyššie — uloží sa až tlačidlom „Uložiť profil“ dole.
+                        Odporúčanie je návrh, nie príkaz: ak sa cítiš inak, pokojne si zvoľ iný variant.
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             <p className="text-xs text-gray-600 mt-1 ml-1 leading-snug">
               SOS = „Something of Substance" — 3 tvrdé tréningy týždňa (intervaly, tempo, dlhý beh).
               <b className="text-gray-400"> Beginner</b> ak s polmaratónom začínaš — má úvodnú <b className="text-gray-400">base

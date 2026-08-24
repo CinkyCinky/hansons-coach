@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from modules.auth import get_client
+from modules.auth import get_client, invalidate_client
 from modules import fetcher
 from modules.database import (
     verify_token, get_user_profile, update_user_profile, encrypt_password,
@@ -440,6 +440,12 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
             update_data["garmin_email"] = req.garmin_email
         if req.garmin_password:
             update_data["garmin_password_encrypted"] = encrypt_password(req.garmin_password)
+            # Nové heslo musí zneplatniť staré Garmin tokeny. Bez toho by sa appka ďalej
+            # prihlasovala nimi (auth.get_client skúša tokeny PRED heslom), takže zle zadané
+            # heslo by sa prejavilo až o mesiace, keď tokeny vypršia — a „Overiť prepojenie"
+            # by dovtedy hlásilo, že je všetko v poriadku.
+            update_data["garmin_tokens"] = None
+            invalidate_client(user_id)
         if req.target_time is not None:
             update_data["target_time"] = req.target_time
         if req.training_start_date is not None:
@@ -465,6 +471,122 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
         error_details = traceback.format_exc()
         print(error_details)
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Garmin prepojenie ─────────────────────────────────────────────────────────
+
+# Prečo vlastné hlášky a nie surový text výnimky: zverenec sa o zlom hesle alebo o zapnutom
+# dvojfaktorovom overení dozvedel až náhodnou chybou na inej obrazovke. Každá hláška preto
+# MUSÍ povedať, čo má urobiť ďalej — inak je overenie prepojenia na nič.
+_GARMIN_CHECK_MESSAGES = {
+    "missing": (
+        "Prihlasovacie údaje do Garminu tu zatiaľ nemáš uložené. Vyplň svoj Garmin e-mail "
+        "aj heslo, ulož ich a potom spusti overenie znova."
+    ),
+    "credentials": (
+        "Garmin odmietol e-mail alebo heslo. Skús sa s nimi prihlásiť na connect.garmin.com — "
+        "ak to tam prejde, zadaj heslo sem ešte raz (pozor na preklepy a prepnutú klávesnicu) "
+        "a ulož ho."
+    ),
+    "mfa": (
+        "Na tvojom Garmin účte je zapnuté dvojfaktorové overenie (2FA — okrem hesla pýta ešte "
+        "jednorazový kód z SMS alebo z aplikácie). Táto appka sa prihlasuje priamo e-mailom "
+        "a heslom, kód nemá kam zadať, a tak sa dnu nedostane. Vypni dvojfaktorové overenie "
+        "v Garmin Connect (Účet → Prihlásenie a zabezpečenie) a spusti overenie znova."
+    ),
+    "rate_limit": (
+        "Garmin dočasne odmieta ďalšie prihlásenia, lebo ich odtiaľto prišlo priveľa naraz "
+        "(tzv. rate limit — ochrana proti záplave požiadaviek). Nie je to tvoja chyba: počkaj "
+        "15–30 minút a skús overenie znova."
+    ),
+    "network": (
+        "Garmin sa teraz nedá dovolať — spojenie vypršalo alebo ich server neodpovedá. "
+        "Skontroluj internet a skús overenie o pár minút znova."
+    ),
+    "unknown": (
+        "Prepojenie s Garminom sa nepodarilo overiť a dôvod sa nedá presne určiť. Skús to "
+        "o chvíľu znova; ak to nepomôže, ulož Garmin heslo nanovo a spusti overenie ešte raz."
+    ),
+}
+
+
+def _classify_garmin_error(e: Exception) -> str:
+    """Text výnimky z prihlásenia → dôvod pre frontend.
+
+    Na poradí záleží: „429 Too many requests" nesie aj slovo „request", a 401 od Garminu
+    býva zabalené v sieťovej knižnici (`ConnectionError`-like text). Preto sa najskôr
+    vylúči rate limit, potom dvojfaktorové overenie, až potom prihlasovacie údaje a sieť.
+    """
+    txt = f"{type(e).__name__}: {e}".lower()
+    # Vlastná hláška auth.py, keď v profile nie sú údaje — endpoint to síce kontroluje sám
+    # vopred, ale profil sa medzitým môže zmeniť a „unknown" by zverenca poslalo hľadať chybu inde.
+    if "chýbaj" in txt and "garmin" in txt:
+        return "missing"
+    if any(k in txt for k in ("429", "rate limit", "ratelimit", "too many")):
+        return "rate_limit"
+    # „social profile": pri zapnutom 2FA garth vráti needs_mfa a garminconnect spadne až na
+    # načítaní profilu s hláškou „Failed to retrieve social profile". Zlé heslo zlyhá skôr
+    # (401), takže tento tvar je pre dvojfaktorové overenie charakteristický.
+    if any(k in txt for k in ("mfa", "two-factor", "two factor", "2fa", "verification", "otp",
+                              "one-time", "social profile")):
+        return "mfa"
+    if any(k in txt for k in ("401", "403", "unauthorized", "forbidden", "invalid", "credential", "password", "heslo")):
+        return "credentials"
+    if any(k in txt for k in ("timeout", "timed out", "connection", "network", "unreachable", "getaddrinfo",
+                              "dns", "ssl", "max retries", "temporarily unavailable", "502", "503", "504")):
+        return "network"
+    return "unknown"
+
+
+@app.post("/api/garmin/check")
+def check_garmin_connection(user_id: str = Depends(get_current_user)):
+    """Overí NA POŽIADANIE, či sa appka vie prihlásiť do Garminu uloženými údajmi.
+
+    Vracia VŽDY HTTP 200 — nefunkčné prepojenie je normálny stav účtu, nie chyba servera,
+    a Nastavenia ho majú ukázať ako zrozumiteľnú radu, nie ako červenú výnimku. Preto tu
+    zámerne NIE JE Depends(get_garmin_client): ten pri zlyhaní vyhodí HTTPException 401
+    a celé vysvetlenie (vypni dvojfaktorové overenie, počkaj 20 minút…) by sa cestou stratilo.
+    """
+    # Aj čítanie profilu musí byť v try — Supabase môže vypadnúť a sľub „VŽDY HTTP 200"
+    # platí pre celý endpoint, nielen pre samotné prihlásenie do Garminu.
+    try:
+        profile = get_user_profile(user_id) or {}
+    except Exception:
+        logger.exception("Overenie Garmin prepojenia: profil sa nepodarilo načítať")
+        return {"ok": False, "reason": "network", "message": _GARMIN_CHECK_MESSAGES["network"]}
+    if not profile.get("garmin_email") or not profile.get("garmin_password_encrypted"):
+        return {"ok": False, "reason": "missing", "message": _GARMIN_CHECK_MESSAGES["missing"]}
+
+    # Zahoď 10-minútový in-process cache klienta (auth.py). Bez toho by „overenie" len
+    # potvrdilo starú živú session a o práve zmenenom hesle by nepovedalo nič.
+    invalidate_client(user_id)
+
+    try:
+        client = get_client(user_id)
+    except Exception as e:
+        reason = _classify_garmin_error(e)
+        # Skutočný text výnimky patrí do logu servera, nie do prehliadača (býva v ňom aj e-mail).
+        logger.warning("Overenie Garmin prepojenia zlyhalo (%s): %s", reason, e)
+        return {"ok": False, "reason": reason, "message": _GARMIN_CHECK_MESSAGES[reason]}
+
+    # Meno je len bonus do hlášky — keď ho Garmin nedá, prepojenie tým nie je pokazené,
+    # preto `ok` ostáva True a `name` je null.
+    name = None
+    try:
+        name = (client.get_full_name() or "").strip() or None
+    except Exception:
+        logger.info("Garmin get_full_name() zlyhalo — prepojenie je aj tak funkčné", exc_info=True)
+
+    return {
+        "ok": True,
+        "name": name,
+        "message": (
+            f"Prepojenie funguje — appka sa práve prihlásila do Garminu ako {name}. Nemusíš nič robiť."
+            if name else
+            "Prepojenie funguje — appka sa práve prihlásila do Garminu tvojimi uloženými údajmi. "
+            "Nemusíš nič robiť."
+        ),
+    }
 
 
 # ── Pamäť trénera (štruktúrované fakty) ───────────────────────────────────────
@@ -1547,141 +1669,360 @@ def _goal_pace_sec_per_km(target_time) -> Optional[int]:
         return None
 
 
+def _weekly_report_data(client, user_id: str, refresh: bool = False) -> dict:
+    """
+    Dáta pre sekciu Reporty (Hansonova metóda):
+    - Regenerácia za 7 dní: spánok, HRV, Body Battery (zvládanie kumulovanej únavy)
+    - Behy za posledných 7 dní (tempo/HR/kadencia) + cieľové tempo ako referencia
+    - Týždenný objem (km/týždeň) cez celý cyklus prípravy — kľúčová Hanson metrika
+    refresh=True obíde denný cache a stiahne čerstvé dáta z Garminu.
+
+    Samostatný helper (nie priamo telo endpointu), lebo z TÝCH ISTÝCH čísel stavia svoj
+    prompt aj /api/reports/summary. Dva nezávislé zbery by sa časom rozišli a slovné
+    hodnotenie by hovorilo o iných dátach, než aké má zverenec pred očami v grafoch.
+    Výnimky tu NEODCHYTÁVAME — o reakcii rozhoduje volajúci (weekly = 500, summary = ticho null).
+    """
+    today = datetime.date.today()
+    profile = get_user_profile(user_id) or {}
+    try:
+        start = datetime.date.fromisoformat(str(profile.get("training_start_date"))[:10])
+    except Exception:
+        start = today - datetime.timedelta(days=126)
+    # Okno pre objemový graf: od začiatku prípravy, max ~12 týždňov (čitateľnosť + API limit)
+    report_days = min(max(14, (today - start).days + 1), 84)
+
+    snap = _wellness_snapshot(client, user_id, force=refresh)
+    activities = _recent_activities(client, report_days, force=refresh) or []
+    sleep_data = snap["sleep"]
+    hrv_data = snap["hrv"]
+    bb_data = snap["body_battery"]
+    training_load = snap["training_load"]
+
+    running_types = ("running", "track_running", "treadmill_running", "trail_running")
+    running = [
+        a for a in activities
+        if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
+    ]
+
+    # Posledné behy (7 dní) pre zoznam + tempo trend
+    seven_ago = (today - datetime.timedelta(days=7)).isoformat()
+    runs = []
+    for act in running:
+        d = (act.get("startTimeLocal") or "")[:10]
+        if d < seven_ago:
+            continue
+        avg_speed = act.get("averageSpeed")
+        avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
+        r_hr = round(act["averageHR"]) if act.get("averageHR") else None
+        r_gain, r_loss = act.get("elevationGain"), act.get("elevationLoss")
+        r_net = (r_gain or 0) - (r_loss or 0) if (r_gain is not None or r_loss is not None) else None
+        r_gap = run_metrics.gap_pace_sec(avg_pace_sec, act.get("distance"), r_net)
+        runs.append({
+            "date": d,
+            "name": act.get("activityName", "Beh"),
+            "distance_km": round((act.get("distance") or 0) / 1000, 2),
+            "avg_pace_sec": avg_pace_sec,
+            "avg_pace_str": (f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}" if avg_pace_sec else None),
+            "avg_hr": r_hr,
+            "avg_cadence": round(cad) if (cad := (act.get("averageRunningCadenceInStepsPerMinute") or act.get("averageCadence"))) else None,
+            "calories": round(act["calories"]) if act.get("calories") else None,
+            "ef": run_metrics.efficiency_factor(r_gap or avg_pace_sec, r_hr),  # GAP-neutrálne
+        })
+
+    total_km = round(sum(r["distance_km"] for r in runs), 1)
+
+    # EF trend cez celé okno (sledovanie kondície v čase). GAP-neutrálne, len behy
+    # ≥3 km s tepom — krátke rozbehania/strides by trend zašumeli. Najvýpovednejšie
+    # pri Easy behoch (porovnateľná intenzita).
+    ef_trend = []
+    for act in sorted(running, key=lambda a: (a.get("startTimeLocal") or "")):
+        sp = act.get("averageSpeed")
+        hr = round(act["averageHR"]) if act.get("averageHR") else None
+        dist = act.get("distance") or 0
+        if not sp or not hr or dist < 3000:
+            continue
+        pace = round(1000 / sp)
+        g, lo = act.get("elevationGain"), act.get("elevationLoss")
+        net = (g or 0) - (lo or 0) if (g is not None or lo is not None) else None
+        gp = run_metrics.gap_pace_sec(pace, dist, net)
+        ef = run_metrics.efficiency_factor(gp or pace, hr)
+        if ef:
+            ef_trend.append({
+                "date": (act.get("startTimeLocal") or "")[:10],
+                "ef": ef,
+                "name": act.get("activityName", "Beh"),
+                "distance_km": round(dist / 1000, 1),
+            })
+
+    # Týždenný objem (Po–Ne) cez celý cyklus
+    buckets: Dict[datetime.date, float] = {}
+    for act in running:
+        d = (act.get("startTimeLocal") or "")[:10]
+        try:
+            ad = datetime.date.fromisoformat(d)
+        except Exception:
+            continue
+        ws = ad - datetime.timedelta(days=ad.weekday())  # pondelok daného týždňa
+        buckets[ws] = buckets.get(ws, 0.0) + (act.get("distance") or 0) / 1000
+
+    cur_ws = today - datetime.timedelta(days=today.weekday())
+    n_weeks = min(12, max(1, report_days // 7))
+    weekly_volume = []
+    for i in range(n_weeks - 1, -1, -1):
+        ws = cur_ws - datetime.timedelta(weeks=i)
+        weekly_volume.append({"week": ws.strftime("%d.%m."), "km": round(buckets.get(ws, 0.0), 1)})
+
+    avg_sleep = (
+        round(sum(s.get("duration_hours") or 0 for s in sleep_data) / len(sleep_data), 1)
+        if sleep_data else None
+    )
+
+    bb_daily = []
+    if bb_data.get("raw"):
+        for entry in bb_data["raw"]:
+            bb_daily.append({"date": entry.get("date", ""), "charged": entry.get("charged")})
+
+    return {
+        "period_days": 7,
+        "total_km": total_km,
+        "avg_sleep_hours": avg_sleep,
+        "runs": runs,
+        "ef_trend": ef_trend,
+        "weekly_volume": weekly_volume,
+        "goal_pace_sec": _goal_pace_sec_per_km(profile.get("target_time")),
+        "training_load": training_load,
+        "metric_trends": get_metric_history(user_id, days=90),
+        "sleep": sleep_data,
+        "hrv": hrv_data,
+        "body_battery": {
+            "today": bb_data.get("morning"),       # ranná hodnota (zotavenie)
+            "now": bb_data.get("current"),          # aktuálna (živá)
+            "weekly_avg": bb_data.get("weekly_avg"),
+            "daily": bb_daily,
+        },
+    }
+
+
 @app.get("/api/reports/weekly")
 def get_weekly_report(
     refresh: bool = False,
     user_id: str = Depends(get_current_user),
     client=Depends(get_garmin_client),
 ):
-    """
-    Reports pre Hansonovu metódu:
-    - Regenerácia za 7 dní: spánok, HRV, Body Battery (zvládanie kumulovanej únavy)
-    - Behy za posledných 7 dní (tempo/HR/kadencia) + cieľové tempo ako referencia
-    - Týždenný objem (km/týždeň) cez celý cyklus prípravy — kľúčová Hanson metrika
-    ?refresh=true obíde denný cache a stiahne čerstvé dáta z Garminu.
-    """
+    """Dáta pre grafy sekcie Reporty. ?refresh=true obíde denný cache a stiahne čerstvé dáta."""
     try:
-        today = datetime.date.today()
-        profile = get_user_profile(user_id) or {}
-        try:
-            start = datetime.date.fromisoformat(str(profile.get("training_start_date"))[:10])
-        except Exception:
-            start = today - datetime.timedelta(days=126)
-        # Okno pre objemový graf: od začiatku prípravy, max ~12 týždňov (čitateľnosť + API limit)
-        report_days = min(max(14, (today - start).days + 1), 84)
-
-        snap = _wellness_snapshot(client, user_id, force=refresh)
-        activities = _recent_activities(client, report_days, force=refresh) or []
-        sleep_data = snap["sleep"]
-        hrv_data = snap["hrv"]
-        bb_data = snap["body_battery"]
-        training_load = snap["training_load"]
-
-        running_types = ("running", "track_running", "treadmill_running", "trail_running")
-        running = [
-            a for a in activities
-            if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types
-        ]
-
-        # Posledné behy (7 dní) pre zoznam + tempo trend
-        seven_ago = (today - datetime.timedelta(days=7)).isoformat()
-        runs = []
-        for act in running:
-            d = (act.get("startTimeLocal") or "")[:10]
-            if d < seven_ago:
-                continue
-            avg_speed = act.get("averageSpeed")
-            avg_pace_sec = round(1000 / avg_speed) if avg_speed else None
-            r_hr = round(act["averageHR"]) if act.get("averageHR") else None
-            r_gain, r_loss = act.get("elevationGain"), act.get("elevationLoss")
-            r_net = (r_gain or 0) - (r_loss or 0) if (r_gain is not None or r_loss is not None) else None
-            r_gap = run_metrics.gap_pace_sec(avg_pace_sec, act.get("distance"), r_net)
-            runs.append({
-                "date": d,
-                "name": act.get("activityName", "Beh"),
-                "distance_km": round((act.get("distance") or 0) / 1000, 2),
-                "avg_pace_sec": avg_pace_sec,
-                "avg_pace_str": (f"{avg_pace_sec // 60}:{avg_pace_sec % 60:02d}" if avg_pace_sec else None),
-                "avg_hr": r_hr,
-                "avg_cadence": round(cad) if (cad := (act.get("averageRunningCadenceInStepsPerMinute") or act.get("averageCadence"))) else None,
-                "calories": round(act["calories"]) if act.get("calories") else None,
-                "ef": run_metrics.efficiency_factor(r_gap or avg_pace_sec, r_hr),  # GAP-neutrálne
-            })
-
-        total_km = round(sum(r["distance_km"] for r in runs), 1)
-
-        # EF trend cez celé okno (sledovanie kondície v čase). GAP-neutrálne, len behy
-        # ≥3 km s tepom — krátke rozbehania/strides by trend zašumeli. Najvýpovednejšie
-        # pri Easy behoch (porovnateľná intenzita).
-        ef_trend = []
-        for act in sorted(running, key=lambda a: (a.get("startTimeLocal") or "")):
-            sp = act.get("averageSpeed")
-            hr = round(act["averageHR"]) if act.get("averageHR") else None
-            dist = act.get("distance") or 0
-            if not sp or not hr or dist < 3000:
-                continue
-            pace = round(1000 / sp)
-            g, lo = act.get("elevationGain"), act.get("elevationLoss")
-            net = (g or 0) - (lo or 0) if (g is not None or lo is not None) else None
-            gp = run_metrics.gap_pace_sec(pace, dist, net)
-            ef = run_metrics.efficiency_factor(gp or pace, hr)
-            if ef:
-                ef_trend.append({
-                    "date": (act.get("startTimeLocal") or "")[:10],
-                    "ef": ef,
-                    "name": act.get("activityName", "Beh"),
-                    "distance_km": round(dist / 1000, 1),
-                })
-
-        # Týždenný objem (Po–Ne) cez celý cyklus
-        buckets: Dict[datetime.date, float] = {}
-        for act in running:
-            d = (act.get("startTimeLocal") or "")[:10]
-            try:
-                ad = datetime.date.fromisoformat(d)
-            except Exception:
-                continue
-            ws = ad - datetime.timedelta(days=ad.weekday())  # pondelok daného týždňa
-            buckets[ws] = buckets.get(ws, 0.0) + (act.get("distance") or 0) / 1000
-
-        cur_ws = today - datetime.timedelta(days=today.weekday())
-        n_weeks = min(12, max(1, report_days // 7))
-        weekly_volume = []
-        for i in range(n_weeks - 1, -1, -1):
-            ws = cur_ws - datetime.timedelta(weeks=i)
-            weekly_volume.append({"week": ws.strftime("%d.%m."), "km": round(buckets.get(ws, 0.0), 1)})
-
-        avg_sleep = (
-            round(sum(s.get("duration_hours") or 0 for s in sleep_data) / len(sleep_data), 1)
-            if sleep_data else None
-        )
-
-        bb_daily = []
-        if bb_data.get("raw"):
-            for entry in bb_data["raw"]:
-                bb_daily.append({"date": entry.get("date", ""), "charged": entry.get("charged")})
-
-        return {
-            "period_days": 7,
-            "total_km": total_km,
-            "avg_sleep_hours": avg_sleep,
-            "runs": runs,
-            "ef_trend": ef_trend,
-            "weekly_volume": weekly_volume,
-            "goal_pace_sec": _goal_pace_sec_per_km(profile.get("target_time")),
-            "training_load": training_load,
-            "metric_trends": get_metric_history(user_id, days=90),
-            "sleep": sleep_data,
-            "hrv": hrv_data,
-            "body_battery": {
-                "today": bb_data.get("morning"),       # ranná hodnota (zotavenie)
-                "now": bb_data.get("current"),          # aktuálna (živá)
-                "weekly_avg": bb_data.get("weekly_avg"),
-                "daily": bb_daily,
-            },
-        }
+        return _weekly_report_data(client, user_id, refresh=refresh)
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa načítať report.")
+
+
+# ── Slovné hodnotenie reportov (AI) ───────────────────────────────────────────
+
+# Denný cache hodnotenia v pamäti procesu: {user_id: (dátum, text)}.
+# Prečo nie garmin_snapshots ako pri dashboarde — tá tabuľka drží wellness snapshot dňa
+# a zápis textu by ho prepísal (dashboard by potom ťahal Garmin nanovo). Hodnotenie sa
+# mení raz za deň, takže pamäť stačí: po reštarte servera sa proste vyrobí znova.
+_summary_cache: Dict[str, tuple] = {}
+
+
+def _sk_weeks(n: int) -> str:
+    """Slovenské skloňovanie: 1 týždeň / 2–4 týždne / 5+ týždňov."""
+    if n == 1:
+        return "1 týždeň"
+    if 2 <= n <= 4:
+        return f"{n} týždne"
+    return f"{n} týždňov"
+
+
+def _sk_days(n: int) -> str:
+    """Slovenské skloňovanie: 1 deň / 2–4 dni / 5+ dní."""
+    if n == 1:
+        return "1 deň"
+    if 2 <= n <= 4:
+        return f"{n} dni"
+    return f"{n} dní"
+
+
+def _sk_runs(n: int) -> str:
+    """Slovenské skloňovanie: 1 beh / 2–4 behy / 5+ behov."""
+    if n == 1:
+        return "1 beh"
+    if 2 <= n <= 4:
+        return f"{n} behy"
+    return f"{n} behov"
+
+
+def _sos_scorecard(client, profile: dict, today: datetime.date) -> Optional[dict]:
+    """Konzistencia kľúčových (SOS) tréningov za 4 uzavreté týždne — to isté číslo, aké
+    zverenec vidí v sekcii Plán (tam ho počíta /api/plan/scheduled).
+
+    Naplánovaným tréningom najprv dopáruje odbehnuté behy podľa dátumu: Garmin v kalendári
+    často nechá `activityId` prázdne a bez spárovania by scorecard hlásil samé „vynechané".
+    Pracuje sa na kópiách položiek, nech mutácia nešpiní krátky read-cache na klientovi
+    (ten zdieľajú aj ostatné endpointy v tom istom requeste).
+    """
+    this_monday = today - datetime.timedelta(days=today.weekday())
+    start = this_monday - datetime.timedelta(days=35)  # 4 uzavreté týždne + rezerva
+    items = [dict(i) for i in _get_scheduled_range(client, start, today) if _is_planned_workout(i)]
+    if not items:
+        return None
+
+    running_types = ("running", "track_running", "treadmill_running", "trail_running")
+    runs_by_date: Dict[str, dict] = {}
+    for a in (_recent_activities(client, (today - start).days + 1) or []):
+        if (a.get("activityType", {}).get("typeKey") or "").lower() in running_types:
+            runs_by_date.setdefault((a.get("startTimeLocal") or "")[:10], a)
+    for it in items:
+        d = (it.get("date") or "")[:10]
+        if not it.get("activityId") and d in runs_by_date:
+            it["activityId"] = runs_by_date[d].get("activityId")
+
+    return _sos_consistency(items, profile, today)
+
+
+def _reports_summary_prompt(report: dict, consistency: Optional[dict], profile: dict,
+                            today: datetime.date) -> str:
+    """Prompt pre slovné hodnotenie — stavia z TÝCH ISTÝCH čísel, aké sú v grafoch Reportov."""
+    variant = profile.get("plan_variant") or "advanced"
+    week = hansons_knowledge.current_training_week(profile)
+
+    # Objem: posledných 6 týždňov z grafu. Posledný týždeň PREBIEHA (je neúplný) — bez tejto
+    # poznámky by model z rozbehnutého pondelka vyčítal dramatický prepad objemu.
+    vol = report.get("weekly_volume") or []
+    vol_line = ", ".join(f"{w.get('week')} {w.get('km')} km" for w in vol[-6:]) or "(bez dát)"
+
+    hrv = report.get("hrv") or {}
+    bb = report.get("body_battery") or {}
+    runs_cnt = len(report.get("runs") or [])
+
+    goal_pace = report.get("goal_pace_sec")
+    goal_line = f"{goal_pace // 60}:{goal_pace % 60:02d} min/km" if goal_pace else "(neznáme)"
+
+    # Koľko zostáva do pretekov — bez toho model nevie, či radiť pridať objem, alebo taper.
+    race_line = ""
+    try:
+        race = datetime.date.fromisoformat(str(profile.get("race_date"))[:10])
+        days_left = (race - today).days
+        if days_left >= 0:
+            race_line = f"- Do pretekov zostáva {_sk_days(days_left)} ({race.strftime('%d.%m.%Y')}).\n"
+    except Exception:
+        pass
+
+    if consistency and consistency.get("key_total"):
+        c = consistency
+        pct = round(100 * (c.get("key_done") or 0) / c["key_total"])
+        cons_line = (
+            f"- Kľúčové tréningy (SOS: Speed/Strength intervaly, Tempo beh, Dlhý beh) za "
+            f"{_sk_weeks(c.get('weeks_scored') or 0)}: odbehnutých {c.get('key_done') or 0} "
+            f"z {c['key_total']} predpísaných ({pct} %), vynechaných {c.get('key_missed') or 0}, "
+            f"v kalendári vôbec nebolo {c.get('key_cancelled') or 0}."
+        )
+        recent_missed = [f"{m.get('label')} ({m.get('date')})" for m in (c.get("missed") or [])[:3]]
+        if recent_missed:
+            cons_line += " Naposledy vynechané: " + ", ".join(recent_missed) + "."
+    else:
+        cons_line = ("- Konzistencia kľúčových tréningov (SOS) sa nedá spočítať — v Garmin "
+                     "kalendári nie sú za posledné týždne zapísané predpísané tréningy.")
+
+    data_block = (
+        f"- Objem za posledných 7 dní: {report.get('total_km') or 0} km, {_sk_runs(runs_cnt)}.\n"
+        f"- Týždenný objem (pondelok–nedeľa; POSLEDNÝ týždeň ešte prebieha, preto je neúplný): {vol_line}\n"
+        f"- Priemerný spánok za 7 nocí: {_fmt_metric(report.get('avg_sleep_hours'), ' h')}\n"
+        f"- HRV (variabilita srdcovej frekvencie — ukazovateľ zotavenia): stav "
+        f"{_fmt_metric(hrv.get('status'))}, minulú noc {_fmt_metric(hrv.get('last_night'), ' ms')}, "
+        f"7-dňový priemer {_fmt_metric(hrv.get('weekly_avg'), ' ms')}\n"
+        f"- Body Battery ráno: {_fmt_metric(bb.get('today'), '/100')}, "
+        f"7-dňový priemer {_fmt_metric(bb.get('weekly_avg'), '/100')}\n"
+        f"- Cieľové pretekové tempo (HMP) z cieľového času: {goal_line}\n"
+        f"{race_line}{cons_line}"
+    )
+
+    return f"""Si bežecký tréner (Hansonova metóda). Prihováraj sa zverencovi priamo (tykaj mu).
+Napíš SLOVNÉ HODNOTENIE jeho posledných týždňov: 3–5 viet, súvislý text bez odrážok a nadpisov.
+
+Čísla nižšie INTERPRETUJ, nevymenúvaj ich — povedz, čo znamenajú v kontexte Hansonovej metódy
+a aktuálnej fázy prípravy:
+- objem a jeho vývoj (Hanson stojí na kumulovanej únave, nie na jednom hrdinskom výkone),
+- spánok a HRV ako schopnosť tú únavu vstrebať,
+- tréningovú záťaž A:C ako riziko preťaženia,
+- konzistenciu kľúčových (SOS) tréningov — tá o výsledku rozhoduje najviac.
+Čo sa zlepšuje, pochváľ; čo drhne, pomenuj konkrétne a bez strašenia.
+POSLEDNÁ VETA = JEDNA konkrétna vec na najbližší týždeň (nie zoznam, nie všeobecné „pokračuj").
+
+Zverenec môže byť ÚPLNÝ NOVÁČIK — o Hansonovej metóde nemusí vedieť vôbec nič. Odborné skratky
+(SOS, A:C, HRV, HMP, VO2max, taper) preto pri PRVOM použití krátko vysvetli po slovensky
+(napr. kľúčové tréningy týždňa – SOS; pomer akútnej a chronickej záťaže – A:C); anglický názov
+typu behu doplň slovenským opisom (Tempo beh = beh v cieľovom pretekovom tempe).
+Metriku označenú „(nemeraná)" hodinky nedodali — NIE je to nula, neber ju ako zlý výsledok,
+jednoducho ju v hodnotení vynechaj.
+DÔLEŽITÉ: Odpovedz VÝHRADNE po slovensky. Vráť len samotné hodnotenie — žiadne uvažovanie,
+nadpis, číslovanie ani angličtinu.
+{hansons_knowledge.phase_block(week, variant)}{hansons_knowledge.training_load_block(report.get("training_load"))}
+DÁTA:
+{data_block}"""
+
+
+@app.get("/api/reports/summary")
+def get_reports_summary(refresh: bool = False, user_id: str = Depends(get_current_user)):
+    """Slovné hodnotenie sekcie Reporty — AI interpretácia tých istých čísel, aké sú v grafoch.
+
+    Vracia VŽDY HTTP 200: {"summary": text}, alebo {"summary": null}, keď sa hodnotenie nedá
+    zostaviť (chýba Gemini kľúč, nedostupný Garmin, chyba modelu). Reporty sú dátová stránka —
+    hodnotenie je bonus navyše a nikdy nesmie zhodiť celú obrazovku. Preto tu zámerne NIE JE
+    Depends(get_garmin_client): ten pri zlyhaní Garminu vyhodí HTTPException 401.
+    Text sa cachuje na deň per používateľ; ?refresh=true tento cache preskočí a vyrobí nový.
+    """
+    today = datetime.date.today()
+    if not refresh:
+        hit = _summary_cache.get(user_id)
+        if hit and hit[0] == today:
+            return {"summary": hit[1]}
+    if not gemini_client:
+        return {"summary": None}
+
+    try:
+        profile = get_user_profile(user_id) or {}
+        client = get_client(user_id)
+        # Dáta ťaháme BEZ force: ?refresh=true tu znamená „vyrob nový text", nie „stiahni
+        # Garmin ešte raz". Tlačidlo Obnoviť na Reportoch volá aj /api/reports/weekly, ktoré
+        # wellness snapshot práve obnovilo — druhý fan-out (~9 volaní naraz) by na tom istom
+        # kliknutí len zvyšoval riziko, že nás Garmin rate-limitne a spadne celá appka.
+        report = _weekly_report_data(client, user_id, refresh=False)
+
+        # Scorecard SOS je fail-open: aj bez neho dáva hodnotenie zmysel (objem, spánok, HRV, A:C).
+        consistency = None
+        try:
+            consistency = _sos_scorecard(client, profile, today)
+        except Exception:
+            logger.exception("Scorecard SOS pre hodnotenie reportov zlyhal")
+
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODELS["flash"],
+            contents=_reports_summary_prompt(report, consistency, profile, today),
+            config=types.GenerateContentConfig(
+                # Rovnaké nastavenie ako rada na dashboarde: pri Gemini 3 sa thinking tokeny
+                # rátajú do max_output_tokens, takže nízky limit by hodnotenie odsekol uprostred vety.
+                max_output_tokens=2048,
+                temperature=0.7,
+                thinking_config=types.ThinkingConfig(thinking_level="low"),
+            ),
+        )
+        text = (response.text or "").strip()
+        if not text:
+            return {"summary": None}
+
+        if len(_summary_cache) > 500:
+            # Najprv zahoď staré dni; keby boli všetky záznamy z dneška, samotné to nestačí
+            # a slovník by rástol ďalej — preto sa dorezáva aj podľa poradia vloženia.
+            for uid in [u for u, v in _summary_cache.items() if v[0] != today]:
+                _summary_cache.pop(uid, None)
+            while len(_summary_cache) > 500:
+                _summary_cache.pop(next(iter(_summary_cache)))
+        _summary_cache[user_id] = (today, text)
+        return {"summary": text}
+    except Exception:
+        logger.exception("Hodnotenie reportov sa nepodarilo zostaviť")
+        return {"summary": None}
 
 
 @app.get("/api/debug/hrv")

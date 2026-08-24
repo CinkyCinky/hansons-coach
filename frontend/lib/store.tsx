@@ -28,6 +28,26 @@ const TTL = {
   report: 60 * 60 * 1000,
 };
 
+// ── Chat: perzistentná história konverzácie ────────────────────────────────────
+// Appka je PWA a medzi Plánom a Trénerom sa preklikáva neustále. Keď história žila
+// len v stave stránky, každé prepnutie záložky ju zmazalo a zverenec stratil kontext.
+// Preto ju držíme v store (prežije prepnutie záložky) a zrkadlíme do sessionStorage
+// (prežije aj obnovenie stránky).
+const CHAT_KEY = "hansons_chat_v1";
+// Strop histórie — konverzácia nesmie rásť donekonečna (pamäť aj kvóta sessionStorage).
+// Do backendu sa aj tak posiela len história z aktuálne zobrazených správ.
+const CHAT_MAX_MESSAGES = 100;
+// Po 12 hodinách je stará konverzácia už len mätúci kontext — vtedy začíname načisto
+// (a zverenec dostane nový pozdrav s aktuálnym tréningom).
+const CHAT_MAX_AGE = 12 * 60 * 60 * 1000;
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "model";
+  content: string;
+  ts: number;   // čas správy (Date.now())
+}
+
 export interface ChatSeed {
   userText: string;      // úvodná „správa od zverenca" (zhrnutie plánu) — viditeľná v chate
   coachMessage: string;  // pôvodná správa trénera z generátora (zobrazí sa ako odpoveď trénera)
@@ -44,6 +64,13 @@ interface StoreState {
 
   // Handoff z generátora plánu do chatu (jednorazový seed konverzácie)
   chatSeed: ChatSeed | null;
+
+  // Chat
+  chatMessages: ChatMessage[];
+  chatUpdatedAt: number | null;   // čas poslednej správy — podľa neho vieme, či je história ešte aktuálna
+  // Bola už sessionStorage prečítaná? Kým nie, chat nesmie nasadiť pozdrav —
+  // inak by sa prilepil nad konverzáciu, ktorá sa o chvíľu obnoví.
+  chatRestored: boolean;
 
   // Plan
   plan: any[] | null;
@@ -70,6 +97,9 @@ interface StoreActions {
   invalidateAll: () => void;
   setPlanWorkouts: (workouts: any[]) => void;
   setChatSeed: (seed: ChatSeed | null) => void;
+  // Prijíma pole aj updater — updater je bezpečnejší počas streamovania odpovede.
+  setChatMessages: (next: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
+  clearChatMessages: () => void;
 }
 
 type StoreContextType = StoreState & StoreActions;
@@ -85,6 +115,10 @@ const initialState: StoreState = {
   adviceError: null,
 
   chatSeed: null,
+
+  chatMessages: [],
+  chatUpdatedAt: null,
+  chatRestored: false,
 
   plan: null,
   planConsistency: null,
@@ -269,6 +303,115 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, plan: workouts }));
   }, []);
 
+  const setChatMessages = useCallback(
+    (next: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      setState((s) => {
+        const resolved = typeof next === "function" ? next(s.chatMessages) : next;
+        // Strop histórie: najstaršie správy zahadzujeme, novšie (a teda relevantné) ostávajú.
+        const trimmed =
+          resolved.length > CHAT_MAX_MESSAGES ? resolved.slice(resolved.length - CHAT_MAX_MESSAGES) : resolved;
+        return { ...s, chatMessages: trimmed, chatUpdatedAt: trimmed.length ? Date.now() : null };
+      });
+    },
+    []
+  );
+
+  // „Nová konverzácia" — vymaže históriu aj jej kópiu v sessionStorage.
+  const clearChatMessages = useCallback(() => {
+    setState((s) => ({ ...s, chatMessages: [], chatUpdatedAt: null }));
+    try {
+      sessionStorage.removeItem(CHAT_KEY);
+    } catch {
+      /* sessionStorage nedostupná (privátny režim) — v pamäti je konverzácia už zmazaná */
+    }
+  }, []);
+
+  // Obnova histórie zo sessionStorage — raz pri štarte appky.
+  // Beží AŽ po efektoch detí (tak to React robí), takže ak medzitým chat dostal seed
+  // z generátora alebo zverenec stihol odoslať prvú správu, obnovu preskočíme —
+  // prepísali by sme živú konverzáciu.
+  const chatRestoreRef = useRef(false);
+  useEffect(() => {
+    if (chatRestoreRef.current) return;
+    chatRestoreRef.current = true;
+
+    let restored: ChatMessage[] = [];
+    let updatedAt: number | null = null;
+    try {
+      const raw = sessionStorage.getItem(CHAT_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const savedAt = Number(parsed?.updatedAt) || 0;
+        if (savedAt && Date.now() - savedAt <= CHAT_MAX_AGE) {
+          // Obsah storage môže byť po zmene formátu čokoľvek — preto tvrdá kontrola tvaru.
+          restored = (Array.isArray(parsed?.messages) ? parsed.messages : [])
+            .filter(
+              (m: any) =>
+                m && (m.role === "user" || m.role === "model") && typeof m.content === "string" && m.content !== ""
+            )
+            .map((m: any, i: number) => ({
+              id: typeof m.id === "string" && m.id ? m.id : `restored-${i}`,
+              role: m.role as "user" | "model",
+              content: m.content as string,
+              ts: Number(m.ts) || savedAt,
+            }))
+            .slice(-CHAT_MAX_MESSAGES);
+          // Konverzáciu, v ktorej zverenec nič nenapísal, NEobnovujeme. Bol by to len
+          // automatický pozdrav — a ten nesie dnešný tréning a aktuálnu Body Battery.
+          // Po refreshi (aj cez polnoc) by tvrdil „Dnes ťa čaká…" o včerajšku a nový,
+          // správny pozdrav by sa už nenasadil.
+          if (!restored.some((m) => m.role === "user")) {
+            restored = [];
+            sessionStorage.removeItem(CHAT_KEY);
+          }
+          updatedAt = restored.length ? savedAt : null;
+        } else {
+          sessionStorage.removeItem(CHAT_KEY);
+        }
+      }
+    } catch {
+      /* nečitateľná alebo nedostupná sessionStorage — pokračujeme s prázdnou históriou */
+    }
+
+    setState((s) =>
+      s.chatMessages.length > 0
+        ? { ...s, chatRestored: true }
+        : { ...s, chatMessages: restored, chatUpdatedAt: updatedAt, chatRestored: true }
+    );
+  }, []);
+
+  // Zrkadlenie do sessionStorage. Odložené o 300 ms, lebo počas streamovania odpovede
+  // sa stav mení pri každom tokene a zapisovať pri každom by bolo zbytočne drahé.
+  useEffect(() => {
+    if (!state.chatRestored) return; // kým sme storage neprečítali, nemáme čo prepisovať
+    const t = setTimeout(() => {
+      try {
+        if (!state.chatMessages.length) {
+          sessionStorage.removeItem(CHAT_KEY);
+          return;
+        }
+        const payload = {
+          v: 1,
+          updatedAt: state.chatUpdatedAt ?? Date.now(),
+          messages: state.chatMessages,
+        };
+        try {
+          sessionStorage.setItem(CHAT_KEY, JSON.stringify(payload));
+        } catch {
+          // Plná kvóta (dlhé odpovede trénera sa vedia nazbierať) — radšej ulož aspoň
+          // posledných 20 správ, než by sme prišli o históriu celú.
+          sessionStorage.setItem(
+            CHAT_KEY,
+            JSON.stringify({ ...payload, messages: state.chatMessages.slice(-20) })
+          );
+        }
+      } catch {
+        /* privátny režim alebo trvalo plná kvóta — appka funguje aj bez perzistencie */
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [state.chatMessages, state.chatUpdatedAt, state.chatRestored]);
+
   const setChatSeed = useCallback((seed: ChatSeed | null) => {
     setState((s) => ({ ...s, chatSeed: seed }));
   }, []);
@@ -284,6 +427,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         invalidateAll,
         setPlanWorkouts,
         setChatSeed,
+        setChatMessages,
+        clearChatMessages,
       }}
     >
       {children}

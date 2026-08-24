@@ -1,19 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Bot, Zap, Brain } from "lucide-react";
+import { Send, Bot, Zap, Brain, RotateCcw } from "lucide-react";
 import { motion } from "framer-motion";
 import { sendChatMessage, streamChatMessage, fetchProfile } from "@/lib/api";
-import { useStore } from "@/lib/store";
+import { useStore, type ChatMessage } from "@/lib/store";
 
 type Model = "flash" | "pro";
 
-type Message = {
-  id: string;
-  role: "user" | "model";
-  content: string;
-  ts: number;
-};
+// Tvar správy vlastní store — odtiaľ sa história zrkadlí do sessionStorage.
+type Message = ChatMessage;
 
 const SUGGESTED_CHIPS = [
   "Ako si vediem tento týždeň?",
@@ -23,6 +19,11 @@ const SUGGESTED_CHIPS = [
   "Som unavený, mám trénovať?",
   "Navrhni mi zmenu plánu",
 ];
+
+// Koľko posledných správ posielame trénerovi ako kontext. Zobrazená história je dlhšia
+// (strop drží store), ale backend prijme najviac 80 položiek — a kratší kontext = rýchlejšia
+// a lacnejšia odpoveď.
+const HISTORY_FOR_API = 40;
 
 // Prvé otvorenie chatu — nováčik netuší, čo od trénera čakať, tak mu to rovno povieme.
 const COACH_INTRO =
@@ -137,13 +138,32 @@ function formatTime(ts: number): string {
   }
 }
 
+// Čas poslednej správy obnovenej konverzácie. Nováčikovi musí byť jasné, prečo v chate
+// už nejaké správy sú — preto radšej „dnes o 14:32" než holý čas.
+function formatResumeTime(ts: number): string {
+  try {
+    const d = new Date(ts);
+    const time = d.toLocaleTimeString("sk-SK", { hour: "2-digit", minute: "2-digit" });
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay
+      ? `dnes o ${time}`
+      : `${d.toLocaleDateString("sk-SK", { day: "numeric", month: "numeric" })} o ${time}`;
+  } catch {
+    return "";
+  }
+}
+
 export default function Chat() {
   const store = useStore();
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Správy žijú v globálnom store a zrkadlia sa do sessionStorage — prežijú tak
+  // prepnutie záložky (Plán ↔ Tréner) aj obnovenie stránky.
+  const messages = store.chatMessages;
+  const setMessages = store.setChatMessages;
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [model, setModel] = useState<Model>("flash");
-  const [isInitializing, setIsInitializing] = useState(true);
+  // Pri návrate do rozbehnutej konverzácie netreba animáciu „píše sa" — správy sú hneď tu.
+  const [isInitializing, setIsInitializing] = useState(() => store.chatMessages.length === 0);
   const [displayName, setDisplayName] = useState<string>("Bežec");
   // Profil je vybavený aj vtedy, keď zlyhá — pozdrav nesmie čakať na meno donekonečna.
   const [profileReady, setProfileReady] = useState(false);
@@ -153,6 +173,14 @@ export default function Chat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Pozdrav nasadzujeme len raz — inak by ho prepísala každá ďalšia zmena dát v store
   const greetedRef = useRef(false);
+  // Zvýšením pustíme pozdrav znova (tlačidlo „Nová konverzácia"). Samotný greetedRef
+  // je len ref — jeho prestavenie by efekt s pozdravom nespustilo.
+  const [greetNonce, setGreetNonce] = useState(0);
+  // Obnovená konverzácia: čas poslednej správy (zamrazený — inak by sa štítok posúval
+  // s každou novou správou) a počet obnovených správ. Len kým žiadna nepribudla, je
+  // štítok pravdivý; potom zmizne. null = nič sa neobnovovalo.
+  const [resume, setResume] = useState<{ at: number; len: number } | null>(null);
+  const resumeCheckedRef = useRef(false);
 
   // Dotykové zariadenie? (mobil) → Enter robí nový riadok, ako vo WhatsApp/Messengeri
   useEffect(() => {
@@ -210,8 +238,22 @@ export default function Chat() {
       { id: "seed-coach", role: "model", content: seed.coachMessage, ts: now },
     ]);
     store.setChatSeed(null);
+    // Seed JE konverzácia — pozdrav ani štítok o obnovenej histórii sem nepatria.
+    greetedRef.current = true;
+    resumeCheckedRef.current = true;
+    setIsInitializing(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Obnovená história: zapamätaj si, kedy prišla posledná správa, nech zverenec vidí,
+  // odkiaľ konverzácia pokračuje. Kontrolujeme len raz, hneď ako store dočíta sessionStorage.
+  useEffect(() => {
+    if (resumeCheckedRef.current || !store.chatRestored) return;
+    resumeCheckedRef.current = true;
+    if (store.chatMessages.length > 0) {
+      setResume({ at: store.chatUpdatedAt ?? Date.now(), len: store.chatMessages.length });
+    }
+  }, [store.chatRestored, store.chatMessages.length, store.chatUpdatedAt]);
 
   // Spusti načítanie dát pre pozdrav (raz pri otvorení chatu)
   useEffect(() => {
@@ -223,6 +265,15 @@ export default function Chat() {
   // po `await loadDashboard()` je ešte tá stará (prázdna), preto čítame store z renderu.
   useEffect(() => {
     if (greetedRef.current) return;
+    // Kým store nedočítal sessionStorage, nevieme, či nejaká história existuje —
+    // pozdrav by sa nalepil nad konverzáciu, ktorá sa o chvíľu obnoví.
+    if (!store.chatRestored) return;
+    // Obnovená (alebo už rozbehnutá) konverzácia — pozdrav sa NEnasadzuje druhýkrát.
+    if (messages.length > 0) {
+      greetedRef.current = true;
+      setIsInitializing(false);
+      return;
+    }
     if (!profileReady || store.dashboardLoading) return;
     // Dáta sú vybavené aj vtedy, keď načítanie skončilo chybou — inak by pozdrav nikdy neprišiel.
     if (store.dashboardLoadedAt === null && store.dashboardError === null) return;
@@ -267,9 +318,10 @@ export default function Chat() {
     }
 
     greetedRef.current = true;
-    // Nikdy neprepíš konverzáciu, do ktorej už zverenec písal (správa odoslaná počas inicializácie).
+    // Nikdy neprepíš konverzáciu, v ktorej už niečo je — či už ide o správu odoslanú
+    // počas inicializácie, alebo o históriu obnovenú zo sessionStorage.
     setMessages((prev) =>
-      prev.some((m) => m.role === "user")
+      prev.length > 0
         ? prev
         : [{ id: "1", role: "model", content: `${greetContext}\n\n${COACH_INTRO}`, ts: Date.now() }]
     );
@@ -282,6 +334,9 @@ export default function Chat() {
     store.dashboardLoading,
     store.dashboardLoadedAt,
     store.dashboardError,
+    store.chatRestored,
+    messages.length,
+    greetNonce,
   ]);
 
   const handleSend = async (e: React.FormEvent | null, overrideInput?: string) => {
@@ -297,14 +352,22 @@ export default function Chat() {
       textareaRef.current.style.height = "auto";
     }
 
-    const newMessages: Message[] = [
-      ...messages,
-      { id: Date.now().toString(), role: "user", content: userMsg, ts: Date.now() },
-    ];
-    setMessages(newMessages);
+    // Funkčný zápis: správu pridávame k tomu, čo je v store PRÁVE TERAZ (napr. k práve
+    // obnovenej histórii), nie k snímke z renderu — inak by sa história prepísala.
+    const userEntry: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: userMsg,
+      ts: Date.now(),
+    };
+    setMessages((prev) => [...prev, userEntry]);
     setIsLoading(true);
 
-    const historyForApi = messages.map((m) => ({
+    // Do backendu ide len POSLEDNÝCH pár správ. Odkedy história prežíva prepnutie
+    // záložky, môže mať aj sto správ — a backend dlhšiu ako 80 položiek rovno odmietne
+    // (ChatRequest.history má max_length=80), takže by chat prestal odpovedať.
+    // Nižší strop navyše drží kontext pre model krátky a odpovede rýchle.
+    const historyForApi = messages.slice(-HISTORY_FOR_API).map((m) => ({
       role: m.role,
       content: m.content,
     }));
@@ -398,6 +461,28 @@ export default function Chat() {
     }
   };
 
+  // „Nová konverzácia" — história sa maže nenávratne (aj rady, ktoré tréner dal),
+  // preto sa pri neprázdnej konverzácii pýtame na potvrdenie.
+  const handleNewConversation = () => {
+    if (isLoading) return; // rozpísanú odpoveď trénera nechceme utnúť v polovici
+    const hasContent = messages.some((m) => m.role === "user") || messages.length > 1;
+    if (
+      hasContent &&
+      !window.confirm(
+        "Naozaj chceš začať novú konverzáciu? Doterajšia história sa vymaže a už sa nedá obnoviť — vrátane rád, ktoré ti tréner dal."
+      )
+    ) {
+      return;
+    }
+    store.clearChatMessages();
+    setResume(null);
+    setInput("");
+    greetedRef.current = false;
+    setIsInitializing(true);
+    // Prebudí efekt s pozdravom — zaznie znova, s aktuálnymi dátami z Garminu.
+    setGreetNonce((n) => n + 1);
+  };
+
   const showChips = messages.length <= 1 && !isLoading;
 
   return (
@@ -416,32 +501,44 @@ export default function Chat() {
             </div>
           </div>
 
-          {/* Model selector */}
-          <div className="flex bg-[#1a1a24] rounded-xl p-1 gap-1">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setModel("flash")}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                model === "flash"
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                  : "text-gray-500 hover:text-gray-300"
-              }`}
-              title="Rýchly model — vhodný pre denné otázky"
+              onClick={handleNewConversation}
+              disabled={isLoading}
+              aria-label="Nová konverzácia"
+              title="Nová konverzácia — vymaže doterajšiu históriu"
+              className="w-9 h-9 rounded-xl bg-[#1a1a24] border border-white/10 text-gray-400 hover:text-white hover:border-white/20 flex items-center justify-center transition-colors disabled:opacity-40 disabled:hover:text-gray-400 active:scale-95"
             >
-              <Zap size={13} />
-              Flash
+              <RotateCcw size={15} />
             </button>
-            <button
-              onClick={() => setModel("pro")}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                model === "pro"
-                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-                  : "text-gray-500 hover:text-gray-300"
-              }`}
-              title="Výkonný model — pre hĺbkovú analýzu a generovanie plánov"
-            >
-              <Brain size={13} />
-              Pro
-            </button>
+
+            {/* Model selector */}
+            <div className="flex bg-[#1a1a24] rounded-xl p-1 gap-1">
+              <button
+                onClick={() => setModel("flash")}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  model === "flash"
+                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+                title="Rýchly model — vhodný pre denné otázky"
+              >
+                <Zap size={13} />
+                Flash
+              </button>
+              <button
+                onClick={() => setModel("pro")}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  model === "pro"
+                    ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+                title="Výkonný model — pre hĺbkovú analýzu a generovanie plánov"
+              >
+                <Brain size={13} />
+                Pro
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -451,6 +548,15 @@ export default function Chat() {
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto mb-2 flex flex-col pr-1 scrollbar-hide"
       >
+        {/* Obnovená konverzácia — nech je jasné, prečo tu už nejaké správy sú */}
+        {resume !== null && messages.length === resume.len && !isInitializing && (
+          <div className="flex justify-center shrink-0 pt-1">
+            <span className="text-[10px] text-gray-400 bg-white/5 border border-white/10 rounded-full px-3 py-1">
+              Pokračuješ v konverzácii — posledná správa {formatResumeTime(resume.at)}
+            </span>
+          </div>
+        )}
+
         {isInitializing ? (
           <div className="flex items-end gap-2 justify-start mt-3">
             <CoachAvatar />
