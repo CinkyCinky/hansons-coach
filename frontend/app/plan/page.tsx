@@ -63,7 +63,7 @@ const PHASE_META: Record<PhaseKey, { label: string; color: string; desc: string 
   speed:       { label: "Speed", color: "bg-rose-400",
                  desc: "Krátke rýchle intervaly @ 5K tempo — rozvoj rýchlosti a VO2max." },
   strength:    { label: "Strength", color: "bg-orange-400",
-                 desc: "Dlhšie intervaly tesne pod pretekovým tempom — sila a odolnosť. Objem vrcholí." },
+                 desc: "Dlhšie intervaly o 6 s/km RÝCHLEJŠIE než cieľové pretekové tempo — sila a schopnosť držať tempo na unavených nohách. Objem vrcholí." },
   taper:       { label: "Taper", color: "bg-emerald-400",
                  desc: "Posledný týždeň — menej behu, aby si na štart prišiel svieži." },
   just_finish: { label: "Objem", color: "bg-purple-400",

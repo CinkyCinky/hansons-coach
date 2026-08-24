@@ -44,8 +44,11 @@ export default function About() {
       const el = document.getElementById(id);
       if (!el) return;
       el.closest("details")?.setAttribute("open", "");
-      // Rozbalenie prekreslí layout — skrolujeme až v nasledujúcom snímku.
-      requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" }));
+      // Rozbalenie slovníčka (21 pojmov) výrazne predĺži stránku. Jeden snímok na dopočítanie
+      // layoutu nemusí stačiť, preto skrolujeme až po druhom — inak by skok trafil vedľa.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" }))
+      );
     };
     openHashTarget();
     // Odkaz na už otvorenej stránke zmení len hash — bez tohto by sa nič nestalo.
