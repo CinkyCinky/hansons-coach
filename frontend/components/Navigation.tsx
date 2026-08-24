@@ -8,8 +8,8 @@ import { clsx } from "clsx";
 export default function Navigation() {
   const pathname = usePathname();
 
-  // Na prihlasovacej obrazovke navigáciu neukazujeme
-  if (pathname === "/login") return null;
+  // Na prihlasovacích obrazovkách navigáciu neukazujeme
+  if (pathname === "/login" || pathname.startsWith("/reset-password")) return null;
 
   // 6 položiek — kompaktné rozloženie, aby sa zmestili na úzky mobil.
   const tabs = [

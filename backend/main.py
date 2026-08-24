@@ -27,6 +27,7 @@ from modules.database import (
     save_metric_history, get_metric_history,
     get_memory_facts, add_memory_fact, delete_memory_fact,
     log_plan_change, get_plan_changes,
+    ping as database_ping,
 )
 from modules import workout_generator
 from modules import hansons_knowledge
@@ -107,7 +108,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     token = credentials.credentials
     user = verify_token(token)
     if not user:
-        raise HTTPException(status_code=401, detail="Neplatný token. Prosím prihláste sa znova.")
+        # Tykanie — celé UI appky zverencovi tyká, vykanie v jednej hláške pôsobí cudzo.
+        raise HTTPException(status_code=401,
+                            detail="Tvoje prihlásenie vypršalo. Odhlás sa a prihlás sa znova.")
     return user.id
 
 def get_garmin_client(user_id: str = Depends(get_current_user)):
@@ -378,28 +381,56 @@ def read_root():
 
 @app.api_route("/keepalive", methods=["GET", "HEAD"])
 def keepalive():
-    """Endpoint pre UptimeRobot — zabraňuje cold startu na Render free tieri.
+    """Endpoint pre UptimeRobot — drží bdelý Render AJ Supabase.
+
     Prijíma GET aj HEAD: UptimeRobot na Free pláne posiela HEAD (metóda sa nedá zmeniť),
-    a čistý @app.get by naň vrátil 405 → monitor by hlásil „Down" napriek živému serveru."""
-    return {"ok": True, "timestamp": datetime.datetime.now().isoformat()}
+    a čistý @app.get by naň vrátil 405 → monitor by hlásil „Down" napriek živému serveru.
+
+    Okrem Renderu oťuká aj Supabase (`database.ping`). Samostatný monitor priamo na
+    Supabase totiž na Free pláne nefunguje — na HEAD odpovie 405 — a bez akejkoľvek
+    aktivity sa projekt po ~7 dňoch pozastaví a appka sa prestane dať otvoriť.
+
+    Stav vracia 200 aj keď databáza neodpovie: úlohou tohto endpointu je udržať služby
+    hore, nie zhadzovať monitor Renderu pri výpadku Supabase. Skutočný stav je v poli
+    `db` — kto chce alert na databázu, nech si naň spraví „Keyword" monitor (ten posiela
+    GET) hľadajúci `"db":true`.
+    """
+    return {
+        "ok": True,
+        "db": database_ping(),
+        "timestamp": datetime.datetime.now().isoformat(),
+    }
 
 
 # ── Profile ──────────────────────────────────────────────────────────────────
+
+def _public_profile(profile: dict) -> dict:
+    """Profil bez tajomstiev — jediné miesto, kde sa rozhoduje, čo smie ísť do prehliadača.
+    `garmin_tokens` sú použiteľné prihlasovacie údaje ku Garminu, `garmin_password_encrypted`
+    je šifrované heslo; ani jedno nemá v odpovedi čo hľadať."""
+    out = dict(profile or {})
+    out.pop("garmin_password_encrypted", None)
+    out.pop("garmin_tokens", None)
+    return out
+
 
 @app.get("/api/profile")
 def get_profile(user_id: str = Depends(get_current_user)):
     profile = get_user_profile(user_id)
     if not profile:
+        # Prázdny profil vraciame PRÁZDNY. Predtým tu boli vymyslené hodnoty
+        # (cieľ 1:50:00, štart 2026-06-01) — nový zverenec tak videl odškrtnutý
+        # cieľový čas, ktorý si nikdy nezadal, a odznak „T12/18“ počítaný
+        # z fiktívneho dátumu.
         return {
             "id": user_id,
             "garmin_email": None,
-            "target_time": "1:50:00",
-            "training_start_date": "2026-06-01",
+            "target_time": None,
+            "training_start_date": None,
+            "race_date": None,
+            "plan_variant": None,
         }
-    # Skry zašifrované heslo
-    profile.pop("garmin_password_encrypted", None)
-    profile.pop("garmin_tokens", None)
-    return profile
+    return _public_profile(profile)
 
 @app.post("/api/profile")
 def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user)):
@@ -425,7 +456,10 @@ def update_profile(req: ProfileUpdate, user_id: str = Depends(get_current_user))
             update_data["daily_feeling"] = req.daily_feeling
 
         updated = update_user_profile(user_id, update_data)
-        return {"status": "success", "profile": updated}
+        # Supabase upsert vracia celý riadok vrátane Garmin tokenov a šifrovaného hesla.
+        # GET ich filtruje, POST ich predtým posielal do prehliadača — filtrujeme rovnako.
+        row = updated[0] if isinstance(updated, list) and updated else updated
+        return {"status": "success", "profile": _public_profile(row if isinstance(row, dict) else {})}
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -645,6 +679,14 @@ def _training_context_block(client) -> str:
     return "Tréningový kontext:\n- " + "\n- ".join(lines)
 
 
+def _fmt_metric(value, suffix: str = "") -> str:
+    """Chýbajúcu metriku vypíše ako „(nemeraná)" namiesto „None" — model by si None
+    inak vysvetlil ako nulu a zbytočne by zverenca brzdil."""
+    if value is None or value == "":
+        return "(nemeraná)"
+    return f"{value}{suffix}"
+
+
 class AdviceRequest(BaseModel):
     sleep_score: Optional[int] = None
     hrv_status: Optional[str] = None
@@ -694,14 +736,21 @@ NIKDY neodporúčaj prepočítať tréning ak kontext hovorí "SPLNENÝ DNES" al
 v takom prípade skôr pochváľ zverenca alebo ho naladí na ďalší deň.
 Ak sú hodnoty super, povzbuď ho. Pokojne pridaj 1 emoji.
 
+Zverenec môže byť ÚPLNÝ NOVÁČIK — o Hansonovej metóde nemusí vedieť vôbec nič.
+Odborné skratky (SOS, HMP, A:C, LTHR, HRV, GAP, VO2max, taper, decoupling) preto pri PRVOM
+použití krátko vysvetli po slovensky (napr. „kľúčový tréning týždňa (SOS)", „cieľové pretekové
+tempo (HMP)"); anglický názov typu behu doplň slovenským opisom.
+
 DÔLEŽITÉ: Odpovedz VÝHRADNE po slovensky. Vráť len samotnú radu pre bežca —
 žiadne uvažovanie, úvod, nadpis, číslovanie ani angličtinu.
+Metriku označenú „(nemeraná)" hodinky dnes nedodali — NIE je to nula, tak ju v rade neber
+ako zlý výsledok, jednoducho ju vynechaj.
 
 Stav formy dnes: {form_score}/100
-- Spánok skóre: {metrics.sleep_score}/100
-- HRV: {metrics.hrv_status}
-- Body Battery teraz: {metrics.body_battery}/100 (aktuálny stav energie; nízka večer = únava po náročnom dni, zváž zmäkčenie)
-- Pripravenosť: {metrics.readiness}/100
+- Spánok skóre: {_fmt_metric(metrics.sleep_score, '/100')}
+- HRV: {_fmt_metric(metrics.hrv_status)}
+- Body Battery teraz: {_fmt_metric(metrics.body_battery, '/100')} (aktuálny stav energie; nízka večer = únava po náročnom dni, zváž zmäkčenie)
+- Pripravenosť: {_fmt_metric(metrics.readiness, '/100')}
 {load_note}{context_block}"""
 
         # thinking_level="low" — krátka rada nepotrebuje hlboké uvažovanie. POZOR: pri
@@ -729,6 +778,17 @@ Stav formy dnes: {form_score}/100
 # Kľúčové (SOS) tréningy podľa Hansona: Speed/Strength (utorok), Tempo (štvrtok),
 # Dlhý beh (nedeľa). JEDNA definícia pre celý scorecard (odbehnuté/vynechané/zrušené)
 # — na rozdiel od pôvodného stavu, kde „vynechané“ rátalo aj dlhý beh, ale „zrušené“ nie.
+# Nástroje AI trénera, ktoré ZAPISUJÚ do Garminu alebo do profilu. Len po nich sa
+# požiadavka nesmie zopakovať (druhý priebeh by tréning vytvoril/presunul/zmazal znova).
+# Čítacie nástroje tu zámerne nie sú — po nich je opakovanie bezpečné.
+_WRITE_TOOLS = {
+    "create_and_schedule_workout",
+    "modify_workout",
+    "reschedule_workout",
+    "delete_garmin_workout",
+    "update_training_goal",
+}
+
 _KEY_SOS = {"speed", "strength", "tempo", "long"}
 _SOS_KIND_LABEL = {
     "speed": "Speed intervaly",
@@ -750,7 +810,9 @@ def _sos_consistency(items: list, profile: dict, today: datetime.date) -> dict:
       • ZRUŠENÝ    — typ v kalendári pre daný týždeň úplne CHÝBA (odstránený tebou/trénerom).
     Meria sa voči PREDPISU, takže úpravy kalendára zrušenie nezamaskujú. Týždne bez
     akýchkoľvek dát (chýbajúci Garmin fetch / pred štartom prípravy) sa preskočia, aby
-    dátová medzera nevyzerala ako séria vynechaní."""
+    dátová medzera nevyzerala ako séria vynechaní. Rovnako sa preskočia týždne, v ktorých
+    nie je v kalendári ani jeden predpísaný typ (plán sa nikdy nezapísal do hodiniek) —
+    ich počet vraciame ako `weeks_unplanned`, nech to vie frontend vysvetliť."""
     variant = (profile.get("plan_variant") or "advanced").lower()
     cur_week = hansons_knowledge.current_training_week(profile)
     this_monday = today - datetime.timedelta(days=today.weekday())
@@ -776,6 +838,7 @@ def _sos_consistency(items: list, profile: dict, today: datetime.date) -> dict:
 
     key_total = key_done = key_missed = key_cancelled = 0
     weeks_scored = 0
+    weeks_unplanned = 0
     missed: list = []
     cancelled: list = []
     for back in range(1, 5):  # 4 uzavreté týždne dozadu (bez aktuálneho, prebiehajúceho)
@@ -796,6 +859,12 @@ def _sos_consistency(items: list, profile: dict, today: datetime.date) -> dict:
         # Poistka proti dátovej medzere: hodnoť len týždeň s dôkazom aktivity
         # (aspoň jeden naplánovaný/odbehnutý beh). Prázdny = chýbajúce dáta → preskoč.
         if not present:
+            continue
+        # Kto si plán nikdy nezapíše do hodiniek, nemá v kalendári ANI JEDEN predpísaný typ —
+        # to nie sú zrušené tréningy, ale nepoužitá funkcia „Zapísať do hodiniek", preto by
+        # z toho nemalo vyjsť 0 % napriek poctivému behaniu → týždeň nehodnotíme.
+        if not any(kind in present for kind in prescribed):
+            weeks_unplanned += 1
             continue
         done = done_by_week.get(wk_monday, set())
         weeks_scored += 1
@@ -826,6 +895,7 @@ def _sos_consistency(items: list, profile: dict, today: datetime.date) -> dict:
     missed.sort(key=lambda m: m.get("date") or "", reverse=True)  # najnovšie prvé (pre alert)
     return {
         "weeks_scored": weeks_scored,
+        "weeks_unplanned": weeks_unplanned,  # preskočené týždne bez zápisu plánu do hodiniek
         "key_total": key_total,
         "key_done": key_done,
         "key_missed": key_missed,
@@ -1128,10 +1198,10 @@ def _garmin_write(fn, *args, attempts: int = 4):
         raise last
 
 
-def _clear_planned_on_dates(client, dates: set) -> None:
-    """Zmaže existujúce naplánované tréningy na cieľových dátumoch. Scheduled workouts
-    načíta RAZ za každý dotknutý mesiac (nie za každý dátum) — šetrí Garmin volania a
-    znižuje riziko rate-limitu."""
+def _planned_items_by_date(client, dates: set) -> Dict[str, list]:
+    """Načíta existujúce naplánované tréningy na cieľových dátumoch, zoskupené po dňoch.
+    Scheduled workouts číta RAZ za každý dotknutý mesiac (nie za každý dátum) — šetrí
+    Garmin volania a znižuje riziko rate-limitu."""
     months = set()
     for d in dates:
         try:
@@ -1139,17 +1209,37 @@ def _clear_planned_on_dates(client, dates: set) -> None:
             months.add((dd.year, dd.month))
         except Exception:
             pass
+    by_date: Dict[str, list] = {}
     for (y, m) in months:
         try:
             items = _scheduled_items(client.get_scheduled_workouts(y, m))
         except Exception:
             continue
         for it in items:
-            if (it.get("date") or "")[:10] in dates and _is_planned_workout(it):
-                try:
-                    _garmin_write(client.delete_workout, it.get("workoutId"))
-                except Exception:
-                    logger.exception("Nepodarilo sa zmazať starý tréning %s", it.get("workoutId"))
+            d = (it.get("date") or "")[:10]
+            if d in dates and _is_planned_workout(it):
+                by_date.setdefault(d, []).append(it)
+    return by_date
+
+
+def _delete_planned_items(client, items: list) -> list:
+    """Zmaže dané (staré) naplánované tréningy. Zlyhanie jedného mazania len zaloguje —
+    zvyšok zápisu plánu tým nepadá. Vracia položky, ktoré sa zmazať NEPODARILO: na tom dni
+    potom v hodinkách stojí starý aj nový tréning a zverencovi to treba povedať."""
+    leftovers = []
+    for it in items:
+        try:
+            _garmin_write(client.delete_workout, it.get("workoutId"))
+        except Exception:
+            logger.exception("Nepodarilo sa zmazať starý tréning %s", it.get("workoutId"))
+            leftovers.append(it)
+    return leftovers
+
+
+def _clear_planned_on_dates(client, dates: set) -> None:
+    """Zmaže existujúce naplánované tréningy na cieľových dátumoch."""
+    for items in _planned_items_by_date(client, dates).values():
+        _delete_planned_items(client, items)
 
 
 @app.post("/api/plan/upload")
@@ -1189,14 +1279,18 @@ def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_u
             return {"status": "error", "uploaded": [], "failed": failed,
                     "message": "Žiadny tréning sa nepodarilo pripraviť na zápis."}
 
-        # 2) Idempotencia: hromadne zmaž staré tréningy na cieľových dátumoch (1 dotaz/mesiac)
+        # 2) Idempotencia BEZ rizika straty plánu: staré tréningy si zatiaľ len NAČÍTAME
+        #    (1 dotaz/mesiac). Mazať ich budeme až po úspešnom zápise náhrady — keby Garmin
+        #    počas uploadu spadol/limitoval, zverenec by inak ostal na daný deň úplne bez plánu.
+        old_by_date: Dict[str, list] = {}
         try:
-            _clear_planned_on_dates(client, {ds for ds, _ in built})
+            old_by_date = _planned_items_by_date(client, {ds for ds, _ in built})
         except Exception:
-            logger.exception("Čistenie starých tréningov zlyhalo — pokračujem v zápise")
+            logger.exception("Načítanie starých tréningov zlyhalo — pokračujem v zápise")
 
-        # 3) Upload + naplánovanie (s retry pri 429 a anti-burst rozložením)
+        # 3) Upload + naplánovanie a AŽ POTOM zmazanie starého (s retry pri 429 a anti-burst)
         uploaded = []
+        duplicates = []  # dni, kde sa starý tréning nepodarilo zmazať → v hodinkách sú dva
         for idx, (date_str, workout) in enumerate(built):
             try:
                 resp = _garmin_write(client.upload_running_workout, workout)
@@ -1206,6 +1300,10 @@ def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_u
                                    "reason": "Garmin nevrátil ID tréningu"})
                     continue
                 _garmin_write(client.schedule_workout, workout_id, date_str)
+                # Nový tréning na tomto dni už reálne stojí v kalendári → až teraz je bezpečné
+                # zmazať ten starý (mažeme podľa snapshotu, takže nový sa nikdy netrafí).
+                for left in _delete_planned_items(client, old_by_date.pop(date_str, [])):
+                    duplicates.append({"date": date_str, "name": left.get("workoutName") or "starý tréning"})
                 uploaded.append({"date": date_str, "name": workout.workoutName, "id": workout_id})
             except Exception as e:
                 logger.exception("Zápis tréningu %s na %s zlyhal", workout.workoutName, date_str)
@@ -1217,8 +1315,11 @@ def api_upload_plan(req: PlanUploadRequest, user_id: str = Depends(get_current_u
 
         if uploaded:
             _bust_client_caches(client)  # plán sa zmenil → ďalšie čítanie nech je čerstvé
-        status = "success" if uploaded and not failed else ("partial" if uploaded else "error")
-        return {"status": status, "uploaded": uploaded, "failed": failed}
+        # Nezmazaný starý tréning nie je zlyhanie zápisu, ale zverenec by inak našiel v hodinkách
+        # dva tréningy na jeden deň a nevedel, ktorý platí — preto to hlásime ako „partial".
+        status = "success" if uploaded and not failed and not duplicates \
+            else ("partial" if uploaded else "error")
+        return {"status": status, "uploaded": uploaded, "failed": failed, "duplicates": duplicates}
     except Exception as e:
         raise _server_error(e, "Nepodarilo sa nahrať plán do Garminu.")
 
@@ -1643,6 +1744,11 @@ def _prepare_chat(req: ChatRequest, user_id: str, client):
 
     # Načítaj Garmin kontext
     garmin_context = ""
+    # Vstupy nástroja get_hr_zones musia existovať aj keď fetch nižšie zlyhá — inak by
+    # nástroj pri volaní spadol na NameError namiesto zrozumiteľnej odpovede.
+    hr_zones = None
+    lthr_data: dict = {}
+    athlete: dict = {}
     try:
         # Wellness dáta z denného cache (šetrí ~10 Garmin volaní na každú správu).
         snap = _wellness_snapshot(client, user_id)
@@ -1761,6 +1867,12 @@ Najbližší tréning: {next_w_str}
         f"Cieľový čas: {target_time}. Aktuálny týždeň prípravy: {training_week}/18. "
         f"VŽDY hovor po slovensky. Buď konkrétny, vecný a povzbudivý. "
         f"Odpovede prispôsob mobilnej aplikácii – stručne, ale neobetuj odbornosť. "
+        f"ZVERENEC MÔŽE BYŤ ÚPLNÝ NOVÁČIK — o Hansonovej metóde nemusí vedieť vôbec nič a nič "
+        f"z odbornej hantýrky mu nie je samozrejmé. Každú skratku (SOS, HMP, A:C, LTHR, HRV, GAP, "
+        f"VO2max, taper, decoupling) preto pri PRVOM použití v odpovedi krátko vysvetli po slovensky "
+        f"— napr. „cieľové pretekové tempo (HMP)“, „kľúčový tréning týždňa (SOS)“, „záverečné "
+        f"vyladenie pred pretekmi (taper)“. Anglický názov typu behu (Easy, Tempo, Speed, Strength, "
+        f"Long) doplň slovenským opisom (napr. Easy = ľahký beh). "
         f"Pri analýze tréningu/intervalov si vyžiadaj detaily nástrojom get_activity_laps. "
         f"Pri hodnotení tempa zohľadni TERÉN: GAP je tempo prepočítané na rovinu a prevýšenie (+stúpanie/-klesanie) "
         f"ukazuje sklon. Keď je reálne tempo pomalšie pri rovnakom/nižšom tepe, najprv over kopec — ak GAP sedí s cieľom, "
@@ -1784,7 +1896,13 @@ Najbližší tréning: {next_w_str}
         f"SÁM vyber tú, ktorá sa hodí k otázke: na 'ako som zregeneroval / aký mám základ' použi rannú; na 'vládzem dnes / "
         f"mám teraz ísť behať / mám si upraviť tréning' použi AKTUÁLNU (zverenec behá väčšinou večer). Nikdy neoznačuj "
         f"aktuálnu (večernú) hodnotu za rannú — netvrď, že sa zverenec 'zobudil s nízkou batériou', ak to ranná hodnota nehovorí. "
-        f"Easy a dlhé behy VŽDY odporúčaj podľa TEPU (Easy HR zóna), nie podľa tempa — vysvetli prečo. "
+        f"TEMPO JE PRIMÁRNY CIEĽ PRE VŠETKY BEHY — vrátane Easy (ľahkých) a dlhých behov. Presne tak "
+        f"sú tréningy zapísané aj v hodinkách a tak to hovorí Hansonova metodika: Easy = cieľové "
+        f"pretekové tempo (HMP) + 40 až 75 s/km. Srdcový tep NIE JE cieľ, ktorý sa má počas behu "
+        f"dobiehať — je to len (a) spätná referencia po behu na sledovanie trendu formy a (b) "
+        f"strop-poistka: keď tep pri predpísanom tempe uteká nad Easy pásmo (horúčava, únava, kopec), "
+        f"odporuč spomaliť. Nikdy neodporúčaj bežať „podľa tepu“ namiesto tempa a nikdy nenavrhuj "
+        f"tepovú zónu ako cieľ tréningu. "
         f"REORGANIZÁCIA TÝŽDŇA: keď používateľ nemôže absolvovať tréning v daný deň a chce upraviť plán, "
         f"NAJPRV si zavolaj list_garmin_workouts a pozri si CELÝ týždeň. Potom navrhni presun podľa Hanson pravidiel "
         f"(nikdy 2 SOS tréningy za sebou — medzi Speed/Tempo/Long musí byť Easy deň; dlhý beh nechaj na víkend). "
@@ -1808,16 +1926,23 @@ Najbližší tréning: {next_w_str}
 
     # Definícia funkcií (nástrojov) pre model
     def get_hr_zones() -> str:
-        """Vráti aktuálne vypočítané HR tréningové zóny pre Hanson metódu (Easy, Tempo, Speed, atď.)
-        na základe LTHR alebo Max HR z Garmin účtu."""
+        """Vráti aktuálne tepové (HR) zóny pre Hanson metódu (Easy, Tempo, Speed, atď.) vypočítané
+        z prahového tepu LTHR alebo maximálneho tepu z Garmin účtu. Zóny sú len REFERENCIA a
+        strop-poistka — cieľom každého behu ostáva TEMPO."""
         if not hr_zones:
-            return "HR zóny nie sú k dispozícii — Garmin nevrátil nakonfigurované zóny ani LTHR/MaxHR."
+            return ("Tepové zóny sa teraz nepodarilo načítať — Garmin nevrátil ani nakonfigurované "
+                    "zóny, ani prahový tep (LTHR) či maximálny tep. Nevadí: v Hansonovej metóde je "
+                    "primárnym cieľom aj tak tempo, takže sa riaď predpísaným tempom behu.")
         block = hansons_knowledge.hr_zones_block(
             hr_zones, lthr_data.get("lthr_pace") or athlete.get("lthr_pace")
         ).strip()
         return (
             block + "\n\n"
-            f"Easy behy: drž sa Easy pásma ({hr_zones['easy'][0]}–{hr_zones['easy'][1]} bpm) — podľa TEPU, nie tempa."
+            f"Easy (ľahké) pásmo: {hr_zones['easy'][0]}–{hr_zones['easy'][1]} úderov za minútu (bpm). "
+            "DÔLEŽITÉ: tieto zóny sú len REFERENCIA a strop-poistka, NIE cieľ behu. Aj Easy a dlhé "
+            "behy sa riadia TEMPOM (tak sú zapísané aj v hodinkách); tep pozeraj spätne ako trend "
+            "formy a ako poistku — keď pri predpísanom tempe uteká nad Easy pásmo (horúčava, únava, "
+            "kopec), odporuč spomaliť."
         )
 
     def get_activity_laps(date: str) -> str:
@@ -2076,6 +2201,10 @@ Najbližší tréning: {next_w_str}
         resp = client.upload_running_workout(garmin_workout)
         new_id = resp.get("workoutId")
         if new_id:
+            # ZÁMERNE tu deň NEčistíme. Plošné mazanie by pri čisto pridávacej požiadavke
+            # („pridaj mi v sobotu ľahkých 8 km") zmazalo tréning, ktorý tam už bol. Nahradenie
+            # rieši modify_workout presne podľa workout_id; proti dvojitému vykonaniu tej istej
+            # správy chráni kontrakt tools_used (frontend požiadavku neopakuje).
             client.schedule_workout(new_id, date)
             _bust_client_caches(client)
         return new_id
@@ -2359,6 +2488,9 @@ def chat_with_coach_stream(
         stripper = _MemoryTagStripper()
         raw_text: list = []
         got_text = False
+        # Backend je bezstavový: keď už nejaký nástroj zasiahol do Garminu, frontend NESMIE tú
+        # istú správu poslať znova (tool-loop by tréning vytvoril/presunul/zmazal DRUHÝKRÁT).
+        tools_used = False
         convo = list(contents)
         try:
             for _round in range(12):  # strop tool-kôl (ako AFC maximum_remote_calls)
@@ -2392,6 +2524,13 @@ def chat_with_coach_stream(
                     except Exception as e:
                         logger.exception("Nástroj %s zlyhal", fc.name)
                         result = f"Chyba nástroja: {type(e).__name__}: {e}"
+                    # Opakovanie správy blokujú len ZAPISOVACIE nástroje. Po obyčajnom čítaní
+                    # (zóny, zoznam tréningov…) je opakovanie bezpečné — a keby sme ho zakázali,
+                    # zverenec by po páde streamu zbytočne prišiel o odpoveď.
+                    # Aj pri chybe nástroja mohol zásah do Garminu prejsť, preto hlásime hneď.
+                    is_write = fc.name in _WRITE_TOOLS
+                    tools_used = tools_used or is_write
+                    yield _sse({"tool": fc.name, "write": is_write})
                     tool_parts.append(types.Part(function_response=types.FunctionResponse(
                         name=fc.name, response={"result": result})))
                 convo.append(types.Content(role="user", parts=tool_parts))
@@ -2400,7 +2539,10 @@ def chat_with_coach_stream(
                 yield _sse({"t": tail})
         except Exception:
             logger.exception("Gemini stream (manual tool-loop) zlyhal")
-            yield _sse({"done": True, "model_used": model_name, "fallback": not got_text})
+            # tools_used nesie aj pádová vetva — inak by frontend po chybe zopakoval správu,
+            # ktorej nástroje už zmenu v Garmine vykonali.
+            yield _sse({"done": True, "model_used": model_name, "fallback": not got_text,
+                        "tools_used": tools_used})
             return
 
         full = "".join(raw_text).strip()
@@ -2409,7 +2551,8 @@ def chat_with_coach_stream(
                 _persist_chat_memory(user_id, profile, memory_facts, full)
             except Exception:
                 logger.exception("Uloženie pamäte zo streamu zlyhalo")
-        yield _sse({"done": True, "model_used": model_name, "fallback": not got_text})
+        yield _sse({"done": True, "model_used": model_name, "fallback": not got_text,
+                    "tools_used": tools_used})
 
     return StreamingResponse(
         generate(),

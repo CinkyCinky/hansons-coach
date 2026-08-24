@@ -37,8 +37,8 @@ Pondelok/Streda/Piatok/Sobota = Easy behy alebo Rest/Cross-train.
 
 ▌FÁZY 18-TÝŽDŇOVÉHO PLÁNU
 • Týždeň 1: Len Easy behy (rozbeh, adaptácia).
-• Týždne 2–10: SPEED fáza — krátke intervaly @ 5k–10k tempo (rýchlosť, ekonomika behu).
-• Týždne 11–17: STRENGTH fáza — dlhé intervaly @ 10k tempo (sila, odolnosť na HMP).
+• Týždne 2–10: SPEED fáza — krátke intervaly @ AKTUÁLNE 5k tempo (rýchlosť, ekonomika behu).
+• Týždne 11–17: STRENGTH fáza — dlhé intervaly @ HMP − 6 s/km (sila, odolnosť na HMP).
 • Týždeň 18: TAPER (zostup) — výrazné zníženie objemu, sviežosť na preteky.
 Tempo behy (štvrtok) prebiehajú PARALELNE celý plán a postupne sa predlžujú.
 

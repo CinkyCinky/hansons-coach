@@ -345,7 +345,9 @@ def classify_workout_kind(name: str) -> str:
         return "strength"
     if re.search(r"speed|rýchl|šprint|interval", t):
         return "speed"
-    if re.search(r"tempo", t):
+    # Pozri komentár v lib/workoutType.ts: „tempom“/„tempe“ sa NESMÚ chytiť, inak sa
+    # Easy beh započíta ako kľúčový tempový tréning do scorecardu konzistencie SOS.
+    if re.search(r"\btempo\b|\btempov", t):
         return "tempo"
     if re.search(r"long|dlh", t):
         return "long"

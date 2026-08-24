@@ -1,19 +1,60 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Play, Info, ChevronRight, ChevronLeft,
   Check, Timer, Pause, ListChecks, Sparkles,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import { exercisesFor, videoUrl, type WarmupPhase, type Exercise } from "@/lib/warmup";
+import { motion, AnimatePresence, MotionConfig } from "framer-motion";
+import { exercisesFor, videoUrl, sideLabel, totalRounds, type WarmupPhase, type Exercise } from "@/lib/warmup";
 
 const PHASE_META: Record<WarmupPhase, { title: string; subtitle: string; mins: string }> = {
   before:   { title: "Dynamická rozcvička", subtitle: "Pripravíš telo na beh",        mins: "~8 min" },
   after:    { title: "Strečing po behu",    subtitle: "Podporíš regeneráciu",          mins: "~7 min" },
   strength: { title: "Silový / voľný deň",  subtitle: "Doplnková sila a stabilita",    mins: "~15–20 min" },
 };
+
+// Zvuková a hmatová spätná väzba na konci odpočtu: pri strečingu má človek hlavu pri
+// kolene a na displej sa nepozerá, takže samotné číslo mu je nanič.
+let audioCtx: AudioContext | null = null;
+
+function playCue(kind: "warn" | "end") {
+  try {
+    const Ctor = window.AudioContext
+      ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (Ctor) {
+      const ctx = audioCtx ?? new Ctor();
+      audioCtx = ctx;
+      // Prehliadač prebudí zvuk až po dotyku — vedený režim používateľ spúšťa klepnutím.
+      if (ctx.state === "suspended") void ctx.resume();
+      const now = ctx.currentTime;
+      const beeps = kind === "end" ? [0, 0.18, 0.36] : [0];   // koniec = tri pípnutia, 5 s vopred = jedno
+      for (const at of beeps) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = kind === "end" ? 880 : 620;
+        gain.gain.setValueAtTime(0.0001, now + at);
+        gain.gain.exponentialRampToValueAtTime(0.22, now + at + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.14);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + at);
+        osc.stop(now + at + 0.16);
+      }
+    }
+  } catch {
+    // Web Audio nemusí byť dostupné (starší prehliadač, zakázaný zvuk) — odpočet beží ďalej.
+  }
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(kind === "end" ? [120, 60, 120] : 60);
+    }
+  } catch {
+    // Vibrácie na desktope a v iOS Safari chýbajú — signál je len bonus, nie podmienka.
+  }
+}
 
 // Jedna „dlaždica" cviku v režime prehliadania
 function ExerciseCard({ ex, idx }: { ex: Exercise; idx: number }) {
@@ -90,12 +131,15 @@ function ExerciseCard({ ex, idx }: { ex: Exercise; idx: number }) {
   );
 }
 
-export default function Warmup() {
+// Telo obrazovky; default export ho nižšie obalí do MotionConfig-u.
+function WarmupScreen() {
   const [phase, setPhase] = useState<WarmupPhase>("before");
   const [mode, setMode] = useState<"browse" | "guided" | "done">("browse");
   const [idx, setIdx] = useState(0);
+  const [round, setRound] = useState(0);      // poradie série/strany v rámci jedného cviku
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [running, setRunning] = useState(false);
+  const prevSecRef = useRef<number | null>(null);
 
   const list = exercisesFor(phase);
   const ex = list[idx];
@@ -107,7 +151,7 @@ export default function Warmup() {
     if (t === "after" || t === "strength") setPhase(t);
   }, []);
 
-  // Pri zmene cviku (alebo vstupe do vedeného režimu) priprav časovač
+  // Časovač sa pripraví aj pri zmene série/strany — inak by sa odmeral len prvý beh
   useEffect(() => {
     const cur = exercisesFor(phase)[idx];
     if (cur?.durationSec) {
@@ -117,7 +161,7 @@ export default function Warmup() {
       setSecondsLeft(0);
       setRunning(false);
     }
-  }, [idx, phase, mode]);
+  }, [idx, phase, mode, round]);
 
   // Odpočet pre statický strečing (1 tik = 1 s, plánovaný cez setTimeout)
   useEffect(() => {
@@ -126,18 +170,67 @@ export default function Warmup() {
     return () => clearTimeout(t);
   }, [mode, running, secondsLeft, ex, phase]);
 
+  // Signál púšťame len pri skutočnom tiku nadol; pri prípravnom nastavení časovača
+  // hodnota stúpa, a bez tejto poistky by pípol hneď pri otvorení cviku.
+  useEffect(() => {
+    const prevSec = prevSecRef.current;
+    prevSecRef.current = secondsLeft;
+    if (mode !== "guided" || !ex?.durationSec || prevSec === null || secondsLeft >= prevSec) return;
+    if (secondsLeft === 5) playCue("warn");
+    if (secondsLeft === 0) playCue("end");
+  }, [secondsLeft, mode, ex]);
+
   const switchPhase = (p: WarmupPhase) => {
     setPhase(p);
     setIdx(0);
+    setRound(0);
     setMode("browse");
   };
 
-  const startGuided = () => { setIdx(0); setMode("guided"); };
-  const next = () => { if (idx < list.length - 1) setIdx(idx + 1); else setMode("done"); };
-  const prev = () => { if (idx > 0) setIdx(idx - 1); };
+  const startGuided = () => { setIdx(0); setRound(0); setMode("guided"); };
+
+  // Cvik je hotový až po odbehnutí všetkých sérií a oboch strán — inak by sa ľavá noha
+  // ani druhá séria nikdy nedostali na rad.
+  const rounds = ex ? totalRounds(ex) : 1;
+  const sidesCount = ex?.sides === "both" ? 2 : 1;
+  const setsCount = ex?.sets ?? 1;
+  const setNo = Math.floor(round / sidesCount) + 1;   // v sérii ideme najprv pravú, potom ľavú stranu
+  const sideNo = round % sidesCount;
+  // To isté pre nasledujúcu dávku — potrebuje to panel „Ďalej:" pod tlačidlami
+  const nextSetNo = Math.floor((round + 1) / sidesCount) + 1;
+  const nextSideNo = (round + 1) % sidesCount;
+
+  // Postup meriame v dávkach, nie v cvikoch: pri Bočnej doske (3 série × 2 strany = 6 dávok)
+  // by sa ukazovateľ inak počas celého cviku vôbec nepohol.
+  const totalDoses = list.reduce((sum, e) => sum + totalRounds(e), 0);
+  const doneDoses = list.slice(0, idx).reduce((sum, e) => sum + totalRounds(e), 0) + round + 1;
+
+  const next = () => {
+    if (round < rounds - 1) { setRound(round + 1); return; }
+    setRound(0);                                       // ďalší cvik začína opäť prvou sériou
+    if (idx < list.length - 1) setIdx(idx + 1); else setMode("done");
+  };
+  const prev = () => {
+    if (round > 0) { setRound(round - 1); return; }
+    // Krok späť musí byť zrkadlom kroku vpred — vraciame sa na POSLEDNÚ dávku predošlého
+    // cviku, inak by si zverenec po kroku späť a vpred musel zopakovať všetky jeho dávky.
+    if (idx > 0) { setIdx(idx - 1); setRound(totalRounds(list[idx - 1]) - 1); }
+  };
 
   const isTimer = !!ex?.durationSec;
   const timerDone = isTimer && secondsLeft <= 0;
+
+  // Po dobehnutí odpočtu tlačidlo posúva ďalej — popis pre čítačku obrazovky musí sedieť
+  // s tým, kam naozaj vedie (ďalšia dávka / ďalší cvik / koniec), nie len s prvou možnosťou.
+  const timerAriaLabel = timerDone
+    ? round < rounds - 1
+      ? "Pokračovať ďalšou dávkou"
+      : idx < list.length - 1
+      ? "Pokračovať ďalším cvikom"
+      : "Dokončiť"
+    : running
+    ? "Pozastaviť časovač"
+    : "Spustiť časovač";
 
   // ── Hotovo ──────────────────────────────────────────────────────────────────
   if (mode === "done") {
@@ -204,7 +297,7 @@ export default function Warmup() {
             <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
               <motion.div
                 className="h-full bg-primary rounded-full"
-                animate={{ width: `${((idx + 1) / list.length) * 100}%` }}
+                animate={{ width: `${(doneDoses / totalDoses) * 100}%` }}
                 transition={{ duration: 0.4 }}
               />
             </div>
@@ -225,11 +318,27 @@ export default function Warmup() {
               {ex.muscles}
             </span>
 
+            {/* Bez tohto štítku užívateľ netuší, že ho čaká ešte ďalšia séria alebo druhá noha */}
+            {rounds > 1 && (
+              <div className="flex items-center justify-center gap-1.5 mt-2.5 flex-wrap">
+                {setsCount > 1 && (
+                  <span className="text-[11px] font-bold text-primary bg-primary/15 border border-primary/30 rounded-full px-3 py-0.5">
+                    Séria {setNo} z {setsCount}
+                  </span>
+                )}
+                {sidesCount > 1 && (
+                  <span className="text-[11px] font-bold text-gray-200 bg-white/5 border border-white/10 rounded-full px-3 py-0.5">
+                    {sideLabel(ex, sideNo)}
+                  </span>
+                )}
+              </div>
+            )}
+
             {isTimer ? (
               <button
                 onClick={() => { if (timerDone) { next(); } else { setRunning((r) => !r); } }}
                 className="mt-4 mb-1 mx-auto flex flex-col items-center group"
-                aria-label={running ? "Pozastaviť časovač" : "Spustiť časovač"}
+                aria-label={timerAriaLabel}
               >
                 <span className={`text-5xl font-bold font-mono tabular-nums ${timerDone ? "text-emerald-400" : "text-primary"}`}>
                   {timerDone ? "✓" : secondsLeft}
@@ -239,9 +348,14 @@ export default function Warmup() {
                     {running ? <><Pause size={11} /> klepni pre pauzu</> : <><Play size={11} /> klepni pre štart</>}
                   </span>
                 )}
+                {timerDone && round < rounds - 1 && (
+                  <span className="text-[11px] text-gray-500 mt-1">klepni pre ďalšiu dávku</span>
+                )}
               </button>
             ) : (
-              <p className="text-2xl font-bold text-primary mt-4 mb-1">{ex.dose}</p>
+              // Vo vedenom režime ukazujeme dávku na JEDNU sériu — vedľa štítku „Séria 1 z 3"
+              // by celková dávka („3× 12–15") zvádzala k trojnásobku.
+              <p className="text-2xl font-bold text-primary mt-4 mb-1">{ex.dosePerSet ?? ex.dose}</p>
             )}
 
             <ol className="flex flex-col gap-2 text-left mt-4 bg-black/20 rounded-xl p-3.5">
@@ -281,9 +395,9 @@ export default function Warmup() {
         <div className="flex gap-2">
           <button
             onClick={prev}
-            disabled={idx === 0}
+            disabled={idx === 0 && round === 0}
             className="px-4 py-3 rounded-2xl border border-white/10 bg-white/5 text-gray-400 hover:text-white disabled:opacity-30 transition-colors"
-            aria-label="Predošlý cvik"
+            aria-label={round > 0 ? "Späť na predošlú sériu/stranu" : "Predošlý cvik"}
           >
             <ChevronLeft size={18} />
           </button>
@@ -291,19 +405,34 @@ export default function Warmup() {
             onClick={next}
             className="flex-1 bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm transition-colors flex items-center justify-center gap-2"
           >
-            {idx === list.length - 1
+            {round < rounds - 1
+              ? (sidesCount > 1 && sideNo === 0
+                  ? <>Hotovo, teraz {sideLabel(ex, 1).toLowerCase()} <ChevronRight size={16} /></>
+                  : <>Hotovo, séria {setNo + 1} z {setsCount} <ChevronRight size={16} /></>)
+              : idx === list.length - 1
               ? <>Dokončiť <Check size={16} /></>
-              : <>Hotovo, ďalší <ChevronRight size={16} /></>}
+              : <>Hotovo, ďalší cvik <ChevronRight size={16} /></>}
           </button>
         </div>
 
-        {idx < list.length - 1 && (
+        {/* Kým cvik nemá odbehnuté všetky dávky, „ďalej" nie je ďalší cvik, ale ďalšia dávka */}
+        {round < rounds - 1 ? (
           <div className="glass-card px-4 py-2.5 flex items-center gap-2 text-xs">
-            <span className="text-gray-500">Ďalší:</span>
+            <span className="text-gray-500">Ďalej:</span>
+            <span className="text-lg leading-none">{ex.icon}</span>
+            <span className="text-gray-400">
+              {ex.name} — {sidesCount > 1
+                ? `${sideLabel(ex, nextSideNo).toLowerCase()}${setsCount > 1 ? `, séria ${nextSetNo} z ${setsCount}` : ""}`
+                : `séria ${nextSetNo} z ${setsCount}`}
+            </span>
+          </div>
+        ) : idx < list.length - 1 ? (
+          <div className="glass-card px-4 py-2.5 flex items-center gap-2 text-xs">
+            <span className="text-gray-500">Ďalší cvik:</span>
             <span className="text-lg leading-none">{list[idx + 1].icon}</span>
             <span className="text-gray-400">{list[idx + 1].name}</span>
           </div>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -347,8 +476,10 @@ export default function Warmup() {
           {phase === "before" ? (
             <>Dynamická rozcvička <b className="text-gray-100">prebudí svaly a nervový systém</b> —
             na rozdiel od statického naťahovania pred behom nezníži výkon. Prvé cviky rob na mieste;
-            druhú polovicu (skiping, vysoké kolená, rovinky…) rob v pohybe na ~30 m úseku
-            (ideálne pred Speed a Strength tréningom).</>
+            druhú polovicu (skiping, vysoké kolená, rovinky…) rob v pohybe na ~30 m úseku.
+            Patrí <b className="text-gray-100">len ku kľúčovým tréningom</b> — Speed (rýchlostné
+            intervaly), Strength (silové dlhé intervaly) a Tempo (beh presne v cieľovom pretekovom
+            tempe, HMP). Pred ľahký a dlhý beh ju netreba; tam stačí prvý kilometer odbehnúť pomaly.</>
           ) : phase === "after" ? (
             <>Po behu sú svaly teplé — ideálny čas na <b className="text-gray-100">statický strečing</b>.
             Každý ťah drž <b className="text-gray-100">plynule bez hojdania</b> a nikdy nenaťahuj
@@ -360,6 +491,18 @@ export default function Warmup() {
           )}
         </p>
       </div>
+
+      {/* Rovnaké slovo, dva rôzne významy — bez vysvetlenia to nového užívateľa mätie */}
+      {phase === "before" && (
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex gap-3">
+          <Info size={16} className="text-gray-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-gray-400 leading-relaxed">
+            <b className="text-gray-200">Pozor na názvoslovie:</b> v sekcii Plán je „Rozcvička“
+            krok tréningu — 2–4 km voľného rozklusania. Tu ide o <b className="text-gray-200">sadu
+            cvikov</b>, ktorú robíš až po tom rozklusaní, tesne pred hlavnou časťou tréningu.
+          </p>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-500">{list.length} cvikov · {meta.mins}</span>
@@ -384,5 +527,15 @@ export default function Warmup() {
         <ListChecks size={18} /> Previesť ma cvikmi krok za krokom
       </button>
     </div>
+  );
+}
+
+// MotionConfig rešpektuje systémové „obmedziť pohyb" (prefers-reduced-motion),
+// takže animácie sa vypnú tomu, kto ich má zakázané.
+export default function Warmup() {
+  return (
+    <MotionConfig reducedMotion="user">
+      <WarmupScreen />
+    </MotionConfig>
   );
 }

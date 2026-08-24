@@ -12,8 +12,13 @@ export interface Exercise {
   icon: string;          // emoji – ľahká vizuálna pomôcka
   name: string;
   muscles: string;       // cieľové svaly (krátky štítok)
-  dose: string;          // dávka, napr. "10 opakovaní na nohu"
+  dose: string;          // celková dávka, napr. „3× 12–15" — ukazuje sa v zozname cvikov
+  dosePerSet?: string;   // dávka na JEDNU sériu/stranu, napr. „12–15 opak."; vedený režim
+                         // ukazuje ju namiesto celkovej, aby ju nikto nenásobil počtom sérií
   durationSec?: number;  // ak ide o statický strečing/výdrž → spustí sa časovač
+  sets?: number;         // počet sérií, ak to hovorí dávka (napr. „3× 30 s"); bez uvedenia = 1
+  sides?: "both";        // robí sa na obe strany; pri viacerých sériách sa strany striedajú
+                         // vnútri každej série (pravá, ľavá, pravá, ľavá…)
   steps: string[];       // 2–3 konkrétne kroky „čo presne robiť"
   why: string;           // na čo je cvik a prečo pomáha
   mistake?: string;      // najčastejšia chyba — na čo si dať pozor
@@ -24,6 +29,22 @@ export interface Exercise {
 // Zámerne vyhľadávanie, nie konkrétne video ID: nikdy sa nerozbije na „video zmazané".
 export function videoUrl(query: string): string {
   return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+}
+
+// Koľko dávok (sérií × strán) má cvik dokopy. Vedený režim ich musí odbehnúť všetky —
+// inak by sa druhá séria ani ľavá noha nikdy nedostali na rad.
+export function totalRounds(ex: Exercise): number {
+  return (ex.sets ?? 1) * (ex.sides === "both" ? 2 : 1);
+}
+
+// Popis strany pre vedený režim. Pri cvikoch „na nohu" je „noha" zrozumiteľnejšie
+// než všeobecná „strana", nech začiatočník hneď vie, čo má vymeniť.
+export function sideLabel(ex: Exercise, side: number): string {
+  // Hľadáme koreň slova, nie presný tvar — „nohu", „nohy" aj „nohe" znamenajú to isté,
+  // takže nová formulácia dávky ticho nespadne späť na všeobecnú „stranu".
+  const dose = `${ex.dose} ${ex.dosePerSet ?? ""}`.toLowerCase();
+  const unit = /noh/.test(dose) ? "noha" : "strana";
+  return side === 0 ? `Pravá ${unit}` : `Ľavá ${unit}`;
 }
 
 // ── Dynamická rozcvička PRED behom (10 cvikov, ~8 min) ────────────────────────
@@ -64,6 +85,7 @@ export const WARMUP_BEFORE: Exercise[] = [
     name: "Švihy nohou dopredu a dozadu",
     muscles: "Hamstringy · bedro",
     dose: "10 opak. / nohu",
+    sides: "both",
     steps: [
       "Postav sa bokom k stene a jednou rukou sa zľahka pridrž.",
       "Voľnou nohou švihaj dopredu a dozadu ako kyvadlo.",
@@ -79,6 +101,7 @@ export const WARMUP_BEFORE: Exercise[] = [
     name: "Švihy nohou do strán",
     muscles: "Stehná · bedro",
     dose: "10 opak. / nohu",
+    sides: "both",
     steps: [
       "Postav sa čelom k stene a oboma rukami sa zľahka pridrž.",
       "Jednou nohou švihaj nabok od tela a späť pred druhú nohu — plynule ako metronóm.",
@@ -169,12 +192,14 @@ export const WARMUP_BEFORE: Exercise[] = [
     name: "Rovinky",
     muscles: "Celé telo",
     dose: "4–6 × 75 m",
+    dosePerSet: "75 m",
+    sets: 5,               // stred rozsahu 4–6, nech počítadlo nikoho nenúti do maxima
     steps: [
       "Postupne zrýchľuj až na zhruba 90 % svojho maxima — nie naplno hneď.",
       "Posledných 20 m drž rýchlosť a potom pozvoľna spomaľ.",
       "Medzi rovinkami daj 30–60 s pokojnej chôdze na zotavenie.",
     ],
-    why: "Naštartuje nervový systém a doladí techniku. Mimoriadne dôležité pred Speed a Strength tréningom.",
+    why: "Naštartuje nervový systém a doladí techniku. Mimoriadne dôležité pred tréningom Speed (rýchlostné intervaly) a Strength (silové dlhé intervaly).",
     mistake: "Nezačínaj naplno a nie je to šprint — plynulo zrýchľuj do svižného, ale uvoľneného behu.",
     videoQuery: "running strides technique how to",
   },
@@ -189,6 +214,7 @@ export const STRETCH_AFTER: Exercise[] = [
     muscles: "Lýtko",
     dose: "30 s / nohu",
     durationSec: 30,
+    sides: "both",
     steps: [
       "Postav sa čelom k stene, jednu nohu posuň dozadu a pätu pevne pritlač k zemi.",
       "Zľahka sa opri o stenu, kým v lýtku zadnej nohy neucítiš ťah.",
@@ -205,6 +231,7 @@ export const STRETCH_AFTER: Exercise[] = [
     muscles: "Zadné stehno",
     dose: "30 s / nohu",
     durationSec: 30,
+    sides: "both",
     steps: [
       "Sadni si na zem, jednu nohu vystri, druhú pokrč nabok k telu.",
       "Pomaly sa predkláňaj k vystretej nohe — chrbát drž čo najrovnejší, nie zaguľatený.",
@@ -221,6 +248,7 @@ export const STRETCH_AFTER: Exercise[] = [
     muscles: "Predné stehno",
     dose: "30 s / nohu",
     durationSec: 30,
+    sides: "both",
     steps: [
       "Postav sa a pre istotu sa pridrž steny. Pokrč koleno a chyť sa za členok.",
       "Pritiahni pätu k zadku, kolená drž vedľa seba.",
@@ -237,6 +265,7 @@ export const STRETCH_AFTER: Exercise[] = [
     muscles: "Bedro · slabina",
     dose: "30 s / nohu",
     durationSec: 30,
+    sides: "both",
     steps: [
       "Kľakni si na jedno koleno ako rytier — predné koleno zvieraj v pravom uhle.",
       "Posuň panvu mierne dopredu, kým v slabine zadnej nohy neucítiš ťah.",
@@ -253,6 +282,7 @@ export const STRETCH_AFTER: Exercise[] = [
     muscles: "Vonkajšie stehno",
     dose: "30 s / nohu",
     durationSec: 30,
+    sides: "both",
     steps: [
       "Postav sa a skríž jednu nohu za druhú.",
       "Nakláňaj sa do strany k prednej nohe, ruky môžeš dvíhať nad hlavu.",
@@ -269,6 +299,7 @@ export const STRETCH_AFTER: Exercise[] = [
     muscles: "Zadok",
     dose: "30 s / stranu",
     durationSec: 30,
+    sides: "both",
     steps: [
       "Ľahni si na chrbát s pokrčenými kolenami. Jeden členok polož na druhé koleno — vznikne tvar štvorky.",
       "Chyť sa za stehno spodnej nohy a pritiahni ju k hrudi.",
@@ -293,6 +324,7 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     muscles: "Core · brucho",
     dose: "3× 30–45 s",
     durationSec: 40,
+    sets: 3,
     steps: [
       "Opri sa o predlaktia a špičky nôh, telo drž v jednej priamke od hlavy po päty.",
       "Spevni brucho a zovri zadok (akoby ťa mal niekto štuchnúť do brucha), panvu podsaď.",
@@ -309,6 +341,8 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     muscles: "Boky · šikmé brušné",
     dose: "3× 30 s / stranu",
     durationSec: 30,
+    sets: 3,
+    sides: "both",
     steps: [
       "Ľahni si na bok, opri sa o predlaktie (lakeť pod ramenom), nohy vystri na seba.",
       "Zdvihni boky, kým telo nie je rovná priamka — panvu tlač hore a vpred.",
@@ -324,6 +358,8 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     name: "Mostík (glute bridge)",
     muscles: "Zadok · hamstringy",
     dose: "3× 12–15",
+    dosePerSet: "12–15 opak.",
+    sets: 3,
     steps: [
       "Ľahni si na chrbát, kolená pokrč, chodidlá na šírku bokov opri o zem.",
       "Zovri zadok a zdvihni panvu, kým telo od kolien po ramená nie je priamka.",
@@ -339,6 +375,9 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     name: "Mušľa (clamshell)",
     muscles: "Bočný zadok · bedro",
     dose: "3× 15 / stranu",
+    dosePerSet: "15 opak.",
+    sets: 3,
+    sides: "both",
     steps: [
       "Ľahni si na bok, kolená pokrč do ~90°, jedno na druhom, päty spolu.",
       "Bez otáčania panvy roztvor horné koleno nahor (ako mušľa) — päty ostávajú spolu.",
@@ -354,6 +393,8 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     name: "Vták-pes (bird-dog)",
     muscles: "Core · chrbát · zadok",
     dose: "3× 10 / stranu",
+    dosePerSet: "10 opak. / stranu",
+    sets: 3,               // strany sa striedajú vnútri série, preto zámerne bez „sides"
     steps: [
       "Kľakni si na štyri (ruky pod ramenami, kolená pod bedrami), chrbát rovný.",
       "Súčasne vystri opačnú ruku dopredu a nohu dozadu do priamky s telom.",
@@ -369,6 +410,8 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     name: "Mŕtvy chrobák (dead bug)",
     muscles: "Hlboký core",
     dose: "3× 10 / stranu",
+    dosePerSet: "10 opak. / stranu",
+    sets: 3,               // strany sa striedajú vnútri série, preto zámerne bez „sides"
     steps: [
       "Ľahni si na chrbát, ruky vystri kolmo hore, kolená a bedrá pokrč do ~90°.",
       "Driek pritlač do zeme a pomaly spusti opačnú ruku a nohu k zemi.",
@@ -384,6 +427,9 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     name: "Bulharský drep (na jednej nohe)",
     muscles: "Stehná · zadok",
     dose: "3× 8–10 / nohu",
+    dosePerSet: "8–10 opak.",
+    sets: 3,
+    sides: "both",
     steps: [
       "Stoj chrbtom ku gauču/stoličke, priehlavok zadnej nohy polož na sedadlo za sebou.",
       "Pokrč prednú nohu a spúšťaj sa rovno dole, kým predné stehno nie je ~vodorovne.",
@@ -399,6 +445,9 @@ export const STRENGTH_OPTIONAL: Exercise[] = [
     name: "Výpony na jednej nohe",
     muscles: "Lýtko · Achillovka",
     dose: "3× 12–15 / nohu",
+    dosePerSet: "12–15 opak.",
+    sets: 3,
+    sides: "both",
     steps: [
       "Postav sa na jednu nohu (druhú zohni), zľahka sa pridrž steny pre rovnováhu.",
       "Pomaly sa vytiahni čo najvyššie na špičku, na vrchu na chvíľu zadrž.",

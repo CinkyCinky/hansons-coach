@@ -302,18 +302,63 @@ def get_training_readiness(client) -> Optional[dict]:
     return None
 
 
+def _deep_find(payload, keys: tuple):
+    """Nájde prvú nenulovú hodnotu ktoréhokoľvek z `keys` kdekoľvek vo vnorenej odpovedi.
+
+    Garmin vracia training status zabalený per-zariadenie
+    (`mostRecentTrainingStatus.latestTrainingStatusData.<deviceId>.acuteTrainingLoadDTO…`),
+    pričom tvar sa medzi zariadeniami aj verziami API líši. Ploché `payload.get(...)`
+    preto vracalo None a karta A:C záťaže sa nikdy nezobrazila. Prehľadávame do šírky,
+    takže plytší (a teda konkrétnejší) výskyt vyhráva.
+    """
+    queue = [payload]
+    while queue:
+        node = queue.pop(0)
+        if isinstance(node, dict):
+            for k in keys:
+                v = node.get(k)
+                if v is not None:
+                    return v
+            queue.extend(node.values())
+        elif isinstance(node, list):
+            queue.extend(node)
+    return None
+
+
 def get_training_load(client) -> Optional[dict]:
-    """Stiahne Training Load dáta."""
+    """Stiahne Training Load dáta (akútna/chronická záťaž + ich pomer).
+
+    Pomer akútnej a chronickej záťaže je Hansonov guardrail proti preťaženiu
+    (docs/HANSON_METHODOLOGY_AND_REDESIGN.md §2.4): nad 1.4 sa má ubrať objem.
+    """
     try:
         today = date.today().isoformat()
         stats = _garmin_call(client.get_training_status, today)
-        if stats:
-            return {
-                "acute_load": stats.get("acuteTrainingLoad"),
-                "chronic_load": stats.get("chronicTrainingLoad"),
-                "ratio": stats.get("trainingLoadRatio"),
-                "status": stats.get("trainingStatusLoad"),
-            }
+        if not stats:
+            return None
+
+        acute = _deep_find(stats, ("acuteTrainingLoad", "dailyTrainingLoadAcute"))
+        chronic = _deep_find(stats, ("chronicTrainingLoad", "dailyTrainingLoadChronic"))
+        ratio = _deep_find(stats, ("dailyAcuteChronicWorkloadRatio", "trainingLoadRatio"))
+        status = _deep_find(stats, ("acwrStatus", "trainingStatusLoad", "trainingStatus"))
+
+        # Garmin niekde dáva pomer v percentách (acwrPercent) — prepočítaj na násobok.
+        if ratio is None:
+            pct = _deep_find(stats, ("acwrPercent",))
+            if isinstance(pct, (int, float)):
+                ratio = round(pct / 100, 2)
+        # Stále nič, ale máme obe zložky → dopočítaj (rovnako ako to robí frontend).
+        if ratio is None and isinstance(acute, (int, float)) and isinstance(chronic, (int, float)) and chronic:
+            ratio = round(acute / chronic, 2)
+
+        if acute is None and chronic is None and ratio is None:
+            # Nech sa to nedebuguje naslepo — vypíš, čo Garmin vlastne vrátil.
+            logger.warning(
+                "Training Load: v odpovedi nie sú polia záťaže. Kľúče najvyššej úrovne: %s",
+                list(stats.keys()) if isinstance(stats, dict) else type(stats).__name__,
+            )
+
+        return {"acute_load": acute, "chronic_load": chronic, "ratio": ratio, "status": status}
     except Exception as e:
         print(f"  ⚠️  Training Load: {e}")
     return None

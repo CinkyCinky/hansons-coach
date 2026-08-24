@@ -41,9 +41,26 @@ async function fetchWithAuth(endpoint: string, options: RequestInit = {}) {
       const errBody = await res.json();
       if (errBody?.detail) errorDetail = normalizeDetail(errBody.detail);
     } catch {}
-    throw new Error(errorDetail);
+    throw new ApiError(errorDetail, res.status);
   }
   return res.json();
+}
+
+// Chyba z API, ktorá si so sebou nesie HTTP stav. Bez neho museli volajúci hádať typ chyby
+// z textu hlášky (hľadanie reťazca „401") — a to zlyhá vždy, keď backend pošle vlastný
+// slovenský detail bez čísla, alebo naopak text s číslom 401 v úplne inom význame.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** HTTP stav chyby, ak ho poznáme (inak null). */
+export function errorStatus(err: unknown): number | null {
+  return err instanceof ApiError ? err.status : null;
 }
 
 // Starý jednoduchý cache nahradený globálnym store (lib/store.tsx)
@@ -181,15 +198,19 @@ export async function sendChatMessage(
   });
 }
 
-// Streamovaný chat (SSE). onDelta dostáva postupné časti odpovede; vráti {model_used, fallback}.
+// Streamovaný chat (SSE). onDelta dostáva postupné časti odpovede, onTool názov práve
+// vykonaného nástroja; vráti {model_used, fallback, tools_used}.
 // fallback=true znamená, že stream nedal text (napr. len tool-call) → volajúci má dobehnúť
-// cez nestreamovaný sendChatMessage.
+// cez nestreamovaný sendChatMessage — ALE len ak sa nevykonal žiadny nástroj.
+// tools_used/onTool: backend je bezstavový, takže zopakovanie tej istej správy by spustilo
+// tool-loop odznova a tréning by sa v Garmine vytvoril / presunul / zmazal DRUHÝKRÁT.
 export async function streamChatMessage(
   message: string,
   history: any[],
   model: 'flash' | 'pro',
-  onDelta: (text: string) => void
-): Promise<{ model_used?: string; fallback?: boolean }> {
+  onDelta: (text: string) => void,
+  onTool?: (name: string, write: boolean) => void
+): Promise<{ model_used?: string; fallback?: boolean; tools_used?: boolean }> {
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
 
@@ -209,7 +230,7 @@ export async function streamChatMessage(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let result: { model_used?: string; fallback?: boolean } = {};
+  let result: { model_used?: string; fallback?: boolean; tools_used?: boolean } = {};
 
   // SSE rámce sú oddelené prázdnym riadkom ("\n\n")
   for (;;) {
@@ -227,7 +248,16 @@ export async function streamChatMessage(
       try {
         const evt = JSON.parse(jsonStr);
         if (evt.t) onDelta(evt.t as string);
-        if (evt.done) result = { model_used: evt.model_used, fallback: evt.fallback };
+        // Nástroj sa už VYKONAL. `write` rozlišuje zápis do Garminu (správu nesmieme
+        // poslať znova) od obyčajného čítania (opakovanie je bezpečné).
+        if ('tool' in evt) onTool?.(String(evt.tool ?? ''), evt.write === true);
+        if (evt.done) {
+          result = {
+            model_used: evt.model_used,
+            fallback: evt.fallback,
+            tools_used: evt.tools_used === true,
+          };
+        }
       } catch { /* ignoruj nekompletný/nevalidný rámec */ }
     }
   }

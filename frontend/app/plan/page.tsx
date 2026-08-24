@@ -498,6 +498,12 @@ export default function Plan() {
 
   useEffect(() => {
     store.loadPlan();
+    // Plán berie týždeň prípravy, dátum pretekov aj variant z dashboardu. Bez tohto
+    // volania sú pri priamom otvorení /plan (PWA skratka, refresh, odkaz) prázdne:
+    // ukázalo by sa „Týždeň ? / 18“ a variant by spadol na default „Advanced“ —
+    // teda nesprávny údaj pre Beginner aj Just Finish. Store má TTL, takže pri
+    // príchode z Prehľadu je to no-op.
+    store.loadDashboard();
     // Načítaj potvrdené výpadky; preruš staré (>60 dní) nech zoznam nerastie donekonečna
     try {
       const raw = localStorage.getItem(DISMISSED_MISSED_KEY);

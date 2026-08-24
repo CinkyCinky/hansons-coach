@@ -24,6 +24,11 @@ const SUGGESTED_CHIPS = [
   "Navrhni mi zmenu plánu",
 ];
 
+// Prvé otvorenie chatu — nováčik netuší, čo od trénera čakať, tak mu to rovno povieme.
+const COACH_INTRO =
+  "Rozoberiem s tebou odbehnutý tréning, upravím ti plán a zapíšem tréning priamo do hodiniek Garmin. " +
+  "A kedykoľvek ti vysvetlím, prečo je v pláne práve to, čo v ňom je — Hansonovu metódu poznám do detailu.";
+
 // ── Formátovanie textu trénera (ľahký markdown: **tučné**, `kód`, zoznamy) ──────
 function renderInline(text: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
@@ -140,10 +145,14 @@ export default function Chat() {
   const [model, setModel] = useState<Model>("flash");
   const [isInitializing, setIsInitializing] = useState(true);
   const [displayName, setDisplayName] = useState<string>("Bežec");
+  // Profil je vybavený aj vtedy, keď zlyhá — pozdrav nesmie čakať na meno donekonečna.
+  const [profileReady, setProfileReady] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Pozdrav nasadzujeme len raz — inak by ho prepísala každá ďalšia zmena dát v store
+  const greetedRef = useRef(false);
 
   // Dotykové zariadenie? (mobil) → Enter robí nový riadok, ako vo WhatsApp/Messengeri
   useEffect(() => {
@@ -186,7 +195,8 @@ export default function Chat() {
         const name = p.display_name || p.garmin_email?.split("@")[0] || "Bežec";
         setDisplayName(name);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setProfileReady(true));
   }, []);
 
   // Handoff z generátora plánu: nasaď konverzáciu zhrnutím plánu (ako správa zverenca)
@@ -203,62 +213,76 @@ export default function Chat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Dynamický pozdrav pri načítaní chatu
+  // Spusti načítanie dát pre pozdrav (raz pri otvorení chatu)
   useEffect(() => {
-    const initChat = async () => {
-      setIsInitializing(true);
-      try {
-        await store.loadDashboard();
-
-        const d = store.dashboard;
-        let greetContext = "Ahoj! Som tvoj AI bežecký tréner.";
-        if (d) {
-          // Živá hodnota (aktuálny stav) — pozdrav je „teraz", nie ranný report.
-          const bb = d.stats?.body_battery_now ?? d.stats?.body_battery;
-          const todayW = d.today_workout?.title;
-          const week = d.training_week;
-          // Je dnešný tréning už odbehnutý? (porovnaj dnešný dátum s aktivitami z Garminu)
-          const now = new Date();
-          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-          const doneToday = (d.activities ?? []).some(
-            (a: any) => (a.startTimeLocal || a.startTimeGMT || "").slice(0, 10) === todayStr
-          );
-          if (todayW) {
-            greetContext = doneToday
-              ? `Ahoj ${displayName}! Dnešný tréning (**${todayW}**) už máš za sebou — pekná práca! 💪`
-              : `Ahoj ${displayName}! Dnes ťa čaká: **${todayW}**.`;
-            if (bb) greetContext += ` Tvoja Body Battery je na ${bb}/100.`;
-          } else {
-            greetContext = `Ahoj ${displayName}! Sme v týždni ${week ?? "?"}/18.`;
-            if (bb) greetContext += ` Tvoja Body Battery je ${bb}/100.`;
-          }
-          greetContext += " Ako ti môžem pomôcť?";
-        }
-
-        // Neprepisuj už rozpísanú konverzáciu (efekt sa môže spustiť znova po načítaní profilu)
-        setMessages((prev) =>
-          prev.length > 1 ? prev : [{ id: "1", role: "model", content: greetContext, ts: Date.now() }]
-        );
-      } catch {
-        setMessages((prev) =>
-          prev.length > 1
-            ? prev
-            : [
-                {
-                  id: "1",
-                  role: "model",
-                  content: `Ahoj ${displayName}! Som tvoj AI bežecký tréner podľa Hansonovej metódy. Ako ti môžem pomôcť?`,
-                  ts: Date.now(),
-                },
-              ]
-        );
-      } finally {
-        setIsInitializing(false);
-      }
-    };
-    initChat();
+    store.loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayName]);
+  }, []);
+
+  // Dynamický pozdrav — skladáme ho až keď sú dáta dotiahnuté. Hodnota zachytená hneď
+  // po `await loadDashboard()` je ešte tá stará (prázdna), preto čítame store z renderu.
+  useEffect(() => {
+    if (greetedRef.current) return;
+    if (!profileReady || store.dashboardLoading) return;
+    // Dáta sú vybavené aj vtedy, keď načítanie skončilo chybou — inak by pozdrav nikdy neprišiel.
+    if (store.dashboardLoadedAt === null && store.dashboardError === null) return;
+
+    const d = store.dashboard;
+    let greetContext: string;
+    if (d) {
+      // Živá hodnota (aktuálny stav) — pozdrav je „teraz", nie ranný report.
+      const bb = d.stats?.body_battery_now ?? d.stats?.body_battery;
+      const todayW = d.today_workout?.title;
+      const week = d.training_week;
+      // Body Battery pri prvom výskyte rozvedieme — nováčik túto metriku Garminu nepozná.
+      const bbSentence = bb
+        ? ` Tvoja Body Battery (odhad zásob energie od Garminu na škále 0–100) je na ${bb}.`
+        : "";
+      // Je dnešný tréning už odbehnutý? (porovnaj dnešný dátum s aktivitami z Garminu)
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const doneToday = (d.activities ?? []).some(
+        (a: any) => (a.startTimeLocal || a.startTimeGMT || "").slice(0, 10) === todayStr
+      );
+      if (todayW) {
+        greetContext = doneToday
+          ? `Ahoj ${displayName}! Dnešný tréning (**${todayW}**) už máš za sebou — pekná práca! 💪`
+          : `Ahoj ${displayName}! Dnes ťa čaká: **${todayW}**.`;
+        greetContext += bbSentence;
+      } else {
+        // Zápis „7/18" nováčikovi nič nehovorí — povedzme to celou vetou.
+        greetContext = week
+          ? `Ahoj ${displayName}! Si v ${week}. týždni z 18-týždňovej prípravy.`
+          : `Ahoj ${displayName}! Som tvoj AI bežecký tréner podľa Hansonovej metódy.`;
+        greetContext += bbSentence;
+      }
+      greetContext += " Ako ti môžem pomôcť?";
+    } else {
+      // Bez dát nepredstierame bežný pozdrav — povedzme, čo chýba a čo s tým vie zverenec urobiť.
+      greetContext =
+        `Ahoj ${displayName}! Som tvoj AI bežecký tréner podľa Hansonovej metódy. ` +
+        "Tvoje dáta z Garminu sa mi teraz nepodarilo načítať, takže nevidím ani dnešný tréning, ani tvoju únavu. " +
+        "Skontroluj si prosím prepojenie s Garminom v **Nastaveniach** a potom skús chat otvoriť znova. " +
+        "Aj tak sa ma však môžeš na čokoľvek spýtať.";
+    }
+
+    greetedRef.current = true;
+    // Nikdy neprepíš konverzáciu, do ktorej už zverenec písal (správa odoslaná počas inicializácie).
+    setMessages((prev) =>
+      prev.some((m) => m.role === "user")
+        ? prev
+        : [{ id: "1", role: "model", content: `${greetContext}\n\n${COACH_INTRO}`, ts: Date.now() }]
+    );
+    setIsInitializing(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    profileReady,
+    displayName,
+    store.dashboard,
+    store.dashboardLoading,
+    store.dashboardLoadedAt,
+    store.dashboardError,
+  ]);
 
   const handleSend = async (e: React.FormEvent | null, overrideInput?: string) => {
     e?.preventDefault();
@@ -266,6 +290,8 @@ export default function Chat() {
     if (!userMsg || isLoading) return;
 
     setInput("");
+    // Nech zverenec vidí svoju správu hneď, aj keď pozdrav ešte nedobehol
+    setIsInitializing(false);
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -312,20 +338,50 @@ export default function Chat() {
       }
     };
 
+    // Vykonal sa počas streamu nejaký nástroj? Ak áno, správu NIKDY neposielame znova —
+    // backend je bezstavový, tool-loop by sa spustil odznova a tréning by sa v Garmine
+    // vytvoril / presunul / zmazal DRUHÝKRÁT.
+    let toolsRan = false;
+    let needFallback = false;
+
     try {
-      const result = await streamChatMessage(userMsg, historyForApi, model, onDelta);
-      // Stream nedal text (napr. len tool-call) → dobehni nestreamovaným volaním.
-      if (result.fallback || !started) {
-        const res = await sendChatMessage(userMsg, historyForApi, model);
-        applyFinal(res.response);
-      }
-    } catch {
-      // Stream úplne zlyhal → skús nestreamovaný endpoint, až potom chybová hláška.
       try {
-        const res = await sendChatMessage(userMsg, historyForApi, model);
-        applyFinal(res.response);
+        const result = await streamChatMessage(userMsg, historyForApi, model, onDelta, (_name, write) => {
+          // Blokuje len ZÁPIS do Garminu. Po čítacom nástroji (zóny, zoznam tréningov)
+          // je opakovanie neškodné a zverenec by inak zbytočne prišiel o odpoveď.
+          if (write) toolsRan = true;
+        });
+        if (toolsRan || result.tools_used === true) {
+          if (!started) applyFinal("Zmenu som vykonal. Otvor si Plán a skontroluj ju.");
+        } else if (result.fallback || !started) {
+          // Stream nedal text (a žiadny nástroj nebežal) → bezpečne dobehni nestreamovaným volaním.
+          needFallback = true;
+        }
       } catch {
-        applyFinal("Prepáč, momentálne sa neviem spojiť so serverom. Skús to prosím neskôr.");
+        if (toolsRan) {
+          applyFinal("Zmenu som vykonal, ale spojenie sa prerušilo. Otvor si Plán a skontroluj ju.");
+        } else {
+          needFallback = true;
+        }
+      }
+
+      if (needFallback) {
+        // JEDINÝ opakovaný pokus — a len keď je isté, že sa žiadny nástroj nevykonal.
+        try {
+          const res = await sendChatMessage(userMsg, historyForApi, model);
+          applyFinal(res.response);
+        } catch {
+          // Text vraciame do poľa len vtedy, keď doň zverenec medzitým nezačal písať —
+          // a hláška musí povedať pravdu o tom, či sa to podarilo. Aktuálnu hodnotu čítame
+          // z DOM (synchrónne); funkčný setInput by `restored` nastavil až pri re-renderi.
+          const restored = !(textareaRef.current?.value ?? "").trim();
+          if (restored) setInput(userMsg);
+          applyFinal(
+            restored
+              ? "Prepáč, momentálne sa neviem spojiť so serverom. Tvoju správu som ti vrátil do poľa — skús ju prosím poslať znova."
+              : "Prepáč, momentálne sa neviem spojiť so serverom. Skús správu prosím poslať znova."
+          );
+        }
       }
     } finally {
       setIsLoading(false);

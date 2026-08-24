@@ -31,9 +31,14 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const isAuthPage = request.nextUrl.pathname.startsWith('/login')
+  const path = request.nextUrl.pathname
+  const isAuthPage = path.startsWith('/login')
+  // Obnova hesla musí byť dostupná v OBOCH stavoch: neprihlásený (kód z e-mailu sa
+  // vymieňa až v prehliadači, takže session tu ešte nie je) aj prihlásený (po výmene
+  // kódu vznikne recovery session — a bounce na "/" by mu nedal nastaviť nové heslo).
+  const isPasswordReset = path.startsWith('/reset-password')
 
-  if (!user && !isAuthPage) {
+  if (!user && !isAuthPage && !isPasswordReset) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)

@@ -38,6 +38,13 @@ function formatDate(): string {
   });
 }
 
+// Dnešok ako "YYYY-MM-DD" v LOKÁLNOM čase — toISOString() vracia UTC a po polnoci
+// by porovnanie s dátumami plánu ukázalo ešte včerajší deň.
+function localIsoDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function timeAgo(ts: number | null): string {
   if (!ts) return "";
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -49,9 +56,26 @@ function timeAgo(ts: number | null): string {
   return "dávnejšie";
 }
 
+// Tempo (s/km) → "m:ss". Zaokrúhľuje sa CELÝ počet sekúnd, nie zvlášť sekundová
+// zložka — inak sa pri hodnote ako 359.7 s/km vypíše nezmyselné „5:60/km“.
+function paceLabel(secPerKm: number): string {
+  const s = Math.round(secPerKm);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 // Slovenské skloňovanie pre odpočítavanie
 const dayWord = (n: number) => (n === 1 ? "deň" : n >= 2 && n <= 4 ? "dni" : "dní");
 const weekWord = (n: number) => (n === 1 ? "týždeň" : n >= 2 && n <= 4 ? "týždne" : "týždňov");
+
+// Celá veta o nezapočítaných týždňoch — samotné weekWord() rieši len tvar slova
+// „týždeň", nie zhodu prívlastku a slovesa. Preto skladáme rovno celý začiatok vety:
+// 1 → „Ďalší 1 týždeň … neráta", 2–4 → „Ďalšie 3 týždne … nerátajú",
+// 5+ → „Ďalších 5 týždňov … neráta" (pri genitíve je sloveso v jednotnom čísle).
+function unplannedWeeksLead(n: number): string {
+  if (n === 1) return `Ďalší ${n} týždeň sa do hodnotenia neráta`;
+  if (n >= 2 && n <= 4) return `Ďalšie ${n} týždne sa do hodnotenia nerátajú`;
+  return `Ďalších ${n} týždňov sa do hodnotenia neráta`;
+}
 
 // Odpočítavanie do dňa pretekov (z profilu) — dni + približné týždne
 function raceCountdown(raceDate?: string | null) {
@@ -80,13 +104,12 @@ function goalSplits(t?: string | null) {
   else if (parts.length === 2) sec = parts[0] * 60 + parts[1];
   if (!sec || parts.some(isNaN)) return null;
   const paceSec = sec / 21.0975;
-  const fmtPace = (p: number) => `${Math.floor(p / 60)}:${String(Math.round(p % 60)).padStart(2, "0")}`;
   const fmtT = (x: number) => {
     const h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), ss = Math.round(x % 60);
     return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${m}:${String(ss).padStart(2, "0")}`;
   };
   return {
-    pace: fmtPace(paceSec),
+    pace: paceLabel(paceSec),
     splits: [5, 10, 15, 21.0975].map((d) => ({ label: d === 21.0975 ? "Cieľ" : `${d} km`, t: fmtT(paceSec * d) })),
   };
 }
@@ -139,6 +162,8 @@ export default function Dashboard() {
   const consistency = store.planConsistency as {
     weeks_scored: number; key_total: number; key_done: number;
     key_missed: number; key_cancelled: number;
+    // Voliteľné — staršia odpoveď backendu toto pole nemá, preto sa naň nikde nespoliehame.
+    weeks_unplanned?: number;
   } | null;
 
   const handleRefresh = async () => {
@@ -147,9 +172,15 @@ export default function Dashboard() {
   };
 
   // Týždeň prípravy pochádza z backendu (počítaný z profilu)
-  const { dashboard: data, dashboardLoading: loading, dashboardError: error, advice } = store;
+  const { dashboard: data, dashboardLoading: loading, dashboardError: error, advice, adviceError } = store;
   const trainingWeek = data?.training_week ?? "?";
   const TOTAL_WEEKS = 18;
+  // Bez dát z backendu je týždeň „?" — tooltip „?. týždeň z 18-týždňovej prípravy" nedáva
+  // zmysel, preto novému bežcovi rovno povieme, čo mu chýba a kde to doplní.
+  const hasTrainingWeek = typeof data?.training_week === "number";
+  const weekBadgeTitle = hasTrainingWeek
+    ? `${trainingWeek}. týždeň z ${TOTAL_WEEKS}-týždňovej prípravy podľa Hansonovej metódy`
+    : `Týždeň prípravy zatiaľ nevieme určiť. Doplň si v Nastaveniach dátum pretekov a cieľový čas — appka ti zostaví ${TOTAL_WEEKS}-týždňovú prípravu podľa Hansonovej metódy.`;
 
   if (loading && !data) {
     return (
@@ -197,6 +228,12 @@ export default function Dashboard() {
   const countdown = !isRaceWeek ? raceCountdown(profile?.race_date) : null;
   const todayKind = todayWorkout ? classifyWorkout(todayWorkout.title || "").type : null;
   const showFueling = todayKind === "long" || isRaceWeek;
+  // Dnešný tréning je splnený, keď má položka plánu spárovanú Garmin aktivitu (activityId) —
+  // inak by appka vyzývala na beh, ktorý si už odbehol.
+  const todayPlanned = (store.plan || []).find(
+    (w: any) => String(w?.date || "").slice(0, 10) === localIsoDate()
+  );
+  const todayDone = !!todayWorkout && !!(todayWorkout.activityId || todayPlanned?.activityId);
 
   // Stav formy = ŽIVÁ Body Battery (rozhodnutie „vládzem teraz?"), nie ranná —
   // dôležité pre večerný beh: ranná top forma už pred behom platiť nemusí.
@@ -221,7 +258,9 @@ export default function Dashboard() {
       {/* Header */}
       <header className="flex justify-between items-end">
         <div>
-          <p className="text-gray-400 text-sm font-medium capitalize">{formatDate()}</p>
+          {/* first-letter, nie `capitalize`: v slovenčine sa názov mesiaca píše malým
+              písmenom — „Sobota 22. augusta“, nie „Sobota 22. Augusta“. */}
+          <p className="text-gray-400 text-sm font-medium first-letter:uppercase">{formatDate()}</p>
           <div className="flex items-center gap-2">
             <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-300">
               Ahoj, {data?.display_name ?? data?.garmin_email?.split("@")[0] ?? "Bežec"}
@@ -238,8 +277,13 @@ export default function Dashboard() {
           >
             <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
           </button>
-          <div className="bg-accent/20 text-accent px-3 py-1 rounded-full text-xs font-bold border border-accent/30 shadow-[0_0_15px_rgba(249,115,22,0.2)]">
-            T{trainingWeek} / {TOTAL_WEEKS}
+          {/* „T12 / 18" nový bežec neprečíta — píšeme rovno slovom, že ide o týždeň prípravy. */}
+          <div
+            className="bg-accent/20 text-accent px-3 py-1 rounded-full border border-accent/30 shadow-[0_0_15px_rgba(249,115,22,0.2)] text-center leading-tight"
+            title={weekBadgeTitle}
+          >
+            <span className="block text-[9px] font-semibold uppercase tracking-wider opacity-80">Týždeň</span>
+            <span className="block text-xs font-bold whitespace-nowrap">{trainingWeek} / {TOTAL_WEEKS}</span>
           </div>
         </div>
       </header>
@@ -278,7 +322,7 @@ export default function Dashboard() {
                 </>
               )}
             </p>
-            <p className="text-[11px] text-gray-500 capitalize mt-0.5">{countdown.dateLabel}</p>
+            <p className="text-[11px] text-gray-500 first-letter:uppercase mt-0.5">{countdown.dateLabel}</p>
           </div>
         </motion.div>
       )}
@@ -312,7 +356,8 @@ export default function Dashboard() {
         <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl text-sm font-bold break-words">
           ⚠️ {error}
           <p className="text-xs font-normal mt-1 text-rose-400/80">
-            Aby appka fungovala, prepoj svoj Garmin účet v Nastaveniach (alebo stlač Refresh).
+            Aby appka fungovala, prepoj svoj Garmin účet v Nastaveniach — alebo skús načítať dáta
+            znovu ikonou ↻ vpravo hore.
           </p>
           <Link
             href="/settings"
@@ -334,7 +379,9 @@ export default function Dashboard() {
             <Trophy size={16} /> Pretekový týždeň
           </h3>
           <p className="text-xs text-gray-300 leading-relaxed mb-3">
-            Si v taperi — menej behu, viac sviežosti. Žiadne tvrdé tréningy ani nové vzdialenosti.
+            Si v <b className="text-emerald-200">taperi</b> — v záverečnom vyladení pred pretekmi, keď sa
+            objem tréningu zámerne zníži, aby telo dobehlo únavu a na štart si prišiel svieži.
+            Menej behu, viac sviežosti: žiadne tvrdé tréningy ani nové vzdialenosti.
             „Ťažké nohy" sú normálne, dôveruj príprave.
           </p>
           {splits && (
@@ -356,7 +403,9 @@ export default function Dashboard() {
             <div className="bg-black/20 rounded-xl p-3 mb-3">
               <p className="text-xs text-gray-300 leading-relaxed">
                 Tvoj cieľ je <b className="text-emerald-300">v pohode dobehnúť</b> — žiadny pretekový rozpis tempa.
-                Vyštartuj pomaly a pohodlne (Easy tempo), jedz a pi ako na dlhých behoch a nechaj si silu do záveru.
+                Vyštartuj pomaly a pohodlne — v Easy tempe (ľahký, konverzačný beh, o 40 až 75 sekúnd
+                na kilometer pomalší než cieľové pretekové tempo). Jedz a pi ako na dlhých behoch
+                a nechaj si silu do záveru.
                 Dôjsť do cieľa je úspech. 💪
               </p>
             </div>
@@ -456,6 +505,10 @@ export default function Dashboard() {
                   </button>
                 </p>
                 <p className={`font-bold ${loadStatus.color}`}>{loadStatus.label}</p>
+                {/* Skratku A:C nový bežec nepozná — rozpisujeme ju hneď, nie až po kliknutí na „i". */}
+                <p className="text-[10px] text-gray-500 leading-tight mt-0.5">
+                  A:C = akútna (posledných 7 dní) k chronickej (posledných 28 dní) záťaži
+                </p>
               </div>
             </div>
             {acRatio != null && (
@@ -616,7 +669,8 @@ export default function Dashboard() {
             )}
             {feeling.feeling === "pain" && feeling.pain === "sharp" && (
               <p className="text-rose-300">
-                Ostrá bolesť — dnes nebehaj tvrdo, daj si Easy alebo voľno.{" "}
+                Ostrá bolesť — dnes nebehaj tvrdo, daj si Easy (ľahký pomalý beh, pri ktorom sa dá
+                bez zadýchania rozprávať) alebo voľno.{" "}
                 <Link href="/plan" className="text-rose-200 underline underline-offset-2 font-bold">
                   Zmeniť najbližší tréning na Easy
                 </Link>.
@@ -636,7 +690,13 @@ export default function Dashboard() {
           <Flame size={120} />
         </div>
 
-        <p className="text-primary font-bold text-sm mb-1 uppercase tracking-wider">Dnešný tréning</p>
+        {todayDone ? (
+          <p className="text-emerald-400 font-bold text-sm mb-1 uppercase tracking-wider flex items-center gap-1.5">
+            <CheckCircle2 size={15} /> Dnešný tréning
+          </p>
+        ) : (
+          <p className="text-primary font-bold text-sm mb-1 uppercase tracking-wider">Dnešný tréning</p>
+        )}
 
         {todayWorkout ? (
           <>
@@ -644,7 +704,13 @@ export default function Dashboard() {
             <p className="text-gray-400 text-sm mb-2 max-w-[80%]">
               {todayWorkout.description || "Pozri detail v sekcii Plán."}
             </p>
-            {(() => {
+            {todayDone ? (
+              /* Odbehnuté a spárované s Garmin aktivitou → potvrdenie, nie výzva na tréning. */
+              <div className="flex items-center gap-2 mb-4 text-emerald-400 relative z-10">
+                <CheckCircle2 size={20} className="shrink-0" />
+                <span className="text-sm font-bold">Splnené — dnešný tréning máš odbehnutý. 💪</span>
+              </div>
+            ) : (() => {
               const c = classifyWorkout(todayWorkout.title || "");
               return c.why ? (
                 <p className="text-xs text-gray-500 italic mb-4 max-w-[85%] leading-snug">💡 {c.why}</p>
@@ -656,18 +722,22 @@ export default function Dashboard() {
               </span>
             </Link>
 
-            {/* Rozcvička pred behom + strečing po behu */}
-            <div className="flex gap-2 mt-4 relative z-10">
+            {/* Rozcvička pred behom + strečing po behu. Obe dlaždice necháme vždy — po
+                splnení tréningu sa predtým skrývala rozcvička a strečing sa cez flex-1
+                roztiahol na celú šírku, takže karta vyzerala inak. Pevný 2-stĺpcový grid
+                drží rovnaký vzhľad pred behom aj po ňom (a rozcvička ostáva po ruke
+                na najbližší tréning). */}
+            <div className="grid grid-cols-2 gap-2 mt-4 relative z-10">
               <Link
                 href="/warmup?type=before"
-                className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2 transition-colors"
+                className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2 transition-colors"
               >
                 <span className="text-lg leading-none">🏃</span>
                 <span className="text-xs font-bold text-gray-200 leading-tight">Rozcvička<br /><span className="text-[10px] text-gray-500 font-normal">pred behom</span></span>
               </Link>
               <Link
                 href="/warmup?type=after"
-                className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2 transition-colors"
+                className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2.5 flex items-center gap-2 transition-colors"
               >
                 <span className="text-lg leading-none">🧘</span>
                 <span className="text-xs font-bold text-gray-200 leading-tight">Strečing<br /><span className="text-[10px] text-gray-500 font-normal">po behu</span></span>
@@ -739,6 +809,25 @@ export default function Dashboard() {
               <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-1">Tréner radí</h3>
               {advice ? (
                 <p className="text-sm text-gray-200 leading-relaxed font-medium">{advice}</p>
+              ) : adviceError ? (
+                /* Bez tejto vetvy sa pri chybe točil spinner donekonečna a nedalo sa opakovať. */
+                <div>
+                  {/* Surovú chybu zverencovi neukazujeme — nemusí byť po slovensky ani
+                      zrozumiteľná. Povieme len, čo sa stalo a čo s tým. */}
+                  <p className="text-sm text-gray-300 leading-relaxed">
+                    Radu trénera sa teraz nepodarilo načítať — spojenie so serverom zlyhalo
+                    alebo trvalo pridlho.
+                    <span className="block text-xs text-gray-400 mt-0.5">
+                      Skús to o chvíľu znova; ostatných údajov v prehľade sa to netýka.
+                    </span>
+                  </p>
+                  <button
+                    onClick={() => store.loadAdvice()}
+                    className="mt-2 inline-flex items-center gap-1.5 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/30 text-blue-300 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <RefreshCcw size={13} /> Skúsiť znova
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-gray-400 mt-1">
                   <Loader2 size={14} className="animate-spin" /> Tréner analyzuje tvoj stav...
@@ -898,7 +987,7 @@ export default function Dashboard() {
 
       {/* Konzistencia kľúčových tréningov — jadro Hansonovej metódy (4 uzavreté týždne) */}
       {consistency && consistency.key_total > 0 && (() => {
-        const { key_total, key_done, key_missed, key_cancelled, weeks_scored } = consistency;
+        const { key_total, key_done, key_missed, key_cancelled, weeks_scored, weeks_unplanned } = consistency;
         // Vynechané (no-show) aj zrušené/zmäkčené = jeden úprimný počet „nevykonaných".
         // Rozlišovanie intentu z kalendára bolo krehké — zmäkčenia a presuny padali do
         // „zrušených", hoci to boli rozumné úpravy. Prečo sa čo menilo → Denník zmien (/plan).
@@ -918,9 +1007,23 @@ export default function Dashboard() {
             <h3 className="text-sm font-bold flex items-center gap-2 mb-0.5">
               <Flame className="text-accent" size={18} /> Konzistencia kľúčových tréningov
             </h3>
-            <p className="text-[11px] text-gray-500 mb-3">
-              Posledné {weeks_scored} {weeksLabel} · {isJustFinish ? "nedeľný dlhý beh" : "Speed/Strength (ut), Tempo (št), Dlhý beh (ne)"}
+            <p className="text-[11px] text-gray-500 mb-1.5">
+              Posledné {weeks_scored} {weeksLabel} · {isJustFinish
+                ? "nedeľný dlhý beh"
+                : "Speed alebo Strength (utorok), Tempo (štvrtok), Dlhý beh (nedeľa)"}
             </p>
+            {/* Nový bežec nepozná ani SOS, ani anglické názvy typov behov — vysvetlíme ich pri prvom výskyte. */}
+            {!isJustFinish && (
+              <p className="text-[11px] text-gray-500 mb-3 leading-snug">
+                Kľúčové tréningy sa v Hansonovej metóde volajú <b className="text-gray-300">SOS</b> (z anglického
+                „something of substance" — „niečo podstatné"). Sú to behy, na ktorých stojí celá príprava:{" "}
+                <b className="text-gray-300">Speed</b> (rýchlostné intervaly v tvojom aktuálnom tempe na 5 km),{" "}
+                <b className="text-gray-300">Strength</b> (silová vytrvalosť — o 6 sekúnd na kilometer rýchlejšie
+                než cieľové pretekové tempo), <b className="text-gray-300">Tempo</b> (presne cieľové pretekové
+                tempo polmaratónu, po anglicky half marathon pace, skratka HMP) a nedeľný{" "}
+                <b className="text-gray-300">Dlhý beh</b>.
+              </p>
+            )}
 
             <div className="flex items-end gap-2 mb-2">
               <span className={`text-3xl font-bold leading-none ${tone.text}`}>{key_done}</span>
@@ -952,9 +1055,47 @@ export default function Dashboard() {
                 </>
               )}
             </p>
+
+            {(weeks_unplanned ?? 0) > 0 && (
+              /* Bez vysvetlenia si užívateľ myslí, že mu chýbajú dáta z hodiniek. */
+              <p className="text-[11px] text-gray-500 leading-snug mt-3 pt-3 border-t border-white/10">
+                {unplannedWeeksLead(weeks_unplanned as number)} — v tom čase si nemal plán zapísaný
+                v kalendári Garminu, takže nebolo čo s odbehnutým porovnať. Nechýbajú ti dáta
+                z hodiniek; stačí plán poslať do Garminu a ďalšie týždne sa už započítajú.
+              </p>
+            )}
           </motion.div>
         );
       })()}
+
+      {/* Prázdna scorecard (key_total = 0) — ak si plán nikdy neposlal do hodiniek, nie je
+          čo hodnotiť. Bez tejto karty by sa zverenec nikdy nedozvedel prečo. */}
+      {consistency && consistency.key_total === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-4"
+        >
+          <h3 className="text-sm font-bold flex items-center gap-2 mb-1.5">
+            <Flame className="text-accent" size={18} /> Konzistencia kľúčových tréningov
+          </h3>
+          <p className="text-xs text-gray-400 leading-snug mb-3">
+            Zatiaľ nie je čo hodnotiť. V posledných uzavretých týždňoch si nemal plán zapísaný
+            v kalendári Garminu, takže appka nemala s čím porovnať tvoje odbehnuté behy —
+            nechýbajú ti dáta z hodiniek. Otvor si Plán a pošli ho do Garminu; hneď ako podľa
+            neho odbehneš prvé kľúčové tréningy ({isJustFinish
+              ? "nedeľný dlhý beh"
+              : "Speed alebo Strength v utorok, Tempo vo štvrtok a nedeľný Dlhý beh"}),
+            začne sa ti tu počítať konzistencia.
+          </p>
+          <Link
+            href="/plan"
+            className="inline-flex items-center gap-1 text-xs font-bold text-primary underline underline-offset-2"
+          >
+            Otvoriť Plán a poslať ho do Garminu <ChevronRight size={14} />
+          </Link>
+        </motion.div>
+      )}
 
       {/* Posledná aktivita */}
       <section className="mb-8">
@@ -967,7 +1108,7 @@ export default function Dashboard() {
                 <p className="text-xs text-gray-500 mt-1">
                   {((lastActivity.distance || 0) / 1000).toFixed(1)} km
                   {lastActivity.averageSpeed
-                    ? ` • ${Math.floor(1000 / lastActivity.averageSpeed / 60)}:${String(Math.round((1000 / lastActivity.averageSpeed) % 60)).padStart(2, "0")}/km`
+                    ? ` • ${paceLabel(1000 / lastActivity.averageSpeed)}/km`
                     : ""}
                   {lastActivity.averageHR ? ` • ${lastActivity.averageHR} bpm` : ""}
                   {lastActivity.averageRunningCadenceInStepsPerMinute
@@ -978,7 +1119,12 @@ export default function Dashboard() {
             ) : (
               <div>
                 <p className="text-xs text-gray-400 mb-1">Posledná aktivita</p>
-                <h4 className="font-bold text-sm text-gray-600">Žiadne dáta</h4>
+                {/* „Žiadne dáta" nič nepovie — povieme, čo to znamená a čo s tým. */}
+                <h4 className="font-bold text-sm text-gray-400">Zatiaľ žiadny beh</h4>
+                <p className="text-xs text-gray-500 mt-1 leading-snug">
+                  Za posledných 7 dní sa v tvojom Garmine nenašla žiadna bežecká aktivita. Ak si behal,
+                  over prepojenie Garminu v Nastaveniach — alebo dáta načítaj znovu ikonou ↻ vpravo hore.
+                </p>
               </div>
             )}
             <ChevronRight size={20} className="text-gray-500 group-hover:text-primary transition-colors" />

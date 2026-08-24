@@ -26,6 +26,24 @@ _profile_cache: Dict[str, Any] = {}        # user_id -> (profile, timestamp)
 _cache_lock = threading.Lock()
 
 
+def ping() -> bool:
+    """Lacný dotaz do Supabase — drží projekt „aktívny".
+
+    Free tier uspí projekt po ~7 dňoch nečinnosti a appka potom hlási chybu spojenia
+    pri prihlásení. Monitor (UptimeRobot) sa na Supabase nedá namieriť priamo: na Free
+    pláne posiela HEAD a Supabase naň odpovie 405. Preto Supabase „budíme" odtiaľto,
+    z /keepalive, ktorý monitor volá tak či tak.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("profiles").select("id").limit(1).execute()
+        return True
+    except Exception as e:
+        print(f"⚠️  Supabase ping zlyhal: {e}")
+        return False
+
+
 def _invalidate_profile_cache(user_id: str) -> None:
     with _cache_lock:
         _profile_cache.pop(user_id, None)
@@ -49,12 +67,16 @@ def get_user_profile(user_id: str) -> Optional[Dict[str, Any]]:
     with _cache_lock:
         hit = _profile_cache.get(user_id)
         if hit and (now - hit[1]) < _PROFILE_TTL_SEC:
-            return hit[0]
+            # KÓPIA, nie zdieľaný objekt: volajúci (GET /api/profile) z profilu odstraňuje
+            # `garmin_password_encrypted` a `garmin_tokens`. Bez kópie tá mutácia zasiahla
+            # priamo cache a na celý TTL — a get_client() potom hlásil „V profile chýbajú
+            # prihlasovacie údaje do Garminu“, hoci uložené boli.
+            return dict(hit[0]) if isinstance(hit[0], dict) else hit[0]
     res = supabase.table('profiles').select('*').eq('id', user_id).execute()
     profile = res.data[0] if res.data else None
     with _cache_lock:
         _profile_cache[user_id] = (profile, time.time())
-    return profile
+    return dict(profile) if isinstance(profile, dict) else profile
 
 def update_user_profile(user_id: str, data: Dict[str, Any]):
     if not supabase:

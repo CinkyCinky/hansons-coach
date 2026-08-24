@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X, Sparkles } from "lucide-react";
+import { LogOut, Save, Loader2, Calendar, Target, Wifi, User, AlertCircle, Plus, X, Sparkles, CheckCircle2, Circle, RefreshCw, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -9,9 +9,23 @@ import { fetchProfile, updateProfile, fetchMemory, addMemoryFact, deleteMemoryFa
 import { useStore } from "@/lib/store";
 import { computePaces } from "@/lib/paces";
 
+// Slovenské skloňovanie: 1 týždeň, 2–4 týždne, 5+ týždňov. Bez toho vznikali vety
+// ako „ostáva len 4 týždňov prípravy".
+const weekWord = (n: number) => (n === 1 ? "týždeň" : n >= 2 && n <= 4 ? "týždne" : "týždňov");
+// Sloveso sa musí zhodovať tiež: „ostávajú 4 týždne" vs „ostáva 5 týždňov".
+const weeksLeft = (n: number) =>
+  n >= 2 && n <= 4 ? `ostávajú len ${n} týždne` : `ostáva len ${n} ${weekWord(n)}`;
+
 function validateTargetTime(val: string): boolean {
   return /^\d{1,2}:\d{2}:\d{2}$/.test(val.trim());
 }
+
+// Čitateľné názvy variantov plánu (na výzvu pri kontrolnom zozname)
+const VARIANT_LABELS: Record<string, string> = {
+  beginner: "Beginner",
+  advanced: "Advanced",
+  just_finish: "Just Finish",
+};
 
 function parseTimeSec(t: string): number | null {
   const p = String(t).split(":").map(Number);
@@ -29,6 +43,12 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  // Zlyhanie načítania profilu musí byť vidieť: keby sme ho ticho prehltli, formulár by
+  // ukázal defaulty a uložením by si zverenec prepísal cieľ a vymazal Garmin e-mail.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Naposledy uložený profil zo servera — z neho sa počíta kontrolný zoznam aj to,
+  // či má užívateľ vo formulári neuložené zmeny.
+  const [savedProfile, setSavedProfile] = useState<any | null>(null);
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -57,6 +77,8 @@ export default function Settings() {
   const [raceTime, setRaceTime] = useState("");
   // Proaktívna re-kalibrácia cieľa: odhad z VO2max porovnaný s aktuálnym cieľom
   const [autoEst, setAutoEst] = useState<string | null>(null);
+  // Vysvetlivky k anglickým názvom temp — nový zverenec netuší, čo je Strength či Speed
+  const [showPaceLegend, setShowPaceLegend] = useState(false);
 
   const handleEstimate = async (useRace: boolean) => {
     setEstimating(true);
@@ -85,6 +107,20 @@ export default function Settings() {
     s.setDate(s.getDate() - 126);
     return s.toISOString().split("T")[0];
   };
+  // Aktuálny týždeň prípravy — musí sedieť s backendom (hansons_knowledge.current_training_week):
+  // T1 je kotvený na PONDELOK v deň štartu alebo prvý nasledujúci a týždeň sa mení vždy
+  // v pondelok, nie po 7 dňoch od štartu. Výsledok je orezaný na 1–18 ako na backende.
+  const trainingWeekOf = (start: Date, today: Date) => {
+    const isoDow = (d: Date) => (d.getDay() + 6) % 7; // 0 = pondelok (rovnako ako v Pythone)
+    const anchorMonday = new Date(start);
+    anchorMonday.setDate(anchorMonday.getDate() + ((7 - isoDow(start)) % 7)); // pondelok ≥ štart
+    const todayMonday = new Date(today);
+    todayMonday.setDate(todayMonday.getDate() - isoDow(today)); // pondelok tohto týždňa
+    // Zaokrúhľujeme, nie orezávame — medzi dvoma polnocami môže byť kvôli letnému času
+    // o hodinu menej a celý týždeň by sa stratil.
+    const week = Math.round((todayMonday.getTime() - anchorMonday.getTime()) / (DAY * 7)) + 1;
+    return Math.min(18, Math.max(1, week));
+  };
 
   // Auto-výpočet začiatku z dátumu pretekov (ak používateľ nemá vlastný)
   useEffect(() => {
@@ -110,43 +146,111 @@ export default function Settings() {
     const achievableStart = effStart < today ? today : effStart; // trénovať v minulosti sa nedá
     const prepWeeks = Math.max(0, Math.round((race.getTime() - achievableStart.getTime()) / (DAY * 7)));
     const fmt = (d: Date) => d.toLocaleDateString("sk-SK");
+    // Appka plán ani nepredlžuje, ani nezhusťuje: týždeň sa počíta dopredu od začiatku
+    // prípravy a oreže sa na 18 — texty preto musia hovoriť o tomto, nie o prispôsobení.
+    const startedInPast = effStart < today;
+    const weekNow = trainingWeekOf(effStart, today);
+    // Týždeň je orezaný na 1–18. Pri dávnom začiatku vyjde 18 — a to je vylaďovací
+    // (taper) týždeň, teda najľahšia časť plánu, nie najtvrdšia. Naopak pri začiatku spred
+    // pár dní vyjde 1 a nevynecháva sa nič. Texty musia rozlíšiť oba konce.
+    const atTaper = weekNow >= 18;
+    const skipsStart = startedInPast && weekNow > 1;
 
     let msg: string;
+    // Povie už hlavná hláška, do ktorého týždňa appka zverenca zaradí? Ak áno, dodatok
+    // na konci to nesmie zopakovať ešte raz.
+    let msgSaysWeek = false;
     if (prepWeeks >= 19) {
-      msg = `🌱 Začiatok ${fmt(effStart)} — máš ${prepWeeks} týždňov prípravy (Hanson ideál je 18). Začneš pokojnejšie: prvé týždne budú ľahšie a objem porastie postupne.`;
+      if (skipsStart) {
+        // Začiatok v minulosti + veľa času do pretekov: plán sa nepredlžuje, zverenec
+        // dobehne 18. týždeň dávno pred pretekmi a zostane na ňom.
+        msg = atTaper
+          ? `🌱 Tvoj začiatok ${fmt(effStart)} je tak dávno, že appka ťa už teraz drží na 18. (vylaďovacom, tzv. taper) týždni — a do pretekov máš ešte ${prepWeeks} ${weekWord(prepWeeks)}. Taper je zámerne najľahší a patrí až do posledného týždňa pred pretekmi, takže takto by si celý čas len udržiaval formu. Nastav si začiatok 18 týždňov pred pretekmi, nech ti plán vyjde načasovaný.`
+          : `🌱 Tvoj začiatok ${fmt(effStart)} je v minulosti, takže appka ťa zaradí rovno do ${weekNow}. týždňa plánu — a do pretekov máš ešte ${prepWeeks} ${weekWord(prepWeeks)}. Hanson plán má pevných 18 a appka ho o týždne navyše nepredĺži: zvyšné týždne plánu prejdeš a posledných ~${Math.max(0, prepWeeks - (18 - weekNow))} týž. pred pretekmi zostaneš na 18. (vylaďovacom, tzv. taper) týždni — teda v najľahšej časti plánu. Lepšie je nastaviť začiatok 18 týždňov pred pretekmi, nech ti plán vyjde načasovaný.`;
+        msgSaysWeek = true;
+      } else {
+        msg = `🌱 Začiatok ${fmt(effStart)} — do pretekov máš ${prepWeeks} týždňov, ale Hanson plán má pevných 18 a appka ho o týždne navyše nepredĺži. Prejdeš týždne 1–18 a posledné ~${prepWeeks - 18} týž. pred pretekmi zostaneš na 18. (vylaďovacom, tzv. taper) týždni — teda v najľahšej časti plánu. Lepšie je nechať automatický začiatok 18 týždňov pred pretekmi a čas navyše si odbehať vo vlastnom voľnom objeme.`;
+      }
     } else if (prepWeeks >= 16) {
       msg = `✅ Začiatok ${fmt(effStart)} — ${prepWeeks} týždňov prípravy. Presne sedí na štandardný 18-týždňový Hanson plán.`;
     } else if (prepWeeks >= 10) {
-      msg = `⏱️ Začiatok ${fmt(achievableStart)} — do pretekov máš len ${prepWeeks} týždňov (Hanson ideál je 18). Musíme zabrať: AI tréner plán zhustí a vynechá najľahšiu úvodnú fázu.`;
+      if (skipsStart) {
+        msg = atTaper
+          ? `⏱️ Do pretekov máš len ${prepWeeks} týždňov (Hanson ideál je 18) a tvoj začiatok je tak dávno, že appka ťa zaradí do 18. — posledného, vylaďovacieho (taper) týždňa. Ten je zámerne najľahší a patrí až do posledného týždňa pred pretekmi, takže takto by si ${prepWeeks} ${weekWord(prepWeeks)} len udržiaval formu. Posuň si začiatok prípravy bližšie k dnešku.`
+          : `⏱️ Do pretekov máš len ${prepWeeks} týždňov (Hanson ideál je 18). Appka ťa preto zaradí rovno do ${weekNow}. týždňa plánu — úvodné najľahšie týždne vynecháš. Počítaj s tým, že objem aj tvrdé tréningy idú naplno hneď od začiatku.`;
+        msgSaysWeek = true;
+      } else {
+        msg = `⏱️ Začiatok ${fmt(achievableStart)} — do pretekov máš len ${prepWeeks} týždňov (Hanson ideál je 18). Plán pobeží od 1. týždňa, takže do pretekov stihneš zhruba jeho prvých ${prepWeeks} týždňov z 18 — záverečné vylaďovanie (taper) ti vypadne. Ak ho chceš mať, nechaj automatický začiatok 18 týždňov pred pretekmi.`;
+      }
     } else if (prepWeeks >= 4) {
-      msg = `⚠️ Pozor: ostáva len ${prepWeeks} týždňov prípravy. To je málo — plán bude náročný a krátený. Zváž, či nie je lepší neskorší termín pretekov.`;
+      if (skipsStart) {
+        msg = atTaper
+          ? `⚠️ Pozor: ${weeksLeft(prepWeeks)} prípravy a tvoj začiatok je tak dávno, že appka ťa zaradí rovno do 18. — posledného, vylaďovacieho (taper) týždňa. Ten je zámerne najľahší (má ťa len oddýchnuť pred pretekmi), takže z Hanson prípravy by si takto reálne nič neodtrénoval. Posuň si začiatok prípravy bližšie k dnešku alebo zváž neskorší termín pretekov.`
+          : `⚠️ Pozor: ${weeksLeft(prepWeeks)} prípravy. Appka ťa zaradí rovno do ${weekNow}. týždňa plánu, takže úvodný rozbeh vynecháš — objem aj tvrdé tréningy idú naplno hneď od prvého tréningu. Zváž, či nie je lepší neskorší termín pretekov.`;
+        msgSaysWeek = true;
+      } else {
+        msg = `⚠️ Pozor: ${weeksLeft(prepWeeks)} prípravy. Z 18-týždňového plánu stihneš len úvod — ani tempové zosilnenie, ani vylaďovanie pred pretekmi. Zváž, či nie je lepší neskorší termín pretekov.`;
+      }
     } else {
       msg = `🚫 Na poctivú Hanson prípravu je už neskoro (ostáva ~${prepWeeks} týž.). Odporúčam vybrať neskoršie preteky, alebo ber tieto bez tlaku na čas — ako tréningové.`;
     }
-    if (customStart && effStart < today) {
-      msg += " (Tvoj zadaný začiatok je v minulosti — počítame, že časť prípravy už máš za sebou.)";
+    if (customStart && skipsStart && !msgSaysWeek) {
+      msg += ` (Tvoj zadaný začiatok je v minulosti — appka počíta, že si už v ${weekNow}. týždni prípravy.)`;
     }
     setRaceDateWarning(msg);
   }, [raceDate, customStart, trainingStart]);
 
-  useEffect(() => {
+  // Hodnoty formulára odvodené z profilu — na jednom mieste, aby sa porovnanie
+  // „uložené vs. rozpísané" nerozišlo s tým, čo sa do formulára naozaj naleje.
+  // Začiatok prípravy dopočítavame rovnako, ako to hneď po načítaní spraví efekt vyššie
+  // (preteky − 18 týž.). Bez toho by porovnanie „uložené vs. rozpísané" bralo default
+  // 2026-06-01 a appka by hlásila neuložené zmeny hneď po otvorení Nastavení, bez toho,
+  // aby sa zverenec čohokoľvek dotkol.
+  const formFromProfile = (p: any) => ({
+    displayName: p?.display_name || "",
+    email: p?.garmin_email || "",
+    targetTime: p?.target_time || "1:50:00",
+    trainingStart: p?.training_start_date || (p?.race_date ? officialStartIso(p.race_date) : "2026-06-01"),
+    raceDate: p?.race_date || "",
+    planVariant: p?.plan_variant || "advanced",
+    aiContext: p?.ai_context || "",
+  });
+
+  const loadProfile = () => {
+    setLoading(true);
+    setLoadError(null);
     fetchProfile()
       .then((profile) => {
-        if (profile.display_name) setDisplayName(profile.display_name);
-        if (profile.garmin_email) setEmail(profile.garmin_email);
-        if (profile.target_time) setTargetTime(profile.target_time);
-        if (profile.plan_variant) setPlanVariant(profile.plan_variant);
-        if (profile.training_start_date) setTrainingStart(profile.training_start_date);
-        if (profile.race_date) setRaceDate(profile.race_date);
-        if (profile.ai_context) setAiContext(profile.ai_context);
+        // Prázdny profil (target_time aj training_start_date null) je legitímny stav
+        // nového zverenca — chyba je až to, keď server nevráti objekt profilu.
+        if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+          throw new Error("Server nevrátil profil.");
+        }
+        const f = formFromProfile(profile);
+        setDisplayName(f.displayName);
+        setEmail(f.email);
+        setTargetTime(f.targetTime);
+        setPlanVariant(f.planVariant);
+        setTrainingStart(f.trainingStart);
+        setRaceDate(f.raceDate);
+        setAiContext(f.aiContext);
         // Ak uložený začiatok nezodpovedá automatickému (race - 18 týž.), je to vlastný začiatok
         if (profile.race_date && profile.training_start_date) {
           const auto = officialStartIso(profile.race_date);
           if (profile.training_start_date !== auto) setCustomStart(true);
         }
+        setSavedProfile(profile);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((e: any) => {
+        setLoadError(e?.message || "Neznáma chyba");
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    loadProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Načítaj štruktúrované fakty pamäte
@@ -186,6 +290,9 @@ export default function Settings() {
   };
 
   const handleSave = async () => {
+    // Bez načítaného profilu sa neukladá — uložili by sme defaulty formulára cez reálne dáta.
+    if (!savedProfile) return;
+
     // Validácia formátu cieľového času
     if (targetTime && !validateTargetTime(targetTime)) {
       setMessage("Chyba: Cieľový čas musí byť vo formáte HH:MM:SS (napr. 1:50:00)");
@@ -207,18 +314,36 @@ export default function Settings() {
     setSaving(true);
     setMessage("");
     try {
+      // Meno a poznámky posielame aj prázdne. S `|| undefined` ich backend preskočil,
+      // takže vymazanie sa neuložilo — a snapshot nižšie by si napriek tomu zapísal
+      // prázdnu hodnotu a indikátor neuložených zmien by zhasol.
       await updateProfile({
-        display_name: displayName || undefined,
+        display_name: displayName,
         garmin_email: email,
         garmin_password: password || undefined,
         target_time: targetTime,
         training_start_date: trainingStart,
-        race_date: raceDate || undefined,
-        ai_context: aiContext || undefined,
+        // Posielame aj prázdny reťazec — je to legitímne vymazanie termínu. S `|| undefined`
+        // by backend pole preskočil, na serveri by ostal starý dátum a indikátor neuložených
+        // zmien by svietil navždy.
+        race_date: raceDate,
+        ai_context: aiContext,
         plan_variant: planVariant,
       });
       // Invalidate store — nové profil dáta ovplyvnia výpočty
       store.invalidateAll();
+      // Posuň snapshot uloženého stavu, nech kontrolný zoznam aj upozornenie
+      // na neuložené zmeny hneď zodpovedajú realite.
+      setSavedProfile((p: any) => ({
+        ...(p || {}),
+        display_name: displayName,
+        garmin_email: email,
+        target_time: targetTime,
+        training_start_date: trainingStart,
+        race_date: raceDate,
+        plan_variant: planVariant,
+        ai_context: aiContext,
+      }));
       setMessage("Profil úspešne uložený! 🎉");
       setPassword("");
     } catch (err: any) {
@@ -237,10 +362,70 @@ export default function Settings() {
     router.push("/login");
   };
 
+  // Neuložené zmeny: tlačidlá typu „Použiť tento čas" iba naplnia pole, preto musí byť
+  // vidieť, že cieľ ešte nie je uložený.
+  const currentForm = { displayName, email, targetTime, trainingStart, raceDate, planVariant, aiContext };
+  const isDirty =
+    !!savedProfile &&
+    (password.length > 0 || JSON.stringify(currentForm) !== JSON.stringify(formFromProfile(savedProfile)));
+
+  // Kontrolný zoznam sa počíta z ULOŽENÉHO profilu — nesmie odškrtnúť cieľ,
+  // ktorý je zatiaľ len rozpísaný vo formulári.
+  const checklist = [
+    { done: !!savedProfile?.garmin_email, label: "Prepojený Garmin účet", hint: "e-mail a heslo do Garmin Connect nižšie" },
+    { done: !!savedProfile?.target_time, label: "Cieľový čas polmaratónu", hint: "z neho appka počíta tréningové tempá" },
+    { done: !!savedProfile?.plan_variant, label: "Variant plánu", hint: "Beginner / Advanced / Just Finish" },
+    { done: !!savedProfile?.race_date, label: "Dátum pretekov", hint: "podľa neho sa určí, v ktorom týždni prípravy si" },
+  ];
+  const checklistLeft = checklist.filter((i) => !i.done).length;
+
+  // Nový zverenec vidí vo formulári predvyplnený cieľ 1:50:00 a variant Advanced, hoci
+  // v profile nie sú uložené — bez zásahu do formulára nie sú ani „neuložené zmeny“,
+  // takže nič nenaznačí, že tieto hodnoty treba potvrdiť tlačidlom Uložiť.
+  const unconfirmedDefaults = [
+    !savedProfile?.target_time ? `cieľový čas ${targetTime || "1:50:00"}` : null,
+    !savedProfile?.plan_variant ? `variant ${VARIANT_LABELS[planVariant] || planVariant}` : null,
+  ].filter(Boolean) as string[];
+  const unconfirmedNote =
+    unconfirmedDefaults.length === 0
+      ? null
+      : unconfirmedDefaults.length === 1
+        ? `Pozor: ${unconfirmedDefaults[0]} je vo formulári nižšie len predvyplnený návrh — appka ho zatiaľ nemá uložený. Skontroluj ho, uprav podľa seba a potvrď tlačidlom „Uložiť profil“ dole.`
+        : `Pozor: ${unconfirmedDefaults.join(" a ")} sú vo formulári nižšie len predvyplnené návrhy — appka ich zatiaľ nemá uložené. Skontroluj ich, uprav podľa seba a potvrď tlačidlom „Uložiť profil“ dole.`;
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
         <Loader2 className="animate-spin text-primary" size={32} />
+      </div>
+    );
+  }
+
+  // Pri zlyhaní načítania NEPONÚKAME formulár ani uloženie — len vysvetlenie a nový pokus.
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center gap-4 pt-16 px-2 text-center">
+        <AlertCircle size={36} className="text-rose-400" />
+        <h1 className="text-xl font-bold">Nastavenia sa nepodarilo načítať</h1>
+        <p className="text-sm text-gray-400 leading-relaxed max-w-sm">
+          Tvoj profil (cieľový čas, Garmin účet, dátum pretekov) sa teraz nedá načítať zo servera.
+          Formulár preto nezobrazujeme — keby si ho uložil, prepísal by si si uložené údaje
+          prázdnymi hodnotami. Skontroluj pripojenie na internet a skús to znova.
+        </p>
+        <p className="text-xs text-gray-600">Detail chyby: {loadError}</p>
+        <button
+          onClick={loadProfile}
+          className="mt-2 bg-primary hover:bg-blue-600 text-white font-bold px-5 py-2.5 rounded-xl transition-colors flex items-center gap-2"
+        >
+          <RefreshCw size={16} />
+          Skúsiť znova
+        </button>
+        <button
+          onClick={handleLogout}
+          className="text-xs text-gray-500 hover:text-gray-300 underline underline-offset-2 mt-2"
+        >
+          Odhlásiť sa
+        </button>
       </div>
     );
   }
@@ -251,6 +436,44 @@ export default function Settings() {
         <h1 className="text-2xl font-bold">Nastavenia</h1>
         <p className="text-gray-400 text-sm">Spravuj svoj profil a ciele</p>
       </div>
+
+      {/* Čo ešte treba vyplniť — nováčik inak netuší, prečo mu appka nepočíta plán */}
+      {checklistLeft > 0 ? (
+        <div className="bg-black/20 border border-white/10 rounded-xl p-3">
+          <p className="text-[11px] font-bold text-gray-300 mb-2">
+            Aby appka fungovala, vyplň ešte {checklistLeft} {checklistLeft === 1 ? "vec" : "veci"}:
+          </p>
+          <ul className="flex flex-col gap-1.5">
+            {checklist.map((item) => (
+              <li key={item.label} className="flex items-start gap-2 text-xs">
+                {item.done ? (
+                  <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                ) : (
+                  <Circle size={14} className="text-gray-600 shrink-0 mt-0.5" />
+                )}
+                <span className={item.done ? "text-gray-600 line-through" : "text-gray-300"}>
+                  {item.label}
+                  {!item.done && <span className="text-gray-600"> — {item.hint}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-gray-600 mt-2">
+            Odškrtne sa až po uložení tlačidlom „Uložiť profil" dole.
+          </p>
+          {/* Predvyplnené hodnoty vyzerajú ako hotové — treba povedať, že ich appka ešte nemá */}
+          {unconfirmedNote && (
+            <p className="text-[11px] text-amber-300 mt-2 leading-relaxed">
+              {unconfirmedNote} Až potom podľa {unconfirmedDefaults.length === 1 ? "nej" : "nich"} appka začne počítať tvoj plán a tempá.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-3 py-2">
+          <CheckCircle2 size={14} className="shrink-0" />
+          <span>Všetko vyplnené — appka má všetko, čo na tvoj plán potrebuje.</span>
+        </div>
+      )}
 
       {/* Osobný profil */}
       <section>
@@ -302,9 +525,25 @@ export default function Settings() {
               placeholder="••••••••"
             />
           </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500 bg-black/20 p-3 rounded-xl">
-            <Wifi size={14} className="text-emerald-400 shrink-0" />
-            <span>Heslo je uložené šifrované. Garmin session sa automaticky obnovuje.</span>
+          <div className="flex items-start gap-2 text-xs text-gray-500 bg-black/20 p-3 rounded-xl">
+            <Wifi size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">
+              Heslo je uložené šifrované. Garmin session sa automaticky obnovuje.
+              {/* Nováčik sa oprávnene pýta, prečo od neho appka pýta heslo — treba to povedať rovno */}
+              <br />
+              Garmin pre aplikácie tohto typu neponúka verejné prihlásenie cez OAuth (teda tlačidlo
+              „Prihlásiť sa cez Garmin"), takže sa k tvojim tréningom nedá dostať inak než tvojím
+              prihlasovacím menom a heslom. Používajú sa výhradne na sťahovanie tvojich behov,
+              tepu a VO2max.
+            </span>
+          </div>
+          <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
+            <ShieldAlert size={14} className="text-amber-400 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">
+              Ak máš na Garmin účte zapnuté dvojfaktorové overenie (2FA), prihlásenie zlyhá —
+              appka nemá kam zadať jednorazový kód. Aby prepojenie fungovalo, treba 2FA
+              v nastaveniach Garmin účtu dočasne vypnúť.
+            </span>
           </div>
         </div>
       </section>
@@ -336,7 +575,7 @@ export default function Settings() {
             <p className="text-xs text-gray-500 mt-2 ml-1 leading-snug">
               💡 {planVariant === "just_finish"
                 ? <>Z tohto času sa počíta tvoje <b className="text-gray-300">Easy</b> tempo (a slúži ako očakávané tempo dobehnutia)</>
-                : <>Z tohto času sa počítajú <b className="text-gray-300">všetky</b> tréningové tempá</>} —
+                : <>Z tohto času sa počíta <b className="text-gray-300">väčšina</b> tréningových temp — ľahké (Easy), tempové (Tempo) aj silové (Strength). Rýchlostné intervaly (Speed) sa počítajú z tvojej <b className="text-gray-300">aktuálnej formy</b> (Garmin VO2max), nie z cieľa</>} —
               zvoľ ho realisticky podľa nedávnej formy (napr. z posledných pretekov), nie ako zbožné
               prianie. Prehnaný cieľ spraví každý tréning prirýchly (najčastejšia chyba). Neistý?{" "}
               <Link href="/about" className="text-primary underline underline-offset-2">Pozri „O metóde"</Link>.
@@ -353,7 +592,7 @@ export default function Settings() {
                     {isJF ? "Tvoje tempo pri tomto cieli" : "Tvoje tréningové tempá pri tomto cieli"}
                   </p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                    <span className="text-gray-400">Easy / Dlhé</span>
+                    <span className="text-gray-400">Easy (ľahký beh) / Dlhý beh</span>
                     <span className="text-right font-mono text-emerald-300">{p.easyMin}–{p.easyMax}/km</span>
                     {isJF ? (
                       <>
@@ -362,19 +601,67 @@ export default function Settings() {
                       </>
                     ) : (
                       <>
-                        <span className="text-gray-400">Tempo (pretekové, HMP)</span>
+                        <span className="text-gray-400">Tempo (tempový beh)</span>
                         <span className="text-right font-mono text-amber-300">{p.tempo}/km</span>
-                        <span className="text-gray-400">Strength</span>
+                        <span className="text-gray-400">Strength (silové intervaly)</span>
                         <span className="text-right font-mono text-orange-300">{p.strength}/km</span>
-                        <span className="text-gray-400">Speed (5K)</span>
+                        <span className="text-gray-400">Speed (rýchlostné intervaly)</span>
                         <span className="text-right font-mono text-rose-300">~{p.speedApprox}/km</span>
                       </>
                     )}
                   </div>
+
+                  {/* Rozbaliteľné vysvetlivky — bez nich sú Easy/Tempo/Strength/Speed pre nováčika len anglické slová */}
+                  <button
+                    type="button"
+                    onClick={() => setShowPaceLegend((v) => !v)}
+                    className="mt-2 text-[11px] text-primary underline underline-offset-2"
+                  >
+                    {showPaceLegend ? "Skryť vysvetlivky" : "i — čo tieto názvy znamenajú?"}
+                  </button>
+                  {showPaceLegend && (
+                    <div className="mt-2 flex flex-col gap-2 text-[11px] text-gray-400 leading-relaxed border-t border-white/10 pt-2">
+                      <p>
+                        <b className="text-emerald-300">Easy (ľahký beh)</b> — najpomalšie tempo, o 40 až 75 sekúnd
+                        na kilometer pomalšie než tvoje cieľové pretekové tempo (HMP — half marathon pace, teda
+                        tempo, ktorým chceš bežať polmaratón). Tvorí väčšinu všetkých kilometrov: buduje vytrvalosť
+                        a zároveň necháva telo zotaviť sa medzi tvrdými tréningami. Máš pri ňom vládať rozprávať.
+                      </p>
+                      {isJF ? (
+                        <p>
+                          <b className="text-gray-300">Tempo dobehnutia</b> — orientačné tempo, ktorým by si mal
+                          preteky dobehnúť. Netrénuje sa, slúži len na to, aby sa z neho dalo odvodiť Easy pásmo.
+                        </p>
+                      ) : (
+                        <>
+                          <p>
+                            <b className="text-amber-300">Tempo (tempový beh)</b> — beží sa presne v cieľovom
+                            pretekovom tempe (HMP). Naučí nohy aj hlavu, ako to tempo má
+                            reálne „sedieť", aby si ho v pretekoch trafil bez hádania.
+                          </p>
+                          <p>
+                            <b className="text-orange-300">Strength (silové intervaly)</b> — dlhé úseky o ~6 sekúnd
+                            na kilometer rýchlejšie než pretekové tempo, bežané už v nazbieranej únave. Sú jadrom
+                            Hansonovej metódy: učia ťa držať tempo vtedy, keď to v pretekoch začne bolieť.
+                          </p>
+                          <p>
+                            <b className="text-rose-300">Speed (rýchlostné intervaly)</b> — krátke rýchle úseky
+                            v tvojom aktuálnom 5-kilometrovom tempe. Zlepšujú ekonomiku behu a maximálnu
+                            kyslíkovú kapacitu (VO2max), takže pretekové tempo ti potom príde ľahšie.
+                          </p>
+                        </>
+                      )}
+                      <p className="text-gray-600">
+                        Tempo je pri každom behu hlavný cieľ, tep je len doplnková informácia (v horúčave či únave
+                        vyskočí aj pri správnom tempe).
+                      </p>
+                    </div>
+                  )}
+
                   <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
                     {isJF
                       ? "Just Finish sa beží celý v Easy tempe — intervaly ani tempo nie sú. „Tempo dobehnutia“ je len orientačná referencia, ktorá kotví Easy pásmo."
-                      : <>Tempo, Easy a Strength sa počítajú priamo z cieľa. <b className="text-gray-500">Speed</b> je len orientačný — reálne sa určí z tvojej aktuálnej formy (Garmin VO2max), preto použi „Odhadnúť z mojej formy" nižšie.</>}
+                      : <>Tempo, Easy a Strength sa počítajú priamo z cieľového času. <b className="text-gray-500">Speed</b> je tu len orientačný — v pláne sa počíta z tvojej aktuálnej formy (Garmin VO2max), nie z cieľa. Tempo Speed intervalov teda nenastavuješ ty, appka si ho zoberie z Garminu.</>}
                   </p>
                 </div>
               );
@@ -402,6 +689,7 @@ export default function Settings() {
                   >
                     Použiť ~{autoEst}
                   </button>
+                  <span className="text-[10px] text-gray-500 ml-2">iba doplní čas do políčka — ulož ho nižšie</span>
                 </div>
               );
             })()}
@@ -425,6 +713,12 @@ export default function Settings() {
                 alebo z nedávnych pretekov
               </button>
             </div>
+            {/* Tlačidlo nenastavuje tempá intervalov — navrhuje cieľový čas, to treba povedať jasne */}
+            <p className="text-[11px] text-gray-600 mt-1.5 ml-1 leading-snug">
+              Neisté, aký cieľ je pre teba reálny? Tlačidlo navrhne <b className="text-gray-500">cieľový čas
+              polmaratónu</b> podľa tvojej aktuálnej formy (Garmin VO2max) alebo podľa času z nedávnych pretekov.
+              Návrh sa iba doplní do políčka vyššie — nič sa tým nenastavuje ani neukladá, kým klikneš „Uložiť profil".
+            </p>
 
             {showRaceInput && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -473,6 +767,8 @@ export default function Settings() {
                 )}
                 <p className="text-[10px] text-gray-600 mt-2">
                   Odhad je orientačný — uprav podľa skúseností a trate. Radšej mierne konzervatívny cieľ.
+                  Tlačidlo „Použiť tento čas" ho len doplní do políčka vyššie; uloží sa až tlačidlom
+                  „Uložiť profil" dole.
                 </p>
               </div>
             )}
@@ -646,13 +942,23 @@ export default function Settings() {
         </p>
       )}
 
+      {/* Indikátor neuložených zmien — inak si zverenec myslí, že vyplnené = uložené */}
+      {isDirty && !saving && (
+        <div className="flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2 -mb-3">
+          <AlertCircle size={14} className="shrink-0" />
+          <span>Máš neuložené zmeny. Uložia sa až tlačidlom nižšie.</span>
+        </div>
+      )}
+
       <button
         onClick={handleSave}
         disabled={saving}
-        className="bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex justify-center items-center gap-2"
+        className={`bg-primary hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex justify-center items-center gap-2 ${
+          isDirty ? "ring-2 ring-amber-400/60" : ""
+        }`}
       >
         {saving ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-        {saving ? "Ukladám..." : "Uložiť profil"}
+        {saving ? "Ukladám..." : isDirty ? "Uložiť profil (neuložené zmeny)" : "Uložiť profil"}
       </button>
 
       <button

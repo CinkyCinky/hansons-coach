@@ -74,3 +74,51 @@ na databáze zapneme **RLS** (Row Level Security), čo zablokuje verejný anon k
   kľúč (Krok 2). Skontroluj `SUPABASE_KEY` v Render a daj redeploy.
 - **Chceš RLS dočasne vypnúť** (núdza): v Supabase → SQL Editor spusti:
   `alter table public.profiles disable row level security;`
+
+---
+
+## Krok 6 — Zabezpeč zvyšné tabuľky (migrácia 005)
+
+Kroky 1–5 zamkli iba `profiles`. Tabuľky `garmin_snapshots`, `metric_history`
+a `athlete_memory` vznikli ručne a **nemali RLS vôbec** — cez verejný anon kľúč
+sa dali čítať tvoje Garmin snapshoty, história metrík aj poznámky trénera o tebe.
+
+### 6a — Zisti, ako na tom si
+
+1. Supabase → **SQL Editor** → **+ New query**.
+2. Vlož a spusti (**Run**):
+
+```sql
+select relname             as tabulka,
+       relrowsecurity      as rls_zapnute,
+       relforcerowsecurity as rls_vynutene
+from pg_class
+where relname in ('profiles','plan_change_log','garmin_snapshots',
+                  'metric_history','athlete_memory')
+order by relname;
+```
+
+3. Pozri stĺpec `rls_zapnute`. Kde je **false**, tam je tabuľka otvorená.
+   (Ak sa niektorá tabuľka vo výsledku vôbec neobjaví, ešte neexistuje — to nevadí,
+   ďalší krok ju vytvorí.)
+
+### 6b — Spusti migráciu
+
+1. Otvor **`backend/supabase/005_rls_remaining_tables.sql`**, skopíruj celý obsah.
+2. Supabase → **SQL Editor** → **+ New query** → vlož → **Run**.
+3. Očakávaný výsledok: **Success**.
+
+Skript je idempotentný — dá sa spustiť opakovane bez škody. Tabuľky, ktoré už
+existujú, sa nezmenia (dáta ostávajú), len sa im zapne RLS.
+
+### 6c — Over
+
+1. Znova spusti dotaz z **6a**. Všetkých 5 tabuliek musí mať
+   `rls_zapnute = true` **aj** `rls_vynutene = true`.
+2. Otvor appku a over, že **Prehľad**, **Reporty** a **Nastavenia → pamäť trénera**
+   fungujú. Backend číta cez service_role, takže RLS ho neobmedzuje.
+
+> ⚠️ Ak appka po tomto kroku prestane načítavať dáta, backend nemá `service_role`
+> kľúč — vráť sa na Krok 1–2. Núdzové vypnutie:
+> `alter table public.garmin_snapshots disable row level security;` (a analogicky
+> pre ostatné).

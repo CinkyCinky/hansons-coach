@@ -70,7 +70,24 @@ Pauzy: 400–800m klus.
 
 **TEMPO @ HMP (štvrtky), progresívne:** 3 → 4 → 5 → 6 → 7 míľ, v závere taper na ~5 míľ.
 
-**LONG (nedeľa) @ Easy:** buduje sa 10 → 12 → 14 (max) míľ; **nikdy > 25–30 % týždenného objemu** a **strop ~16 míľ**.
+**LONG (nedeľa) @ Easy:** buduje sa **8 → 10 → 12 míľ (≈ 13 → 16 → 19 km)**;
+**nikdy viac než 25–30 % týždenného objemu** a **strop ~12 míľ (19,5 km)**. Vo variante „Just Finish"
+(dobeh bez tvrdých intervalov) je vrchol dlhého behu nižší — **~10 míľ (16 km)**.
+
+> **Oprava (2026-08) — odkiaľ hodnota pochádza:** v staršej verzii tejto kapitoly stálo
+> „10 → 12 → 14 (max) míľ" so stropom „~16 míľ". To sú čísla z **maratónskeho** plánu
+> (Hansons Marathon Method), nie z polmaratónového — 16 míľ je 25,7 km, teda takmer 2×
+> viac, než polmaratónový plán kedy predpisuje. Záväzné hodnoty žijú v kóde a tento
+> dokument ich zrkadlí:
+> `backend/modules/workout_generator.py` → `_HALF_LONG_CAP_KM = 19.5` (Advanced/Beginner,
+> ~12 míľ), `_JF_LONG_CAP_KM = 16.0` (Just Finish, ~10 míľ), `_LONG_FRAC = 0.30`
+> (dlhý beh ≤ 30 % týždenného objemu). Percentuálny strop je **podmienený**: uplatní sa
+> len pri ~plnom týždni, teda **od 4 behov v týždni** (`near_full_week`) — v kratšom
+> zvyšku týždňa by inak orezal legitímny dlhý beh, tam platí len absolútny strop.
+> Pri variante **Just Finish sa 30 % pravidlo neuplatňuje vôbec**, tam sú vzdialenosti
+> verne z knihy a platí iba absolútny strop 16 km. To isté ide aj do promptu pre AI:
+> `backend/modules/hansons_knowledge.py` → `sos_for_week()` opisuje nedeľu ako
+> „≈13–19 km podľa fázy, vrchol ~19 km".
 
 ### 1.6 Warm-up a cool-down
 - **Len pri SOS** (Speed/Strength/Tempo). Easy a Dlhé behy ich **nemajú**.
@@ -147,7 +164,10 @@ Výsledok: tempá a štruktúra sú **vždy presné a Hanson-konzistentné**, LL
 9. Plán len pre **zvyšok aktuálneho týždňa** (už hotové) — generuje sa s plnými dátumami.
 
 ### 2.4 Guardraily (tvrdé pravidlá v kóde)
-- Dlhý beh ≤ 30 % týždenného objemu a ≤ 16 míľ.
+- Dlhý beh: absolútny strop ≤ ~12 míľ (19,5 km), pri variante Just Finish ≤ ~10 míľ (16 km).
+  Navyše pravidlo „≤ 30 % týždenného objemu" — ale **len pre Beginner/Advanced** a **len
+  pri ~plnom týždni (od 4 behov)**. Pri **Just Finish 30 % pravidlo NEPLATÍ** (platí tam iba
+  absolútny strop 16 km) — viď 1.5.
 - Nikdy 2 SOS za sebou.
 - A:C > 1.4 alebo nízka pripravenosť → automaticky ponúknuť zmäkčenie.
 - Speed tempo nikdy pomalšie než Strength; Strength nikdy pomalšie než Tempo (sanity).
@@ -251,8 +271,20 @@ recovery/cooldown), `endCondition` (distance/lapButton/time) a `targetType`
 - ✅ **Zvýraznenie zmeškaných SOS:** Plán deteguje vynechané kľúčové tréningy (minulé,
   nesplnené, typ Speed/Strength/Tempo/Long) → súhrnná karta s Hanson radou + badge
   „Vynechané" v kalendári + 1-klik prepočet.
+- ✅ **A:C záťaž (pomer akútnej a chronickej záťaže) sa reálne číta:** Garmin ju vracia
+  zabalenú per-zariadenie, takže ploché čítanie poľa vracalo vždy `None` a guardrail ani
+  karta na Prehľade sa nikdy nespustili. `modules/fetcher.py` → `_deep_find()` ju teraz hľadá
+  rekurzívne (do šírky) kdekoľvek v odpovedi, vrátane prepočtu z `acwrPercent`.
 - ⏳ **Odložené (budúce):** plne automatický presun zmeškaných SOS (zatiaľ návrh + 1-klik);
   spätné doladenie cieľového času podľa reálne odbehnutých temp/VO2max.
+
+**P5 — Účet a prihlásenie (frontend) — ✅ HOTOVÉ**
+- ✅ **Obnova zabudnutého hesla:** prihlasovacia stránka má režim „Obnova hesla"
+  (`app/login/page.tsx`) → Supabase pošle odkaz na `app/reset-password`. Odpoveď je rovnaká
+  aj pre neexistujúci e-mail, aby sa cez formulár nedalo zisťovať, kto je zaregistrovaný.
+- ✅ **Prihlasovacie chyby po slovensky:** `lib/authErrors.ts` → `translateAuthError()`
+  prekladá surové anglické hlášky knižnice a vždy hovorí aj ČO ROBIŤ; sieťovú/serverovú
+  chybu odlíši od zlého hesla a pri nepotvrdenom e-maile ponúkne znovuposlanie.
 
 ### 4.3 Rozhodnutia (potvrdené 2026-06)
 - **Tep (HR):** **tempo primárne pre všetky behy, HR len referencia** (v popise + poistka).

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Footprints, BrainCircuit, Repeat, Gauge, CalendarRange, Rocket, ChevronRight, X, Layers,
@@ -85,11 +86,20 @@ const CARDS: Card[] = [
   },
 ];
 
+// Prihlasovacie obrazovky — úvod tam nepatrí (viď useEffect nižšie).
+const AUTH_ROUTES = ["/login", "/reset-password"];
+
 export default function Onboarding() {
   const [visible, setVisible] = useState(false);
   const [step, setStep] = useState(0);
+  const pathname = usePathname();
+  const isAuthRoute = AUTH_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 
   useEffect(() => {
+    // Na prihlasovacej/registračnej obrazovke úvod NEotvárame. Inak by ho návštevník
+    // odklikal ešte pred vytvorením účtu, `SEEN_KEY` by sa uložil — a po prihlásení
+    // by úvod, ktorý appku vysvetľuje, už nikdy neuvidel.
+    if (isAuthRoute) return;
     try {
       if (!localStorage.getItem(SEEN_KEY)) setVisible(true);
     } catch {
@@ -98,7 +108,12 @@ export default function Onboarding() {
     const onOpen = () => { setStep(0); setVisible(true); };
     window.addEventListener(OPEN_ONBOARDING_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_ONBOARDING_EVENT, onOpen);
-  }, []);
+  }, [isAuthRoute]);
+
+  // Zmena trasy na prihlásenie (napr. odhlásenie) musí prípadný otvorený úvod zavrieť.
+  useEffect(() => {
+    if (isAuthRoute) setVisible(false);
+  }, [isAuthRoute]);
 
   const finish = () => {
     try { localStorage.setItem(SEEN_KEY, "1"); } catch { /* ignore */ }
